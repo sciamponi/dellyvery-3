@@ -1,0 +1,82 @@
+{
+  "name": "Subscription",
+  "type": "object",
+  "properties": {
+    "company_id": {
+      "type": "string"
+    },
+    "plan_id": {
+      "type": "string"
+    },
+    "plan_name": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "trial",
+        "ativo",
+        "pendente",
+        "cancelado",
+        "suspenso",
+        "expirado"
+      ],
+      "default": "trial"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trial_ends_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "current_period_end": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "canceled_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "gateway": {
+      "type": "string",
+      "enum": [
+        "stripe",
+        "mercado_pago",
+        "asaas",
+        "gerencianet",
+        "manual"
+      ],
+      "default": "manual"
+    },
+    "amount": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "required": [
+    "company_id",
+    "plan_id"
+  ],
+  "rls": {
+    "read": {
+      "data.company_id": "{{user.data.company_id}}"
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

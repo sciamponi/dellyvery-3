@@ -1,0 +1,38 @@
+{
+  "name": "DeliveryZone",
+  "type": "object",
+  "properties": {
+    "company_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "fee": {
+      "type": "number",
+      "default": 0
+    },
+    "estimated_time": {
+      "type": "number",
+      "default": 30
+    }
+  },
+  "required": [
+    "company_id",
+    "name"
+  ],
+  "rls": {
+    "read": {
+      "data.company_id": "{{user.data.company_id}}"
+    },
+    "create": {
+      "data.company_id": "{{user.data.company_id}}"
+    },
+    "update": {
+      "data.company_id": "{{user.data.company_id}}"
+    },
+    "delete": {
+      "data.company_id": "{{user.data.company_id}}"
+    }
+  }
+}

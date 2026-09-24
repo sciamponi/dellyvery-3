@@ -1,24 +1,77 @@
-# DELLYVERY 3
+# Base44 Project
 
-oi
+Use this repository to run and edit the app locally, then publish changes back through Base44.
 
-This project was built with [Lovable](https://lovable.dev).
+Any change pushed to the repo will also be reflected in the Base44 Builder.
 
-## Build with Lovable
+## Prerequisites
 
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/6e1c50b1-e8f2-4bc9-a968-22e9abbbd98b).
+1. Clone the repository using the project's Git URL.
+2. Navigate to the project directory.
+3. Install dependencies: `npm install`.
+4. Install the Base44 CLI: `npm install -g base44@latest`.
 
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+See the [Base44 CLI docs](https://docs.base44.com/developers/references/cli/get-started/overview) if you want to run Base44 commands directly.
 
-## Development
+## Run Locally
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+Run the full local development environment from the project root:
 
-```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
+```bash
+base44 dev
+```
+
+`base44 dev` starts the local Base44 development backend and, when this app is configured for it, also starts the frontend dev server for you. Use the frontend URL printed by the command.
+
+For example, when the Base44 project config includes a `serveCommand`, `base44 dev` can launch the frontend too:
+
+```json5
+{
+  "site": {
+    "serveCommand": "npm run dev"
+  }
+}
+```
+
+In a Base44 project this lives in `base44/config.jsonc`.
+
+## Run Only The Frontend
+
+If you only want to work on the frontend against the hosted Base44 backend, run:
+
+```bash
 npm run dev
 ```
+
+Open the local URL printed by Vite.
+
+## Use The Hosted Backend
+
+For frontend-only development, create or update `.env.local` in the project root:
+
+```bash
+VITE_BASE44_APP_ID=your_app_id
+VITE_BASE44_APP_BASE_URL=https://your-app.base44.app
+```
+
+`VITE_BASE44_APP_ID` identifies the Base44 app.
+
+`VITE_BASE44_APP_BASE_URL` tells the Base44 Vite plugin where to send local `/api` requests. Point it at your deployed Base44 app URL when you want the local frontend to use the hosted backend.
+
+When you use `base44 dev`, the command injects the local Base44 values for you, so `.env.local` is mainly needed for frontend-only workflows.
+
+## Publish Your Changes
+
+After pushing your changes to git, open the Base44 dashboard and publish the app:
+
+```bash
+base44 dashboard open
+```
+
+## Docs & Support
+
+Documentation: [https://docs.base44.com/Integrations/Using-GitHub](https://docs.base44.com/Integrations/Using-GitHub)
+
+Base44 CLI command reference: [https://docs.base44.com/developers/references/cli/commands/introduction](https://docs.base44.com/developers/references/cli/commands/introduction)
+
+Support: [https://app.base44.com/support](https://app.base44.com/support)

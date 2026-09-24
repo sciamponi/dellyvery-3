@@ -1,0 +1,195 @@
+{
+  "name": "Order",
+  "type": "object",
+  "properties": {
+    "company_id": {
+      "type": "string"
+    },
+    "order_number": {
+      "type": "number",
+      "default": 1
+    },
+    "tracking_token": {
+      "type": "string"
+    },
+    "order_type": {
+      "type": "string",
+      "enum": [
+        "delivery",
+        "retirada",
+        "mesa"
+      ],
+      "default": "delivery"
+    },
+    "table_number": {
+      "type": "string"
+    },
+    "customer_id": {
+      "type": "string"
+    },
+    "customer_name": {
+      "type": "string"
+    },
+    "customer_phone": {
+      "type": "string"
+    },
+    "customer_email": {
+      "type": "string"
+    },
+    "customer_address": {
+      "type": "string"
+    },
+    "customer_number": {
+      "type": "string"
+    },
+    "customer_complement": {
+      "type": "string"
+    },
+    "customer_neighborhood": {
+      "type": "string"
+    },
+    "customer_city": {
+      "type": "string"
+    },
+    "customer_zip_code": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "product_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "unit_price": {
+            "type": "number"
+          },
+          "price": {
+            "type": "number"
+          },
+          "quantity": {
+            "type": "number"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "complements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "group_name": {
+                  "type": "string"
+                },
+                "option_name": {
+                  "type": "string"
+                },
+                "price": {
+                  "type": "number",
+                  "default": 0
+                },
+                "quantity": {
+                  "type": "number",
+                  "default": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "subtotal": {
+      "type": "number",
+      "default": 0
+    },
+    "delivery_fee": {
+      "type": "number",
+      "default": 0
+    },
+    "discount": {
+      "type": "number",
+      "default": 0
+    },
+    "total": {
+      "type": "number",
+      "default": 0
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "novo",
+        "confirmado",
+        "em_preparo",
+        "aguardando_retirada",
+        "saiu_entrega",
+        "finalizado",
+        "cancelado"
+      ],
+      "default": "novo"
+    },
+    "status_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user_name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "payment_method": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "delivery_zone": {
+      "type": "string"
+    },
+    "cancel_reason": {
+      "type": "string"
+    },
+    "canceled_by_name": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "online",
+        "whatsapp",
+        "balcao"
+      ],
+      "default": "online"
+    }
+  },
+  "required": [
+    "company_id",
+    "customer_name"
+  ],
+  "rls": {
+    "read": {
+      "data.company_id": "{{user.data.company_id}}"
+    },
+    "create": {
+      "data.company_id": "{{user.data.company_id}}"
+    },
+    "update": {
+      "data.company_id": "{{user.data.company_id}}"
+    },
+    "delete": {
+      "data.company_id": "{{user.data.company_id}}"
+    }
+  }
+}

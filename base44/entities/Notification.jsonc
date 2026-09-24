@@ -1,0 +1,72 @@
+{
+  "name": "Notification",
+  "type": "object",
+  "properties": {
+    "company_id": {
+      "type": "string"
+    },
+    "order_id": {
+      "type": "string"
+    },
+    "order_number": {
+      "type": "number"
+    },
+    "customer_id": {
+      "type": "string"
+    },
+    "customer_name": {
+      "type": "string"
+    },
+    "customer_phone": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "novo",
+        "confirmado",
+        "em_preparo",
+        "aguardando_retirada",
+        "saiu_entrega",
+        "finalizado",
+        "cancelado"
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "read": {
+      "type": "boolean",
+      "default": false
+    },
+    "tracking_token": {
+      "type": "string"
+    },
+    "link": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "company_id",
+    "order_id",
+    "status",
+    "message"
+  ],
+  "rls": {
+    "read": {
+      "data.company_id": "{{user.data.company_id}}"
+    },
+    "create": {
+      "data.company_id": "{{user.data.company_id}}"
+    },
+    "update": {
+      "data.company_id": "{{user.data.company_id}}"
+    },
+    "delete": {
+      "data.company_id": "{{user.data.company_id}}"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "User",
+  "type": "object",
+  "properties": {
+    "company_id": {
+      "type": "string"
+    },
+    "staff_role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "gerente",
+        "caixa",
+        "atendente",
+        "cozinha",
+        "entrega"
+      ],
+      "default": "admin"
+    }
+  }
+}

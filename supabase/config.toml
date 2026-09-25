@@ -31,7 +31,7 @@ enabled = false
 
 [db]
 # Port to use for the local database URL.
-port = 54322
+port = 54325
 # Port used by db diff command to initialize the shadow database.
 shadow_port = 54320
 # Maximum amount of time to wait for health check when starting the local database.
@@ -135,6 +135,7 @@ enabled = true
 # This feature is only available on the hosted platform.
 [storage.analytics]
 enabled = false
+port = 54328
 max_namespaces = 5
 max_tables = 10
 max_catalogs = 2
@@ -385,8 +386,8 @@ deno_version = 2
 # secret_key = "env(SECRET_VALUE)"
 
 [analytics]
-enabled = true
-port = 54327
+enabled = false
+port = 54328
 # Configure one of the supported backends: `postgres`, `bigquery`.
 backend = "postgres"
 
@@ -406,7 +407,7 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # pg-delta is the schema diff engine for db diff / db pull / db remote commit.
 # Set enabled = false to fall back to the legacy migra engine.
 [experimental.pgdelta]
-enabled = true
+enabled = false
 # Directory under `supabase/` where declarative files are written.
 # declarative_schema_path = "./schemas"
 # JSON string passed through to pg-delta SQL formatting. When omitted, SQL is

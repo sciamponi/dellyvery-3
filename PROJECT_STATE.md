@@ -46,16 +46,26 @@
 - `AUDIT.md` gerado com mapeamento completo de páginas, rotas, entidades, RLS, funções, componentes, assets, inventário Base44 (137 ocorrências `base44`, 27 `base44.auth`, 54 `base44.entities`, 12 `base44.functions`, 3 `subscribe`).
 - `MODULES.md` e `ARCHITECTURE.md` com proposta FASE 2 (Supabase principal + VPS Postgres cópia, sem replicação bidirecional).
 
-## 7. Próximos passos bloqueados (aguardando autorização)
+## 7. FASE 2 — Supabase Local (2026-09-24)
 
-- NÃO criar banco/Supabase/VPS, NÃO migrar Auth/Base44, NÃO remover Base44, NÃO implementar novos módulos (entregadores, funcionários, caixa/PDV, preview, WhatsApp, Master, Marketing/Publicidade em breve). Conectar ao Lovable só após estabilizar `ZIP → DELLVERY 3 → GitHub`.
+- **Branch:** `feat/supabase-foundation` (base `origin/chore/init-from-zip:d94c6b1`, HEAD `1656fde` RLS, atual `81769bd` foundation + seeds)
+- **Supabase projeto:** `dellyvery-3` ref `kmpktvcjtxwenlgzjvog` região `sa-east-1` (São Paulo), API `https://kmpktvcjtxwenlgzjvog.supabase.co` — **nenhum db push remoto** (migration list remote vazio)
+- **Supabase local:** `http://127.0.0.1:54321`, DB `54325` (alterada de 54322), Studio `54323`, storage/analytics ajustados (`analytics.enabled=false`, `storage.analytics.port=54328`, `pgdelta.enabled=false`), stack `samue` parado, `supabase local development setup is running`
+- **Migrations locais (4, sem RLS antes):** `20260924000000_foundation.sql` 19.527b, `20260924000001_rls.sql` 27.034b (4 helpers + 80 policies), `20260924000002_seed_segments.sql` 716b (restaurant), `20260924000003_seed_plans.sql` 682b (Solo) — aplicadas via `npx supabase migration up` (db reset requer Docker, mas migration up funcionou)
+- **Validação RLS:** `supabase/tests/rls_dellyvery3.sql` com 19 cenários / 42 asserts, todos **PASS** como `authenticated` (via `set_config('request.jwt.claim.sub',...)` + `role authenticated`, superuser bypass evitado, posterior state verificado). Detalhes em tabela abaixo. **Nenhum db push remoto**, remoto continua sem migrations.
 
-## 8. Comandos de verificação
+## 8. Próximos passos bloqueados (aguardando autorização)
+
+- NÃO criar banco/Supabase/VPS remoto adicional, NÃO migrar Auth/Base44 completamente, NÃO remover Base44, NÃO implementar novos módulos (entregadores, funcionários, caixa/PDV, preview, WhatsApp, Master, Marketing/Publicidade em breve). Conectar ao Lovable só após estabilizar `ZIP → DELLVERY 3 → GitHub`.
+
+## 9. Comandos de verificação
 
 ```bash
 Get-FileHash C:\Users\samue\Downloads\dellyvery.zip -Algorithm SHA256
-git branch --show-current # chore/init-from-zip
+git branch --show-current # feat/supabase-foundation
 git log --oneline -5
+npx supabase migration list # local 4 vs remote 0
+psql -h 127.0.0.1 -p 54325 -U postgres -d postgres -f supabase/tests/rls_dellyvery3.sql
 npm run build
 npm run lint -- --quiet
 ```

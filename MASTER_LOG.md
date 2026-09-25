@@ -28,9 +28,20 @@ Log de decisões da FASE 1 (chronológico). Próximas fases adicionam entradas n
 **Decisão:** Arquitetura FASE 2: escrita única no **Supabase Postgres (BANCO A principal)**, **Postgres VPS (BANCO B)** como cópia/redundância com `pg_dump` diário + WAL + retenção S3, sem replicação bidirecional. Lovable permanece só como editor frontend, GitHub fonte oficial.
 **Motivo:** Evitar divergência de escrita simultânea; runbook de failover definido em `ARCHITECTURE.md`.
 
-## Pendências para FASE 2 (não iniciar sem autorização)
+## 2026-09-24 — FASE 2: RLS validado localmente
 
-- Schema Supabase + RLS por `company_id` + `PLATFORM_ADMIN`.
+**Decisão:** Criar `20260924000001_dellyvery3_rls.sql` com 4 helpers `SECURITY DEFINER SET search_path=public` (`is_company_member`, `member_role`, `is_platform_admin`, `create_company_with_owner`) + 80 policies, sem bypass genérico PLATFORM_ADMIN. `company_members` INSERT direto bloqueado (`WITH CHECK false`), primeiro OWNER só via função que usa `auth.uid()` (sem param user_id). `cash_movements` valida `company_id` + `exists (cash_registers.company_id = company_id)`. `order_items/history` via `orders.company_id`, `profiles` bloqueia `platform_role` escalada.
+**Motivo:** Isolamento por `company_members.user_id=auth.uid()` + `company_id`, onboarding seguro, corrigir concorrência order_number via `company_order_seq`.
+
+**Decisão:** Validar via `supabase/tests/rls_dellyvery3.sql` com 2 usuários (A/B) + PLATFORM_ADMIN + OPERATOR, 19 cenários / 42 asserts, todos PASS como `authenticated` (posterior state verificado). Docker Desktop parado inicialmente, mas `npx supabase migration up` aplicou 4 migrations; `db reset` com timeout devido a porta 54325/analytics, mas `migration up` confirmou. Supabase local `54325` com `supabase local development setup is running`.
+**Motivo:** Não usar superuser para RLS, confirmar isolamento, inactive, papéis, platform_role, onboarding, cash_movements cross-register, subscriptions/admin, audit_logs, segments/plans.
+
+**Decisão:** Manter `supabase/tests/rls_dellyvery3.sql` como suíte permanente (não remover), preservar `supabase/config.toml` diff (porta 54325, analytics desativado) localmente sem commit automático.
+**Motivo:** FASE 5 — limpeza preserva teste útil; FASE 6 documentação atualizada mas sem push remoto (remote ainda 0 migrations).
+
+## Pendências para FASE 2 restante
+
 - Adapter `supabaseClient` espelhando `base44.entities` + Realtime.
 - Migração de functions para VPS (`createOrder` público server-side price, `manageOrder` etc.).
 - Módulos novos (entregadores, funcionários, caixa/PDV, preview/QR, WhatsApp provider, Master, Marketing em breve) — só arquitetura nesta fase.
+- `npx supabase db push` remoto somente após autorização (gate final).

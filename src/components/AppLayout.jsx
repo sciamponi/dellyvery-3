@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
+import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { Button } from '@/components/ui/button';
 import NotificationBell from '@/components/NotificationBell';
 import {
@@ -29,8 +30,16 @@ export default function AppLayout() {
   const [user, setUser] = useState(null);
   const [company, setCompany] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // FASE 5.1: quando há sessão Supabase, empresa/usuário vêm do contexto
+  // Supabase (RLS). Sem sessão Supabase, carga Base44 original é preservada.
+  const { user: sbUser, currentCompany: sbCompany, signOut: sbSignOut } = useSupabaseAuth();
 
   useEffect(() => {
+    if (sbUser) {
+      setUser({ email: sbUser.email });
+      setCompany(sbCompany);
+      return;
+    }
     const load = async () => {
       try {
         const u = await base44.auth.me();
@@ -42,9 +51,14 @@ export default function AppLayout() {
       } catch (err) { /* ignore */ }
     };
     load();
-  }, []);
+  }, [sbUser, sbCompany]);
 
   const handleLogout = async () => {
+    if (sbUser) {
+      await sbSignOut();
+      navigate('/login');
+      return;
+    }
     await base44.auth.logout();
   };
 

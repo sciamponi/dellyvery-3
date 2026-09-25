@@ -4,6 +4,7 @@ import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes, Outlet } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider } from '@/lib/AuthContext';
+import { SupabaseAuthProvider } from '@/lib/SupabaseAuthContext';
 import ScrollToTop from './components/ScrollToTop';
 import Login from '@/pages/Login';
 import Register from '@/pages/Register';
@@ -28,7 +29,11 @@ import Financeiro from './pages/Financeiro';
 import MasterPlanos from './pages/MasterPlanos';
 
 function App() {
+  // FASE 5.1: SupabaseAuthProvider coexiste com o AuthProvider/Base44 legado.
+  // Sem VITE_SUPABASE_* configurado, o provider Supabase fica neutro e o app
+  // comporta-se exatamente como antes.
   return (
+    <SupabaseAuthProvider>
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
         <Router>
@@ -68,6 +73,7 @@ function App() {
         <Toaster />
       </QueryClientProvider>
     </AuthProvider>
+    </SupabaseAuthProvider>
   )
 }
 

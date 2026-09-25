@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/supabaseClient';
+import { createProduct as sbCreateProduct, updateProduct as sbUpdateProduct } from '@/api/catalog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,7 +13,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Image } from '@/components/ui/image';
 import { Upload, Loader2, X, Package } from 'lucide-react';
 
-export default function ProductFormDialog({ open, onOpenChange, product, categories, companyId, onSaved }) {
+export default function ProductFormDialog({ open, onOpenChange, product, categories, companyId, useSupabase, onSaved }) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -75,10 +77,13 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
       };
       delete data.id; delete data.created_date; delete data.updated_date; delete data.created_by_id;
       if (product) {
-        await base44.entities.Product.update(product.id, data);
+        // FASE 5.2: Supabase via adapter (RLS + trigger mesma-empresa); senão Base44.
+        if (useSupabase) await sbUpdateProduct(supabase, product.id, data);
+        else await base44.entities.Product.update(product.id, data);
         toast({ title: 'Produto atualizado!' });
       } else {
-        await base44.entities.Product.create(data);
+        if (useSupabase) await sbCreateProduct(supabase, companyId, data);
+        else await base44.entities.Product.create(data);
         toast({ title: 'Produto criado!' });
       }
       onSaved?.();

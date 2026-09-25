@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { getSession, signUpRestaurant } from '@/api/supabaseAuth';
+import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,6 +21,11 @@ const benefits = [
 
 export default function CreateRestaurant() {
   const { toast } = useToast();
+  const navigate = useNavigate();
+  // FASE 5.1: com Supabase configurado, onboarding usa Auth + RPC
+  // create_company_with_owner(); sem ele, fluxo Base44 original é preservado.
+  const useSupabase = isSupabaseConfigured();
+  const { refresh: refreshSb } = useSupabaseAuth();
   const [authed, setAuthed] = useState(null);
   const [step, setStep] = useState('form');
   const [loading, setLoading] = useState(false);
@@ -29,8 +37,12 @@ export default function CreateRestaurant() {
   });
 
   useEffect(() => {
-    base44.auth.isAuthenticated().then(setAuthed);
-  }, []);
+    if (useSupabase) {
+      getSession(supabase).then((sess) => setAuthed(!!sess)).catch(() => setAuthed(false));
+    } else {
+      base44.auth.isAuthenticated().then(setAuthed);
+    }
+  }, [useSupabase]);
 
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
@@ -46,7 +58,34 @@ export default function CreateRestaurant() {
     return true;
   };
 
+  // FASE 5.1: criação via função SECURITY DEFINER (sem INSERT direto
+  // em companies/company_members pelo frontend). Cria company + OWNER +
+  // subscription Solo + order_seq + settings + themes.
+  const createCompanySupabase = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      await signUpRestaurant(supabase, {
+        email: form.email,
+        password: form.password,
+        companyName: form.restaurantName,
+        phone: form.whatsapp,
+      });
+      await refreshSb();
+      toast({ title: 'Restaurante criado!', description: 'Seu trial de 7 dias começou.' });
+      navigate('/dashboard', { replace: true });
+    } catch (err) {
+      setError(err?.message || 'Erro ao criar restaurante');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const createCompany = async () => {
+    if (useSupabase) {
+      await createCompanySupabase();
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -81,6 +120,12 @@ export default function CreateRestaurant() {
 
     if (authed) {
       await createCompany();
+    } else if (useSupabase) {
+      // Supabase: cadastro + empresa em uma etapa (sem OTP Base44).
+      if (form.password.length < 6) { setError('Senha deve ter no mínimo 6 caracteres'); return; }
+      if (form.password !== form.confirmPassword) { setError('As senhas não conferem'); return; }
+      if (!form.acceptTerms) { setError('Você precisa aceitar os termos'); return; }
+      await createCompanySupabase();
     } else {
       setLoading(true);
       try {

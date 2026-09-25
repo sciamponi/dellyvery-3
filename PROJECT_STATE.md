@@ -54,7 +54,25 @@
 - **Migrations locais (4, sem RLS antes):** `20260924000000_foundation.sql` 19.527b, `20260924000001_rls.sql` 27.034b (4 helpers + 80 policies), `20260924000002_seed_segments.sql` 716b (restaurant), `20260924000003_seed_plans.sql` 682b (Solo) — aplicadas via `npx supabase migration up` (db reset requer Docker, mas migration up funcionou)
 - **Validação RLS:** `supabase/tests/rls_dellyvery3.sql` com 19 cenários / 42 asserts, todos **PASS** como `authenticated` (via `set_config('request.jwt.claim.sub',...)` + `role authenticated`, superuser bypass evitado, posterior state verificado). Detalhes em tabela abaixo. **Nenhum db push remoto**, remoto continua sem migrations.
 
-## 8. Próximos passos bloqueados (aguardando autorização)
+## 8. FASE 5.1 — Supabase Auth + contexto da empresa (2026-09-25, sem commit)
+
+- **Arquivos novos:** `src/api/supabaseClient.js` (singleton anon key; neutro sem env), `src/api/supabaseAuth.js` (signUp/signIn/signOut/getSession/onAuthStateChange, ensureProfile, fetchMemberships, fetchRestaurantSegment, createCompanyWithOwner RPC, signUpRestaurant, slugify), `src/lib/companySelection.js` (resolveCurrentCompany puro + storage por usuário), `src/lib/routeGuard.js` (shouldAllowProtected puro), `src/lib/SupabaseAuthContext.jsx` (user/session/loading/profile/memberships/currentCompany/currentRole/selectCompany), `src/api/supabaseAuth.test.js` + `src/lib/frontendAuth.test.js` (node:test, 22 asserts), `@supabase/supabase-js@2.117.2`, script `test:supabase`.
+- **Arquivos adaptados (coexistência, Base44 intacto):** `src/App.jsx` (+SupabaseAuthProvider externo), `src/components/ProtectedRoute.jsx` (aceita sessão Supabase via shouldAllowProtected), `src/pages/Login.jsx` (Supabase quando configurado; Google/Base44 senão), `src/components/AppLayout.jsx` (prefere empresa Supabase; fallback Base44), `src/pages/CreateRestaurant.jsx` (onboarding Supabase via RPC quando configurado). Sem `VITE_SUPABASE_*`, comportamento idêntico ao anterior.
+- **Arquitetura:** frontend usa só anon key; profile/memberships via RLS (`auth.uid()`); empresa criada SOMENTE via `create_company_with_owner()` DEFINER (company + OWNER + Solo + seq + settings + themes); segmento fixo `restaurant`; seleção de empresa só atua com >1 membership (localStorage `dellyvery:company:<userId>`).
+- **Testes:** `npm run test:supabase` → 22/22 PASS (guard, sessão, profile, memberships/role, sem-empresa, RPC, slugify). RLS SQL 82/82 mantido (sem alteração nesta fase).
+- **Build:** `npm run build` OK (14.8s; chunk >500kB pré-existente). `npm run lint` → mesmos 11 erros `unused-imports` pré-existentes (FASE 1), zero nos arquivos novos.
+- **Não feito:** sem `db push`, sem push, sem remoção Base44, sem migração Pedidos/Produtos/Financeiro, sem alteração em migrations, prisma-studio ou DELLVERY 2.0.
+
+## 9. FASE 5.2 — Categorias + Produtos no Supabase (2026-09-25, sem commit)
+
+- **ETAPA A (auditoria, sem banco):** divergência Base44×Supabase mapeada campo a campo (icon/order/available/promotional_price/sku/internal_code/flags/estoque/preparo/ingredientes/nutricional/complements×options); FK `products.category_id` só referencia `categories(id)` — sem garantia mesma-empresa.
+- **Migration nova (só local):** `supabase/migrations/20260925000001_dellyvery3_catalog_fields.sql` — ADD COLUMN (icon; promotional_price/sku/internal_code/flags/estoque/preparo/ingredientes/nutricional) + trigger `trg_products_category_company` (produto só referencia categoria da mesma empresa). Mapeamentos sem coluna: order↔sort_order, available↔active, complements↔options.
+- **Adapter:** `src/api/catalog.js` (+`catalog.test.js`, 12 asserts) — company_id só do contexto; valida categoria mesma-empresa; updates parciais sem company_id.
+- **Telas migradas (Supabase quando configurado; Base44 senão):** `GestaoProdutos.jsx`, `ProductFormDialog.jsx`, `CategoryFormDialog.jsx`. Upload segue `base44.integrations.Core.UploadFile` (sem Storage nesta fase). NÃO migrados: Menu (catálogo anon), OrderModal, Dashboard, Assinatura.
+- **Validação local:** unit `npm run test:supabase` 34/34; E2E REST 16/16 (CRUD, todos os campos, isolamento, cross-company bloqueado por RLS+trigger com posterior, toggle, deletes OWNER); RBAC OPERATOR bloqueado/MANAGER permitido com posterior; dados de teste removidos (0 restantes).
+- **Build** OK; **lint** só os 11 `unused-imports` pré-existentes. Sem db push/push/commit; prisma-studio e DELLVERY 2.0 intocados.
+
+## 10. Próximos passos bloqueados (aguardando autorização)
 
 - NÃO criar banco/Supabase/VPS remoto adicional, NÃO migrar Auth/Base44 completamente, NÃO remover Base44, NÃO implementar novos módulos (entregadores, funcionários, caixa/PDV, preview, WhatsApp, Master, Marketing/Publicidade em breve). Conectar ao Lovable só após estabilizar `ZIP → DELLVERY 3 → GitHub`.
 

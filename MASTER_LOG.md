@@ -39,6 +39,19 @@ Log de decisões da FASE 1 (chronológico). Próximas fases adicionam entradas n
 **Decisão:** Manter `supabase/tests/rls_dellyvery3.sql` como suíte permanente (não remover), preservar `supabase/config.toml` diff (porta 54325, analytics desativado) localmente sem commit automático.
 **Motivo:** FASE 5 — limpeza preserva teste útil; FASE 6 documentação atualizada mas sem push remoto (remote ainda 0 migrations).
 
+## 2026-09-25 — FASE 5.1: Supabase Auth + contexto da empresa (sem commit)
+
+**Decisão:** Nova camada `src/api/supabaseClient.js` (anon key) + `src/api/supabaseAuth.js` (auth, profile, memberships, segmento `restaurant`, RPC `create_company_with_owner`, `signUpRestaurant`) + `src/lib/SupabaseAuthContext.jsx` (user/session/loading/profile/memberships/currentCompany/currentRole) coexistindo com Base44: provider adicionado por fora no `App.jsx`, `ProtectedRoute` aceita qualquer das sessões, `Login`/`AppLayout`/`CreateRestaurant` usam Supabase só quando `VITE_SUPABASE_*` existe, senão fluxo Base44 byte-idêntico.
+**Motivo:** Login Supabase funcional sem quebrar nenhum módulo; sem env, app comporta-se como antes; empresa sempre via DEFINER (sem INSERT direto); seleção multi-empresa só quando >1 membership.
+
+**Decisão:** Testes `node:test` sem rede (client mockado) em `supabaseAuth.test.js` + `frontendAuth.test.js`: 22/22 PASS. Build OK; lint mantém só os 11 `unused-imports` da FASE 1.
+**Motivo:** Cobrir guard, sessão, profile, role, sem-empresa, RPC e slugify semInfra extra; sem `db push`/push.
+
+## 2026-09-25 — FASE 5.2: Categorias + Produtos no Supabase (sem commit)
+
+**Decisão:** Após ETAPA A aprovar o mapa, migration incremental só-ADD (`20260925000001`, aplicada só local) + trigger mesma-empresa para `category_id` (FK atual não garantia); adapter `catalog.js` com mapeamentos e updates parciais; 3 telas com branch Supabase/Base44 por `sbActive`; upload mantido no Base44; Menu/OrderModal/Dashboard/Assinatura preservados.
+**Motivo:** Fidelidade funcional sem perda de campos; RLS+trigger no banco, adapter como defesa em profundidade; validação 34/34 unit + 16/16 E2E + RBAC, tudo local.
+
 ## Pendências para FASE 2 restante
 
 - Adapter `supabaseClient` espelhando `base44.entities` + Realtime.

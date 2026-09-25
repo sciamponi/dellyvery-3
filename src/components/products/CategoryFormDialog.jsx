@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/supabaseClient';
+import { createCategory as sbCreateCategory, updateCategory as sbUpdateCategory } from '@/api/catalog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,7 +12,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Image } from '@/components/ui/image';
 import { Upload, Loader2, X } from 'lucide-react';
 
-export default function CategoryFormDialog({ open, onOpenChange, category, companyId, onSaved }) {
+export default function CategoryFormDialog({ open, onOpenChange, category, companyId, useSupabase, onSaved }) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -54,10 +56,13 @@ export default function CategoryFormDialog({ open, onOpenChange, category, compa
       };
       delete data.id; delete data.created_date; delete data.updated_date; delete data.created_by_id;
       if (category) {
-        await base44.entities.Category.update(category.id, data);
+        // FASE 5.2: Supabase via adapter (RLS); senão Base44.
+        if (useSupabase) await sbUpdateCategory(supabase, category.id, data);
+        else await base44.entities.Category.update(category.id, data);
         toast({ title: 'Categoria atualizada!' });
       } else {
-        await base44.entities.Category.create(data);
+        if (useSupabase) await sbCreateCategory(supabase, companyId, data);
+        else await base44.entities.Category.create(data);
         toast({ title: 'Categoria criada!' });
       }
       onSaved?.();

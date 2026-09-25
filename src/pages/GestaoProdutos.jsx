@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
+import {
+  listCategories, listProducts, deleteCategory as sbDeleteCategory,
+  deleteProduct as sbDeleteProduct, updateCategory as sbUpdateCategory,
+  updateProduct as sbUpdateProduct,
+} from '@/api/catalog';
 import { useCompany } from '@/hooks/useCompany';
 import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -24,8 +31,13 @@ function Spinner() {
 }
 
 export default function GestaoProdutos() {
-  const { loading, company } = useCompany();
+  const { loading, company: base44Company } = useCompany();
   const { toast } = useToast();
+  // FASE 5.2: com sessão Supabase + empresa atual, catálogo via Supabase (RLS).
+  // Sem Supabase configurado, fluxo Base44 original é preservado.
+  const { user: sbUser, currentCompany: sbCompany, loading: sbLoading } = useSupabaseAuth();
+  const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
+  const effectiveCompany = sbActive ? { id: sbCompany.id, ...sbCompany } : base44Company;
   const [tab, setTab] = useState('produtos');
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -38,19 +50,33 @@ export default function GestaoProdutos() {
   const [deleteTarget, setDeleteTarget] = useState(null);
 
   const loadData = async () => {
-    if (!company) return;
-    const [prods, cats] = await Promise.all([
-      base44.entities.Product.filter({ company_id: company.id }, '-created_date'),
-      base44.entities.Category.filter({ company_id: company.id }, 'order'),
-    ]);
-    setProducts(prods);
-    setCategories(cats);
+    const comp = sbActive ? sbCompany : base44Company;
+    if (!comp) return;
+    try {
+      const [prods, cats] = sbActive
+        ? await Promise.all([
+            listProducts(supabase, comp.id),
+            listCategories(supabase, comp.id),
+          ])
+        : await Promise.all([
+            base44.entities.Product.filter({ company_id: comp.id }, '-created_date'),
+            base44.entities.Category.filter({ company_id: comp.id }, 'order'),
+          ]);
+      setProducts(prods);
+      setCategories(cats);
+    } catch (err) {
+      toast({ title: 'Erro ao carregar cardápio', description: err?.message, variant: 'destructive' });
+    }
   };
 
-  useEffect(() => { if (company) loadData(); }, [company]);
+  useEffect(() => {
+    if (sbActive || base44Company) loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base44Company?.id, sbActive, sbCompany?.id]);
 
-  if (loading) return <Spinner />;
-  if (!company) return null;
+  if (loading || sbLoading) return <Spinner />;
+  if (!effectiveCompany) return null;
+  const company = effectiveCompany;
 
   const filteredProducts = products.filter(p => {
     const ms = !search || p.name?.toLowerCase().includes(search.toLowerCase());
@@ -62,10 +88,12 @@ export default function GestaoProdutos() {
     if (!deleteTarget) return;
     try {
       if (deleteTarget.type === 'product') {
-        await base44.entities.Product.delete(deleteTarget.id);
+        if (sbActive) await sbDeleteProduct(supabase, deleteTarget.id);
+        else await base44.entities.Product.delete(deleteTarget.id);
         setProducts(prev => prev.filter(p => p.id !== deleteTarget.id));
       } else {
-        await base44.entities.Category.delete(deleteTarget.id);
+        if (sbActive) await sbDeleteCategory(supabase, deleteTarget.id);
+        else await base44.entities.Category.delete(deleteTarget.id);
         setCategories(prev => prev.filter(c => c.id !== deleteTarget.id));
       }
       toast({ title: 'Excluído com sucesso' });
@@ -78,7 +106,8 @@ export default function GestaoProdutos() {
 
   const toggleAvailable = async (product) => {
     try {
-      await base44.entities.Product.update(product.id, { available: !product.available });
+      if (sbActive) await sbUpdateProduct(supabase, product.id, { available: !product.available });
+      else await base44.entities.Product.update(product.id, { available: !product.available });
       setProducts(prev => prev.map(p => p.id === product.id ? { ...p, available: !p.available } : p));
     } catch (err) {
       toast({ title: 'Erro', variant: 'destructive' });
@@ -87,7 +116,8 @@ export default function GestaoProdutos() {
 
   const toggleCategoryActive = async (cat) => {
     try {
-      await base44.entities.Category.update(cat.id, { active: !cat.active });
+      if (sbActive) await sbUpdateCategory(supabase, cat.id, { active: !cat.active });
+      else await base44.entities.Category.update(cat.id, { active: !cat.active });
       setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, active: !c.active } : c));
     } catch (err) {
       toast({ title: 'Erro', variant: 'destructive' });
@@ -256,6 +286,7 @@ export default function GestaoProdutos() {
         product={editProduct}
         categories={categories}
         companyId={company.id}
+        useSupabase={sbActive}
         onSaved={loadData}
       />
       <CategoryFormDialog
@@ -263,6 +294,7 @@ export default function GestaoProdutos() {
         onOpenChange={setCategoryDialog}
         category={editCategory}
         companyId={company.id}
+        useSupabase={sbActive}
         onSaved={loadData}
       />
       <ConfirmDialog

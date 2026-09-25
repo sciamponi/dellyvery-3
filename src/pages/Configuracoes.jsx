@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
+import { listZones, createZone as sbCreateZone, deleteZone as sbDeleteZone } from '@/api/deliveryZones';
 import { useCompany } from '@/hooks/useCompany';
 import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -25,6 +28,10 @@ function Spinner() {
 export default function Configuracoes() {
   const { loading, company, setCompany } = useCompany();
   const { toast } = useToast();
+  // FASE 5.3: CRUD de zonas via Supabase quando há sessão + empresa atual.
+  // Leitura do Checkout permanece Base44 (sem anon nesta fase).
+  const { user: sbUser, currentCompany: sbCompany } = useSupabaseAuth();
+  const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [form, setForm] = useState(null);
@@ -34,9 +41,11 @@ export default function Configuracoes() {
   useEffect(() => {
     if (company) {
       setForm({ ...company });
-      base44.entities.DeliveryZone.filter({ company_id: company.id }).then(setZones);
+      if (sbActive && sbCompany) listZones(supabase, sbCompany.id).then(setZones).catch(() => {});
+      else base44.entities.DeliveryZone.filter({ company_id: company.id }).then(setZones);
     }
-  }, [company]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company, sbActive]);
 
   if (loading || !form) return <Spinner />;
   if (!company) return null;
@@ -78,17 +87,20 @@ export default function Configuracoes() {
   const addZone = async () => {
     if (!newZone.name.trim()) return;
     try {
-      const z = await base44.entities.DeliveryZone.create({ ...newZone, company_id: company.id, fee: Number(newZone.fee) || 0, estimated_time: Number(newZone.estimated_time) || 30 });
+      const z = sbActive && sbCompany
+        ? await sbCreateZone(supabase, sbCompany.id, { ...newZone, fee: Number(newZone.fee) || 0, estimated_time: Number(newZone.estimated_time) || 30 })
+        : await base44.entities.DeliveryZone.create({ ...newZone, company_id: company.id, fee: Number(newZone.fee) || 0, estimated_time: Number(newZone.estimated_time) || 30 });
       setZones(prev => [...prev, z]);
       setNewZone({ name: '', fee: 0, estimated_time: 30 });
-    } catch (err) { toast({ title: 'Erro', variant: 'destructive' }); }
+    } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }
   };
 
   const deleteZone = async (id) => {
     try {
-      await base44.entities.DeliveryZone.delete(id);
+      if (sbActive) await sbDeleteZone(supabase, id);
+      else await base44.entities.DeliveryZone.delete(id);
       setZones(prev => prev.filter(z => z.id !== id));
-    } catch (err) { toast({ title: 'Erro', variant: 'destructive' }); }
+    } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }
   };
 
   return (

@@ -1,5 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
+import {
+  listCustomers, createCustomer as sbCreateCustomer, updateCustomer as sbUpdateCustomer,
+  deleteCustomer as sbDeleteCustomer,
+} from '@/api/customers';
 import { useCompany } from '@/hooks/useCompany';
 import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -31,8 +37,12 @@ const FILTERS = [
 ];
 
 export default function Clientes() {
-  const { loading, company } = useCompany();
+  const { loading, company: base44Company } = useCompany();
   const { toast } = useToast();
+  // FASE 5.3: com sessão Supabase + empresa atual, clientes via Supabase (RLS).
+  const { user: sbUser, currentCompany: sbCompany, loading: sbLoading } = useSupabaseAuth();
+  const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
+  const company = sbActive ? { id: sbCompany.id, ...sbCompany } : base44Company;
   const [customers, setCustomers] = useState([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
@@ -45,13 +55,22 @@ export default function Clientes() {
 
   const loadData = async () => {
     if (!company) return;
-    const list = await base44.entities.Customer.filter({ company_id: company.id }, '-created_date');
-    setCustomers(list);
+    try {
+      const list = sbActive
+        ? await listCustomers(supabase, company.id)
+        : await base44.entities.Customer.filter({ company_id: company.id }, '-created_date');
+      setCustomers(list);
+    } catch (err) {
+      toast({ title: 'Erro ao carregar clientes', description: err?.message, variant: 'destructive' });
+    }
   };
 
-  useEffect(() => { if (company) loadData(); }, [company]);
+  useEffect(() => {
+    if (company) loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company?.id, sbActive]);
 
-  if (loading) return <Spinner />;
+  if (loading || sbLoading) return <Spinner />;
   if (!company) return null;
 
   const filtered = customers.filter(c => {
@@ -82,10 +101,19 @@ export default function Clientes() {
       const data = { ...form, company_id: company.id, tags: form.tags || [] };
       delete data.id; delete data.created_date; delete data.updated_date; delete data.created_by_id;
       if (editCustomer) {
-        await base44.entities.Customer.update(editCustomer.id, data);
+        if (sbActive) {
+          await sbUpdateCustomer(supabase, editCustomer.id, data, {
+            street: editCustomer.address, number: editCustomer.number,
+            complement: editCustomer.complement, neighborhood: editCustomer.neighborhood,
+            city: editCustomer.city, zip_code: editCustomer.zip_code,
+          });
+        } else {
+          await base44.entities.Customer.update(editCustomer.id, data);
+        }
         toast({ title: 'Cliente atualizado!' });
       } else {
-        await base44.entities.Customer.create(data);
+        if (sbActive) await sbCreateCustomer(supabase, company.id, data);
+        else await base44.entities.Customer.create(data);
         toast({ title: 'Cliente criado!' });
       }
       setDialog(false);
@@ -98,7 +126,8 @@ export default function Clientes() {
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
-      await base44.entities.Customer.delete(deleteTarget.id);
+      if (sbActive) await sbDeleteCustomer(supabase, deleteTarget.id);
+      else await base44.entities.Customer.delete(deleteTarget.id);
       setCustomers(prev => prev.filter(c => c.id !== deleteTarget.id));
       toast({ title: 'Cliente excluído' });
     } catch (err) { toast({ title: 'Erro', variant: 'destructive' }); }
@@ -107,7 +136,8 @@ export default function Clientes() {
 
   const toggleFavorite = async (c) => {
     try {
-      await base44.entities.Customer.update(c.id, { is_favorite: !c.is_favorite });
+      if (sbActive) await sbUpdateCustomer(supabase, c.id, { is_favorite: !c.is_favorite });
+      else await base44.entities.Customer.update(c.id, { is_favorite: !c.is_favorite });
       setCustomers(prev => prev.map(x => x.id === c.id ? { ...x, is_favorite: !x.is_favorite } : x));
       toast({ title: c.is_favorite ? 'Removido dos favoritos' : 'Adicionado aos favoritos' });
     } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }
@@ -115,7 +145,8 @@ export default function Clientes() {
 
   const toggleBlocked = async (c) => {
     try {
-      await base44.entities.Customer.update(c.id, { is_blocked: !c.is_blocked });
+      if (sbActive) await sbUpdateCustomer(supabase, c.id, { is_blocked: !c.is_blocked });
+      else await base44.entities.Customer.update(c.id, { is_blocked: !c.is_blocked });
       setCustomers(prev => prev.map(x => x.id === c.id ? { ...x, is_blocked: !x.is_blocked } : x));
       toast({ title: c.is_blocked ? 'Cliente desbloqueado' : 'Cliente bloqueado' });
     } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }
@@ -277,6 +308,7 @@ export default function Clientes() {
         open={importOpen}
         onOpenChange={setImportOpen}
         companyId={company.id}
+        useSupabase={sbActive}
         existingCustomers={customers}
         onImported={loadData}
       />

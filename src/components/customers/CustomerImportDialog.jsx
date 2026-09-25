@@ -1,5 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/supabaseClient';
+import { createCustomer as sbCreateCustomer, onlyDigits as sbOnlyDigits, isDuplicateCustomer } from '@/api/customers';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -69,7 +71,7 @@ function onlyDigits(v) {
   return (v || '').replace(/\D/g, '');
 }
 
-export default function CustomerImportDialog({ open, onOpenChange, companyId, existingCustomers = [], onImported }) {
+export default function CustomerImportDialog({ open, onOpenChange, companyId, useSupabase, existingCustomers = [], onImported }) {
   const { toast } = useToast();
   const fileRef = useRef(null);
   const [fileName, setFileName] = useState('');
@@ -124,8 +126,8 @@ export default function CustomerImportDialog({ open, onOpenChange, companyId, ex
   };
 
   const known = {
-    whatsapp: new Set(existingCustomers.map(c => onlyDigits(c.whatsapp)).filter(Boolean)),
-    phone: new Set(existingCustomers.map(c => onlyDigits(c.phone)).filter(Boolean)),
+    whatsapp: new Set(existingCustomers.map(c => sbOnlyDigits(c.whatsapp)).filter(Boolean)),
+    phone: new Set(existingCustomers.map(c => sbOnlyDigits(c.phone)).filter(Boolean)),
     email: new Set(existingCustomers.map(c => (c.email || '').trim().toLowerCase()).filter(Boolean)),
   };
 
@@ -158,7 +160,9 @@ export default function CustomerImportDialog({ open, onOpenChange, companyId, ex
     const errors = [];
     for (const r of valid) {
       try {
-        await base44.entities.Customer.create({
+        // FASE 5.3: mesma dedupe; criação via adapter (RLS) quando Supabase.
+        if (isDuplicateCustomer(existingCustomers, r.obj)) continue;
+        const payload = {
           company_id: companyId,
           name: r.obj.name,
           whatsapp: r.obj.whatsapp || '',
@@ -172,7 +176,11 @@ export default function CustomerImportDialog({ open, onOpenChange, companyId, ex
           tags: [],
           is_favorite: false,
           is_blocked: false,
-        });
+        };
+        if (useSupabase) await sbCreateCustomer(supabase, companyId, payload);
+        else {
+          await base44.entities.Customer.create(payload);
+        }
         created++;
       } catch (err) {
         errors.push(`Linha ${r.idx + 2}: ${err?.message || 'erro'}`);

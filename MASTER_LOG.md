@@ -52,6 +52,11 @@ Log de decisões da FASE 1 (chronológico). Próximas fases adicionam entradas n
 **Decisão:** Após ETAPA A aprovar o mapa, migration incremental só-ADD (`20260925000001`, aplicada só local) + trigger mesma-empresa para `category_id` (FK atual não garantia); adapter `catalog.js` com mapeamentos e updates parciais; 3 telas com branch Supabase/Base44 por `sbActive`; upload mantido no Base44; Menu/OrderModal/Dashboard/Assinatura preservados.
 **Motivo:** Fidelidade funcional sem perda de campos; RLS+trigger no banco, adapter como defesa em profundidade; validação 34/34 unit + 16/16 E2E + RBAC, tudo local.
 
+## 2026-09-25 — FASE 5.3: Clientes + Delivery Zones no Supabase (sem commit)
+
+**Decisão:** Migration incremental (`20260925000002`, só local): colunas customers + triggers mesma-empresa em orders (customer/zone/driver) e whatsapp_messages (connection/customer); adapters com endereço jsonb↔planos e dedupe preservada; 3 pontos de tela com branch Supabase/Base44; Checkout/zones-anon e drivers fora do escopo.
+**Motivo:** Cobrir CRUD/filtros/favoritos/bloqueados/tags/importação sem quebrar Pedidos; validação 44/44 unit + 20/20 E2E + 5/5 RBAC, tudo local.
+
 ## Pendências para FASE 2 restante
 
 - Adapter `supabaseClient` espelhando `base44.entities` + Realtime.

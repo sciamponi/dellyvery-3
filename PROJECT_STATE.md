@@ -72,7 +72,15 @@
 - **Validação local:** unit `npm run test:supabase` 34/34; E2E REST 16/16 (CRUD, todos os campos, isolamento, cross-company bloqueado por RLS+trigger com posterior, toggle, deletes OWNER); RBAC OPERATOR bloqueado/MANAGER permitido com posterior; dados de teste removidos (0 restantes).
 - **Build** OK; **lint** só os 11 `unused-imports` pré-existentes. Sem db push/push/commit; prisma-studio e DELLVERY 2.0 intocados.
 
-## 10. Próximos passos bloqueados (aguardando autorização)
+## 10. FASE 5.3 — Clientes + Delivery Zones no Supabase (2026-09-25, sem commit)
+
+- **Migration nova (só local):** `supabase/migrations/20260925000002_dellyvery3_customers_delivery.sql` — `customers`: +`whatsapp`/`tags`/`is_favorite`/`is_blocked` + índice company+whatsapp; `orders_count/total_spent` fora (agregados de Pedidos); triggers mesma-empresa `trg_orders_company_refs` (customer/zone/driver) + `trg_whatsapp_messages_company` (connection/customer), dados pré-existentes verificados consistentes.
+- **Adapters:** `src/api/customers.js` (+dedupe `isDuplicateCustomer`, endereço jsonb↔planos) e `src/api/deliveryZones.js` (+`customersZones.test.js`, 10 asserts).
+- **Telas migradas (Supabase quando configurado):** `Clientes.jsx`, `CustomerImportDialog.jsx`, aba Delivery de `Configuracoes.jsx`. NÃO migrados: Checkout (zonas anon — sem policy anon), Menu, OrderModal, Pedidos, Tracking, Assinatura, Dashboard, Financeiro, Notificações; drivers sem UI (tabela pronta).
+- **Validação local:** unit 44/44; E2E 20/20 (CRUD, address JSON, isolamento, cross bloqueado RLS+trigger com posterior, anon sem acesso, deletes OWNER); RBAC 5/5 (OPERATOR lista/atualiza cliente, DELETE cliente/zona bloqueado 0 linhas, posterior intacto); dados de teste removidos.
+- **Build** OK; **lint** só os 11 pré-existentes. Sem db push/push/commit; prisma-studio e DELLVERY 2.0 intocados.
+
+## 11. Próximos passos bloqueados (aguardando autorização)
 
 - NÃO criar banco/Supabase/VPS remoto adicional, NÃO migrar Auth/Base44 completamente, NÃO remover Base44, NÃO implementar novos módulos (entregadores, funcionários, caixa/PDV, preview, WhatsApp, Master, Marketing/Publicidade em breve). Conectar ao Lovable só após estabilizar `ZIP → DELLVERY 3 → GitHub`.
 

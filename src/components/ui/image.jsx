@@ -202,7 +202,15 @@ const Image = React.forwardRef(
       // click-to-edit toolbar keys its "Replace Image" action off the DOM
       // tag being `img`, so a placeholder div would be unrecoverable in the
       // editor. FALLBACK_IMAGE_URL doubles as the "no image chosen" graphic.
-      return <img ref={ref} src={FALLBACK_IMAGE_URL} {...imageProps} data-empty-image />
+      return (
+        <img
+          ref={ref}
+          src={FALLBACK_IMAGE_URL}
+          {...imageProps}
+          className={cn("object-cover object-center", imageProps.className)}
+          data-empty-image
+        />
+      )
     }
 
     // The fallback renders as a plain <img> so a broken upload can't cascade
@@ -210,9 +218,18 @@ const Image = React.forwardRef(
     const parsed = imgSrc === FALLBACK_IMAGE_URL ? null : parseWixMediaUrl(imgSrc)
 
     if (!parsed) {
+      // URLs fora do Wix (ex.: Supabase Storage) renderizam <img> puro: sem
+      // object-fit o navegador ESTICA a imagem ao box. object-cover
+      // centralizado é o padrão seguro para todos os usos com dimensões fixas.
       const isErrorUrl = imgSrc === FALLBACK_IMAGE_URL
       return (
-        <img ref={ref} src={imgSrc} {...imageProps} data-error-image={isErrorUrl || undefined} />
+        <img
+          ref={ref}
+          src={imgSrc}
+          {...imageProps}
+          className={cn("object-cover object-center", imageProps.className)}
+          data-error-image={isErrorUrl || undefined}
+        />
       )
     }
 

@@ -1,4 +1,6 @@
 import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { changeOrderStatus as sbChangeOrderStatus } from '@/api/orders';
 
 /**
  * Fluxo centralizado de mudança de status de pedidos (frontend).
@@ -82,6 +84,15 @@ export function getAvailableActions(order) {
  * (o backend retorna o pedido sem criar histórico/notificação).
  */
 export async function changeOrderStatus(orderId, newStatus) {
+  // FASE 5.4: com sessão Supabase, status via RPC manage_order; senão Base44.
+  if (isSupabaseConfigured()) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session) return sbChangeOrderStatus(supabase, orderId, newStatus);
+    } catch {
+      // sem sessão válida: cai no fluxo Base44 abaixo
+    }
+  }
   const res = await base44.functions.invoke('manageOrder', {
     action: 'status',
     order_id: orderId,

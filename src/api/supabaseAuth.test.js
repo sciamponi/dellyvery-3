@@ -10,6 +10,7 @@ import {
   fetchRestaurantSegment,
   createCompanyWithOwner,
   signUpRestaurant,
+  provisionCompanyForCurrentUser,
   slugifyCompanyName,
   ONBOARDING_SEGMENT_SLUG,
 } from './supabaseAuth.js';
@@ -122,11 +123,11 @@ describe('supabaseAuth — profile', () => {
 describe('supabaseAuth — memberships/role', () => {
   it('carrega memberships com empresa e role', async () => {
     const rows = [
-      { company_id: 'c1', role: 'OWNER', active: true, companies: { id: 'c1', name: 'Loja', slug: 'loja', active: true } },
+      { company_id: 'c1', role: 'OWNER', active: true, companies: { id: 'c1', name: 'Loja', slug: 'loja', active: true, is_open: true } },
     ];
     const client = createMockClient({ tables: { company_members: { select: { data: rows, error: null } } } });
     const members = await fetchMemberships(client, 'u1');
-    assert.deepEqual(members, [{ companyId: 'c1', role: 'OWNER', company: { id: 'c1', name: 'Loja', slug: 'loja', active: true } }]);
+    assert.deepEqual(members, [{ companyId: 'c1', role: 'OWNER', company: { id: 'c1', name: 'Loja', slug: 'loja', active: true, is_open: true } }]);
   });
 
   it('usuário sem empresa retorna lista vazia (tratável pela UI)', async () => {
@@ -190,5 +191,55 @@ describe('supabaseAuth — criação de empresa', () => {
   it('signUp sem password válido propaga erro do Auth', async () => {
     const client = createMockClient({ auth: { signUp: { data: { user: null, session: null }, error: new Error('weak password') } } });
     await assert.rejects(() => signUpWithPassword(client, { email: 'a@x.com', password: '1' }), /weak password/);
+  });
+});
+
+describe('supabaseAuth — onboarding usuário autenticado (correção create restaurant)', () => {
+  const seg = { id: 'seg1', slug: 'restaurant', name: 'Restaurante' };
+  const members = [{ company_id: 'c9', role: 'OWNER', active: true, companies: { id: 'c9', name: 'L', slug: 'l', active: true } }];
+
+  function authedClient() {
+    return createMockClient({
+      auth: { session: { data: { session: { user: { id: 'u1', email: 'n@x.com' } } }, error: null } },
+      tables: {
+        profiles: { select: { data: { id: 'u1' }, error: null } },
+        business_segments: { select: { data: seg, error: null } },
+        company_members: { select: { data: [], error: null } },
+      },
+      rpcResult: { data: 'c9', error: null },
+    });
+  }
+
+  it('NÃO refaz signup: usa sessão, cria empresa (created true)', async () => {
+    const client = authedClient();
+    const out = await provisionCompanyForCurrentUser(client, { companyName: 'Loja Nova' });
+    assert.equal(out.companyId, 'c9');
+    assert.equal(out.created, true);
+    assert.ok(client.calls.authCalls.every((c) => c.op !== 'signUp'), 'signup não deve ser chamado');
+    assert.equal(client.calls.rpc.length, 1);
+  });
+
+  it('com empresa existente: não cria outra (created false, sem RPC)', async () => {
+    const client = authedClient();
+    client.from = ((orig) => (name) => {
+      if (name === 'company_members') {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          then: (resolve) => resolve({ data: members, error: null }),
+        };
+        return chain;
+      }
+      return orig(name);
+    })(client.from);
+    const out = await provisionCompanyForCurrentUser(client, { companyName: 'Outra' });
+    assert.equal(out.companyId, 'c9');
+    assert.equal(out.created, false);
+    assert.equal(client.calls.rpc.length, 0);
+  });
+
+  it('sem sessão: erro claro (entrar novamente)', async () => {
+    const client = createMockClient();
+    await assert.rejects(() => provisionCompanyForCurrentUser(client, { companyName: 'X' }), /Sessão não encontrada/);
   });
 });

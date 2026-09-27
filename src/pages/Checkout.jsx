@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { createOrder as sbCreateOrder } from '@/api/orders';
+import { getStorefrontBySlug } from '@/api/storefront';
 import { useCart } from '@/lib/CartContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,20 +50,23 @@ export default function Checkout() {
     }
   }, [mesaParam]);
 
+  // Checkout Supabase-only: leitura via storefront (RPC pública).
   useEffect(() => {
     const load = async () => {
       try {
-        const results = await base44.entities.Company.filter({ slug });
-        if (results.length === 0) {
-          navigate('/');
+        if (!isSupabaseConfigured()) {
+          setError('Sistema indisponível no momento. Tente novamente.');
           return;
         }
-        const comp = results[0];
-        setCartCompany(comp);
-        const zones = await base44.entities.DeliveryZone.filter({ company_id: comp.id });
-        setDeliveryZones(zones);
+        const storefront = await getStorefrontBySlug(supabase, slug);
+        setCartCompany(storefront.company);
+        setDeliveryZones(storefront.delivery_zones || []);
       } catch (err) {
-        console.error(err);
+        if (err?.code === 'NOT_FOUND') navigate('/');
+        else {
+          console.error(err);
+          setError('Não foi possível carregar a loja.');
+        }
       } finally {
         setLoading(false);
       }
@@ -112,14 +117,26 @@ export default function Checkout() {
     }
   };
 
+  // Loja fechada não recebe pedidos (mesma fonte do cardápio: companies.is_open).
+  const isClosed = company?.is_open === false;
+
+  // Criação Supabase-only via RPC create_order (preços/totais no servidor).
   const handleSubmit = async () => {
+    if (!isSupabaseConfigured()) {
+      setError('Sistema indisponível no momento. Tente novamente.');
+      return;
+    }
+    if (company?.is_open === false) {
+      setError('Esta loja está fechada no momento e não está recebendo pedidos.');
+      return;
+    }
     setSubmitting(true);
     setError('');
     try {
-      const response = await base44.functions.invoke('createOrder', {
-        company_slug: slug,
-        order_type: orderType,
-        table_number: tableNumber,
+      const created = await sbCreateOrder(supabase, {
+        companySlug: slug,
+        orderType,
+        tableNumber,
         items: items.map(item => ({
           product_id: item.product_id,
           quantity: item.quantity,
@@ -127,15 +144,14 @@ export default function Checkout() {
           notes: item.notes
         })),
         customer,
-        delivery_zone_id: deliveryZoneId,
-        payment_method: paymentMethod,
+        deliveryZoneId,
+        paymentMethod,
         notes
       });
-
       clearCart();
-      navigate(`/acompanhar/${response.data.tracking_token}`);
+      navigate(`/acompanhar/${created.tracking_token}`);
     } catch (err) {
-      setError(err.response?.data?.error || 'Erro ao criar pedido. Tente novamente.');
+      setError(err?.message || 'Erro ao criar pedido. Tente novamente.');
     } finally {
       setSubmitting(false);
     }
@@ -176,6 +192,12 @@ export default function Checkout() {
       </div>
 
       <div className="mx-auto max-w-2xl px-4 pb-32">
+        {isClosed && (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm">
+            <p className="font-semibold text-red-700">🔴 Loja fechada</p>
+            <p className="text-red-600 mt-0.5">Esta loja não está recebendo pedidos no momento. Volte em breve.</p>
+          </div>
+        )}
         {/* Step 1: Order type */}
         {step === 1 && (
           <div className="space-y-4">
@@ -373,7 +395,7 @@ export default function Checkout() {
             {error && <p className="text-sm text-red-600">{error}</p>}
             <div className="flex gap-3">
               <Button variant="outline" className="flex-1" onClick={() => setStep(2)} disabled={submitting}>Voltar</Button>
-              <Button className="flex-1" style={{ backgroundColor: primaryColor }} onClick={handleSubmit} disabled={submitting}>
+              <Button className="flex-1" style={{ backgroundColor: primaryColor }} onClick={handleSubmit} disabled={submitting || isClosed}>
                 {submitting ? (
                   <><Loader2 className="h-4 w-4 animate-spin" /> Enviando...</>
                 ) : (

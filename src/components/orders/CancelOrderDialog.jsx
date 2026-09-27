@@ -3,10 +3,16 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
+import { cancelOrder as sbCancelOrder } from '@/api/orders';
 import { useToast } from '@/components/ui/use-toast';
 
 export default function CancelOrderDialog({ order, isOpen, onClose, onCancelled }) {
   const { toast } = useToast();
+  // FASE 5.4: cancelamento via adapter Supabase quando há sessão.
+  const { user: sbUser } = useSupabaseAuth();
+  const sbActive = isSupabaseConfigured() && !!sbUser;
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -17,12 +23,17 @@ export default function CancelOrderDialog({ order, isOpen, onClose, onCancelled 
     }
     setSaving(true);
     try {
-      const res = await base44.functions.invoke('manageOrder', {
-        action: 'cancel',
-        order_id: order.id,
-        cancel_reason: reason
-      });
-      onCancelled(res.data.order);
+      if (sbActive) {
+        const updated = await sbCancelOrder(supabase, order.id, reason);
+        onCancelled({ ...order, ...updated });
+      } else {
+        const res = await base44.functions.invoke('manageOrder', {
+          action: 'cancel',
+          order_id: order.id,
+          cancel_reason: reason
+        });
+        onCancelled(res.data.order);
+      }
       setReason('');
       onClose();
       toast({ title: 'Pedido cancelado' });

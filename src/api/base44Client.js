@@ -10,5 +10,8 @@ export const base44 = createClient({
   functionsVersion,
   serverUrl: '',
   requiresAuth: false,
-  appBaseUrl
+  appBaseUrl,
+  // Telemetria do editor Base44 desligada no deploy standalone (sem ela, o
+  // SDK chama /api inexistente e quebra o render fora do editor).
+  analytics: { enabled: false },
 });

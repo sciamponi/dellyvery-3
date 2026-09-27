@@ -18,7 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Image } from '@/components/ui/image';
 import { useToast } from '@/components/ui/use-toast';
-import { Plus, Search, Pencil, Trash2, Package, Star, Tag, PackageX, Clock } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Package, Star, Tag, Clock } from 'lucide-react';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -84,6 +84,11 @@ export default function GestaoProdutos() {
     return ms && mc;
   });
 
+  const openEditProduct = (product) => {
+    setEditProduct(product);
+    setProductDialog(true);
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
@@ -128,11 +133,11 @@ export default function GestaoProdutos() {
     <div>
       <PageHeader title="Cardápio" description="Gerencie seus produtos e categorias">
         {tab === 'produtos' ? (
-          <Button onClick={() => { setEditProduct(null); setProductDialog(true); }} className="bg-primary hover:bg-primary/90">
+          <Button onClick={() => { setEditProduct(null); setProductDialog(true); }} className="bg-primary hover:bg-primary/90 h-9 px-4">
             <Plus className="h-4 w-4" /> Novo produto
           </Button>
         ) : (
-          <Button onClick={() => { setEditCategory(null); setCategoryDialog(true); }} className="bg-primary hover:bg-primary/90">
+          <Button onClick={() => { setEditCategory(null); setCategoryDialog(true); }} className="bg-primary hover:bg-primary/90 h-9 px-4">
             <Plus className="h-4 w-4" /> Nova categoria
           </Button>
         )}
@@ -145,16 +150,16 @@ export default function GestaoProdutos() {
         </TabsList>
 
         {/* Products tab */}
-        <TabsContent value="produtos" className="mt-6">
-          <div className="flex flex-col sm:flex-row gap-3 mb-6">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar produto..." className="pl-9" />
+        <TabsContent value="produtos" className="mt-4">
+          <div className="flex flex-col gap-2 mb-4 lg:flex-row lg:items-center">
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar produto..." className="pl-9 h-9 text-sm" />
             </div>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              <button onClick={() => setFilterCat('all')} className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors ${filterCat === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>Todos</button>
+            <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 lg:max-w-[60%] lg:justify-end lg:flex-wrap lg:overflow-visible">
+              <button onClick={() => setFilterCat('all')} className={`shrink-0 whitespace-nowrap rounded-full px-3 h-8 text-xs font-medium transition-colors border ${filterCat === 'all' ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-transparent hover:bg-muted/70'}`}>Todos</button>
               {categories.map(c => (
-                <button key={c.id} onClick={() => setFilterCat(c.id)} className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors ${filterCat === c.id ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                <button key={c.id} onClick={() => setFilterCat(c.id)} title={c.name} className={`shrink-0 whitespace-nowrap rounded-full px-3 h-8 text-xs font-medium transition-colors border ${filterCat === c.id ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-transparent hover:bg-muted/70'}`}>
                   {c.icon} {c.name}
                 </button>
               ))}
@@ -175,54 +180,79 @@ export default function GestaoProdutos() {
               )}
             </div>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filteredProducts.map(product => {
                 const cat = categories.find(c => c.id === product.category_id);
-                const displayPrice = product.promotional_price ? product.promotional_price : product.price;
                 return (
-                  <div key={product.id} className="rounded-2xl border border-border bg-card overflow-hidden hover:shadow-md transition-shadow">
-                    <div className="relative h-32 bg-muted">
+                  <div
+                    key={product.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openEditProduct(product)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEditProduct(product); } }}
+                    className="rounded-xl border border-border bg-card overflow-hidden cursor-pointer transition-all hover:shadow-md hover:border-primary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <div className="relative aspect-[16/10] overflow-hidden bg-muted">
                       {product.image_url ? (
                         <Image src={product.image_url} fittingType="fill" className="h-full w-full" alt={product.name} />
                       ) : (
-                        <div className="flex h-full items-center justify-center"><Package className="h-10 w-10 text-muted-foreground" /></div>
+                        <div className="flex h-full items-center justify-center"><Package className="h-8 w-8 text-muted-foreground/60" /></div>
                       )}
                       <div className="absolute top-2 left-2 flex gap-1">
-                        {product.is_featured && <span className="rounded-md bg-yellow-100 text-yellow-700 px-2 py-0.5 text-xs font-medium flex items-center gap-1"><Star className="h-3 w-3" /> Destaque</span>}
-                        {product.is_bestseller && <span className="rounded-md bg-green-100 text-green-700 px-2 py-0.5 text-xs font-medium">Mais vendido</span>}
+                        {product.is_featured && <span className="rounded-md bg-yellow-100 text-yellow-700 px-1.5 py-0.5 text-[11px] font-medium flex items-center gap-0.5 shadow-sm"><Star className="h-3 w-3" /> Destaque</span>}
+                        {product.is_bestseller && <span className="rounded-md bg-green-100 text-green-700 px-1.5 py-0.5 text-[11px] font-medium shadow-sm">Mais vendido</span>}
                       </div>
-                      {!product.available && <span className="absolute top-2 right-2 rounded-md bg-red-100 text-red-700 px-2 py-0.5 text-xs font-medium">Indisponível</span>}
-                      {product.is_made_to_order && <span className="absolute bottom-2 right-2 rounded-md bg-blue-100 text-blue-700 px-2 py-0.5 text-xs font-medium flex items-center gap-1"><Clock className="h-3 w-3" /> Encomenda</span>}
+                      {!product.available && <span className="absolute top-2 right-2 rounded-md bg-red-100 text-red-700 px-1.5 py-0.5 text-[11px] font-medium shadow-sm">Indisponível</span>}
+                      {product.is_made_to_order && <span className="absolute bottom-2 right-2 rounded-md bg-blue-100 text-blue-700 px-1.5 py-0.5 text-[11px] font-medium flex items-center gap-0.5 shadow-sm"><Clock className="h-3 w-3" /> Encomenda</span>}
                     </div>
-                    <div className="p-4">
+                    <div className="p-3">
                       <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <h3 className="font-heading font-semibold text-foreground truncate">{product.name}</h3>
-                          {cat && <p className="text-xs text-muted-foreground mt-0.5">{cat.icon} {cat.name}</p>}
-                        </div>
+                        <h3 className="font-heading font-semibold text-sm text-foreground truncate flex-1 min-w-0">{product.name}</h3>
                         <div className="text-right shrink-0">
                           {product.promotional_price ? (
                             <>
-                              <p className="text-xs text-muted-foreground line-through">{fmtCurrency(product.price)}</p>
-                              <p className="font-heading font-bold text-primary">{fmtCurrency(product.promotional_price)}</p>
+                              <p className="text-[11px] text-muted-foreground line-through leading-tight">{fmtCurrency(product.price)}</p>
+                              <p className="font-heading font-bold text-sm text-primary leading-tight">{fmtCurrency(product.promotional_price)}</p>
                             </>
                           ) : (
-                            <p className="font-heading font-bold text-foreground">{fmtCurrency(product.price)}</p>
+                            <p className="font-heading font-bold text-sm text-foreground leading-tight">{fmtCurrency(product.price)}</p>
                           )}
                         </div>
                       </div>
-                      {product.description && <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{product.description}</p>}
-                      <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
-                        <div className="flex items-center gap-2">
-                          <Switch checked={!!product.available} onCheckedChange={() => toggleAvailable(product)} />
-                          <span className="text-xs text-muted-foreground">{product.available ? 'Ativo' : 'Inativo'}</span>
-                        </div>
+                      {cat && <p className="text-xs text-muted-foreground mt-0.5 truncate">{cat.icon} {cat.name}</p>}
+                      {product.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2 min-h-[2rem] leading-snug">{product.description}</p>}
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-border">
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); toggleAvailable(product); }}
+                          className="flex items-center gap-1.5 rounded-full px-1.5 py-1 -ml-1.5 hover:bg-muted transition-colors"
+                          aria-label={product.available ? 'Desativar produto' : 'Ativar produto'}
+                        >
+                          <span onClick={(e) => e.stopPropagation()}>
+                            <Switch checked={!!product.available} onCheckedChange={() => toggleAvailable(product)} onClick={(e) => e.stopPropagation()} />
+                          </span>
+                          <span className={`text-[11px] font-medium flex items-center gap-1 ${product.available ? 'text-green-700' : 'text-muted-foreground'}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${product.available ? 'bg-green-500' : 'bg-muted-foreground/50'}`} />
+                            {product.available ? 'Ativo' : 'Inativo'}
+                          </span>
+                        </button>
                         <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="icon" onClick={() => { setEditProduct(product); setProductDialog(true); }}>
-                            <Pencil className="h-4 w-4 text-muted-foreground" />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-3 text-xs font-medium"
+                            onClick={(e) => { e.stopPropagation(); openEditProduct(product); }}
+                          >
+                            <Pencil className="h-3.5 w-3.5" /> Editar
                           </Button>
-                          <Button variant="ghost" size="icon" onClick={() => setDeleteTarget({ type: 'product', id: product.id, name: product.name })}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            aria-label={`Excluir ${product.name}`}
+                            onClick={(e) => { e.stopPropagation(); setDeleteTarget({ type: 'product', id: product.id, name: product.name }); }}
+                          >
+                            <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
                       </div>
@@ -254,7 +284,7 @@ export default function GestaoProdutos() {
                 return (
                   <div key={cat.id} className="rounded-2xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
                     <div className="flex items-start justify-between">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-2xl">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-2xl overflow-hidden">
                         {cat.image_url ? <Image src={cat.image_url} fittingType="fill" className="h-12 w-12 rounded-xl" alt={cat.name} /> : (cat.icon || '📦')}
                       </div>
                       <div className="flex items-center gap-1">

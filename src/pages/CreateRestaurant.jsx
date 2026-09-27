@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
-import { getSession, signUpRestaurant } from '@/api/supabaseAuth';
+import { getSession, signUpRestaurant, provisionCompanyForCurrentUser } from '@/api/supabaseAuth';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -65,14 +65,24 @@ export default function CreateRestaurant() {
     setLoading(true);
     setError('');
     try {
-      await signUpRestaurant(supabase, {
+      // Correção onboarding: sessão existente NÃO refaz signup (daria
+      // "User already registered"). Reaproveita a sessão e só provisiona.
+      const existing = await getSession(supabase).catch(() => null);
+      const payload = {
         email: form.email,
-        password: form.password,
         companyName: form.restaurantName,
         phone: form.whatsapp,
-      });
+      };
+      const result = existing?.user
+        ? await provisionCompanyForCurrentUser(supabase, payload)
+        : await signUpRestaurant(supabase, { ...payload, password: form.password });
       await refreshSb();
-      toast({ title: 'Restaurante criado!', description: 'Seu trial de 7 dias começou.' });
+      toast({
+        title: result.created === false ? 'Bem-vindo de volta!' : 'Restaurante criado!',
+        description: result.created === false
+          ? 'Selecionamos sua empresa existente.'
+          : 'Seu trial de 7 dias começou.',
+      });
       navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(err?.message || 'Erro ao criar restaurante');

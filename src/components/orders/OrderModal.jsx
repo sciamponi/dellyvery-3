@@ -3,10 +3,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Image } from '@/components/ui/image';
-import { Bike, Store, Table2, Phone, MapPin, Receipt, Clock, XCircle, Pencil, X, Check, ArrowRight, Package, Plus, Search } from 'lucide-react';
+import { Bike, Store, Table2, Phone, MapPin, Receipt, Clock, XCircle, Pencil, X, Check, ArrowRight, ArrowLeft, Package, Plus, Search, ShoppingBag, UtensilsCrossed } from 'lucide-react';
+import RouteModal from '@/components/orders/RouteModal';
+import { formatAddress, resolveAdvanceFlow } from '@/lib/deliveryRoute';
+import { listDrivers } from '@/api/team';
+import { assignDriver as sbAssignDriver } from '@/api/orders';
 import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
+import { editOrder as sbEditOrder, getOrderDetail as sbGetOrderDetail } from '@/api/orders';
+import { listProducts as sbListProducts } from '@/api/catalog';
+import { getCompanySettings as sbGetSettings } from '@/api/company';
 import { useToast } from '@/components/ui/use-toast';
 import { changeOrderStatus, getAvailableActions, STATUS_LABELS } from '@/lib/orderStatusFlow';
 
@@ -29,8 +39,12 @@ function collapseConsecutiveStatuses(history) {
   return history.filter((h, i) => i === 0 || h?.status !== history[i - 1]?.status);
 }
 
-export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onCancel, onSelectOrder }) {
+export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onCancel, onSelectOrder, company, driver }) {
   const { toast } = useToast();
+  // FASE 5.4: edição via adapter Supabase quando há sessão; leituras
+  // auxiliares (fotos/histórico) seguem Base44 (dependências de Pedidos).
+  const { user: sbUser } = useSupabaseAuth();
+  const sbActive = isSupabaseConfigured() && !!sbUser;
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -44,12 +58,30 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const [menuProducts, setMenuProducts] = useState([]);
   const [menuSearch, setMenuSearch] = useState('');
   const [menuLoading, setMenuLoading] = useState(false);
+  // FASE 5.4 UX: modal de rota (só delivery, endereço clicável).
+  const [routeOpen, setRouteOpen] = useState(false);
+  // FASE 5.5-B3: passo de atribuição de entregador (delivery → saiu_entrega).
+  const [assignStep, setAssignStep] = useState(null);
+  // Confirmação quando já há entregador vinculado (manter/alterar/cancelar).
+  const [keepStep, setKeepStep] = useState(null);
+  const [drivers, setDrivers] = useState([]);
+  const [selectedDriver, setSelectedDriver] = useState('');
+  const [assigning, setAssigning] = useState(false);
+  // UX Kanban: gerenciar entregador direto no pedido (alterar/remover).
+  const [managingDriver, setManagingDriver] = useState(false);
+  const [defaultDriverId, setDefaultDriverId] = useState(null);
+  const [manageList, setManageList] = useState([]);
+  const [manageSelected, setManageSelected] = useState('');
+  const [manageBusy, setManageBusy] = useState(false);
 
   // Fotos dos produtos + histórico do cliente (2 consultas, com cancelamento).
   useEffect(() => {
     if (!order || !isOpen) return;
     let cancelled = false;
     setEditMode(false);
+    setAssignStep(null);
+    setKeepStep(null);
+    setManagingDriver(false);
     setStatusAction(null);
     statusBusyRef.current = false;
     setPhotoMap({});
@@ -66,21 +98,32 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
             ? { company_id: order.company_id, customer_phone: order.customer_phone }
             : null;
 
-        const [products, history, customers] = await Promise.all([
-          productIds.length > 0
-            ? base44.entities.Product.filter({ company_id: order.company_id, id: { $in: productIds } })
-            : Promise.resolve([]),
+        // Fotos: consulta isolada — falha nas seções opcionais (Base44, sem
+        // backend nesta fase) nunca pode impedir as imagens dos itens.
+        try {
+          const products = productIds.length > 0
+            ? (sbActive
+                // Supabase: catálogo da mesma empresa em 1 query (RLS); filtra
+                // pelos ids do pedido e resolve a image_url atual do produto.
+                ? (await sbListProducts(supabase, order.company_id)).filter(p => productIds.includes(p.id))
+                : await base44.entities.Product.filter({ company_id: order.company_id, id: { $in: productIds } }))
+            : [];
+          if (!cancelled) {
+            const map = {};
+            products.forEach(p => { if (p.image_url) map[p.id] = p.image_url; });
+            setPhotoMap(map);
+          }
+        } catch (err) { /* fotos são opcionais */ }
+
+        const [history, customers] = await Promise.all([
           historyFilter
-            ? base44.entities.Order.filter(historyFilter, '-created_date', 6)
+            ? base44.entities.Order.filter(historyFilter, '-created_date', 6).catch(() => [])
             : Promise.resolve([]),
           order.customer_id
-            ? base44.entities.Customer.filter({ company_id: order.company_id, id: order.customer_id })
+            ? base44.entities.Customer.filter({ company_id: order.company_id, id: order.customer_id }).catch(() => [])
             : Promise.resolve([]),
         ]);
         if (cancelled) return;
-        const map = {};
-        products.forEach(p => { if (p.image_url) map[p.id] = p.image_url; });
-        setPhotoMap(map);
         setCustHistory(history.filter(h => h.id !== order.id).slice(0, 5));
         if (customers.length > 0) {
           setCustStats({ count: customers[0].orders_count || 0, total: customers[0].total_spent || 0 });
@@ -92,13 +135,26 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     return () => { cancelled = true; };
   }, [order?.id, isOpen]);
 
+  // Motoboy padrão da empresa (para o selo "Padrão" no entregador).
+  useEffect(() => {
+    if (!order || !isOpen || !sbActive) {
+      setDefaultDriverId(null);
+      return;
+    }
+    let cancelled = false;
+    sbGetSettings(supabase, order.company_id)
+      .then(s => { if (!cancelled) setDefaultDriverId(s?.settings?.default_driver_id || null); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [order?.id, order?.company_id, isOpen, sbActive]);
+
   if (!order) return null;
 
   const actions = getAvailableActions(order);
   const primaryAction = actions.find(a => a.id === 'accept' || a.id === 'advance');
   const cancelAction = actions.find(a => a.id === 'cancel');
 
-  const handleStatusAction = async (action) => {
+  const runStatusAction = async (action) => {
     if (statusBusyRef.current) return;
     statusBusyRef.current = true;
     setStatusAction(action.id);
@@ -112,6 +168,51 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
       statusBusyRef.current = false;
       setStatusAction(null);
     }
+  };
+
+  const openAssignStep = async (action, preselected = '') => {
+    try {
+      const list = sbActive
+        ? (await listDrivers(supabase, order.company_id)).filter(d => d.status === 'ativo')
+        : [];
+      setDrivers(list);
+    } catch {
+      setDrivers([]);
+    }
+    setSelectedDriver(preselected || order.driver_id || '');
+    setAssignStep(action);
+  };
+
+  const handleStatusAction = async (action) => {
+    // Delivery rumo a saiu_entrega: sem entregador → seletor; com entregador →
+    // confirmação (manter/alterar/cancelar). Demais fluxos vão direto.
+    if (!assignStep && !keepStep && resolveAdvanceFlow(order, action.next) !== 'direct') {
+      if (resolveAdvanceFlow(order, action.next) === 'confirm') {
+        setKeepStep(action);
+        return;
+      }
+      await openAssignStep(action);
+      return;
+    }
+    await runStatusAction(action);
+  };
+
+  const confirmDispatch = async (withDriver) => {
+    const action = assignStep;
+    setAssignStep(null);
+    if (!action) return;
+    setAssigning(true);
+    try {
+      if (withDriver && selectedDriver && sbActive) {
+        await sbAssignDriver(supabase, order.id, order.company_id, selectedDriver);
+      }
+    } catch (err) {
+      toast({ title: 'Entregador não atribuído', description: err?.message, variant: 'destructive' });
+      return; // não avança sem atribuição válida quando o operador escolheu atribuir
+    } finally {
+      setAssigning(false);
+    }
+    await runStatusAction(action);
   };
 
   const startEdit = () => {
@@ -128,8 +229,10 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setMenuSearch('');
     setMenuLoading(true);
     // Cardápio da mesma empresa, só disponíveis (regra do createOrder)
-    base44.entities.Product.filter({ company_id: order.company_id })
-      .then(list => setMenuProducts(list.filter(p => p.available && !p.out_of_stock)))
+    (sbActive
+      ? sbListProducts(supabase, order.company_id).catch(() => [])
+      : base44.entities.Product.filter({ company_id: order.company_id }).catch(() => []))
+      .then(list => setMenuProducts((list || []).filter(p => p.available && !p.out_of_stock)))
       .catch(() => setMenuProducts([]))
       .finally(() => setMenuLoading(false));
     setEditMode(true);
@@ -162,24 +265,45 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const saveEdit = async () => {
     setSaving(true);
     try {
-      const res = await base44.functions.invoke('manageOrder', {
-        action: 'edit',
-        order_id: order.id,
-        customer_address: editData.customer_address,
-        customer_number: editData.customer_number,
-        customer_complement: editData.customer_complement,
-        customer_neighborhood: editData.customer_neighborhood,
-        customer_notes: editData.notes,
-        discount: Number(editData.discount) || 0,
-        items: editData.items.map(i => ({
-          product_id: i.product_id,
-          quantity: i.quantity,
-          complements: i.complements || [],
-          notes: i.notes || ''
-        }))
-      });
-      if (res.data?.error) throw new Error(res.data.error);
-      onOrderUpdated(res.data.order);
+      if (sbActive) {
+        await sbEditOrder(supabase, order.id, {
+          items: editData.items.map(i => ({
+            product_id: i.product_id,
+            quantity: i.quantity,
+            complements: i.complements || [],
+            notes: i.notes || '',
+          })),
+          discount: Number(editData.discount) || 0,
+          address: {
+            street: editData.customer_address,
+            number: editData.customer_number,
+            complement: editData.customer_complement,
+            neighborhood: editData.customer_neighborhood,
+          },
+          notes: editData.notes,
+        });
+        const detail = await sbGetOrderDetail(supabase, order.company_id, order.id);
+        onOrderUpdated(detail || { ...order });
+      } else {
+        const res = await base44.functions.invoke('manageOrder', {
+          action: 'edit',
+          order_id: order.id,
+          customer_address: editData.customer_address,
+          customer_number: editData.customer_number,
+          customer_complement: editData.customer_complement,
+          customer_neighborhood: editData.customer_neighborhood,
+          customer_notes: editData.notes,
+          discount: Number(editData.discount) || 0,
+          items: editData.items.map(i => ({
+            product_id: i.product_id,
+            quantity: i.quantity,
+            complements: i.complements || [],
+            notes: i.notes || ''
+          }))
+        });
+        if (res.data?.error) throw new Error(res.data.error);
+        onOrderUpdated(res.data.order);
+      }
       setEditMode(false);
       toast({ title: 'Pedido atualizado' });
     } catch (err) {
@@ -207,6 +331,14 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="w-[calc(100vw-2rem)] max-w-lg max-h-[90vh] overflow-hidden p-0 gap-0 flex flex-col">
         <DialogHeader className="shrink-0 px-4 pt-4 sm:px-6 sm:pt-6">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Voltar ao Kanban"
+            className="mb-2 inline-flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md"
+          >
+            <ArrowLeft className="h-4 w-4" /> Voltar
+          </button>
           <DialogTitle className="flex flex-wrap items-end justify-between gap-2 pr-6">
             <span>
               <span className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pedido</span>
@@ -244,16 +376,121 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                     : `Pedidos recentes: ${custHistory.length}`}
                 </p>
               )}
-              {order.order_type === 'delivery' && order.customer_address && (
-                <div className="flex items-start gap-2 text-sm pt-1 border-t border-border/60">
-                  <MapPin className="h-4 w-4 shrink-0 text-muted-foreground mt-0.5" />
-                  <span className="min-w-0 break-words">
-                    {order.customer_address}{order.customer_number ? `, ${order.customer_number}` : ''}
-                    {order.customer_complement && ` - ${order.customer_complement}`}
-                    {order.customer_neighborhood && `, ${order.customer_neighborhood}`}
-                    {order.customer_city && ` — ${order.customer_city}`}
+              {order.order_type === 'delivery' && formatAddress(order) && (
+                <button
+                  type="button"
+                  onClick={() => setRouteOpen(true)}
+                  title="Ver rota de entrega"
+                  className="flex w-full items-start gap-2 rounded-xl bg-primary/5 border border-primary/20 p-3 text-left text-sm hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors"
+                >
+                  <MapPin className="h-5 w-5 shrink-0 text-primary mt-0.5" />
+                  <span className="min-w-0">
+                    <span className="block text-xs font-bold uppercase tracking-wider text-primary">📍 Endereço de entrega — ver rota</span>
+                    <span className="block text-foreground break-words mt-0.5">{formatAddress(order)}</span>
                   </span>
+                </button>
+              )}
+              {order.order_type === 'delivery' && order.status !== 'finalizado' && order.status !== 'cancelado' && sbActive && (
+                <div className="rounded-xl border border-border p-3 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">🛵 Entregador</p>
+                  {!managingDriver ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-foreground truncate">
+                        {driver?.name || (order.driver_id ? 'Vinculado' : 'Sem entregador')}
+                        {order.driver_id && defaultDriverId && order.driver_id === defaultDriverId && (
+                          <span className="ml-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Padrão</span>
+                        )}
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            const list = (await listDrivers(supabase, order.company_id)).filter(d => d.status === 'ativo');
+                            setManageList(list);
+                          } catch {
+                            setManageList([]);
+                          }
+                          setManageSelected(order.driver_id || '');
+                          setManagingDriver(true);
+                        }}
+                      >
+                        {order.driver_id ? 'Alterar' : 'Atribuir'}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Select value={manageSelected} onValueChange={setManageSelected}>
+                        <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                        <SelectContent>
+                          {manageList.map(d => (
+                            <SelectItem key={d.id} value={d.id}>
+                              {d.name}{d.vehicle_plate ? ` • ${d.vehicle_plate}` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="flex flex-row justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => setManagingDriver(false)} disabled={manageBusy}>
+                          Fechar
+                        </Button>
+                        {order.driver_id && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={manageBusy}
+                            onClick={async () => {
+                              setManageBusy(true);
+                              try {
+                                await sbAssignDriver(supabase, order.id, order.company_id, null);
+                                const detail = await sbGetOrderDetail(supabase, order.company_id, order.id);
+                                onOrderUpdated(detail || { ...order, driver_id: null });
+                                toast({ title: 'Entregador removido' });
+                                setManagingDriver(false);
+                              } catch (err) {
+                                toast({ title: 'Erro ao remover', description: err?.message, variant: 'destructive' });
+                              } finally {
+                                setManageBusy(false);
+                              }
+                            }}
+                          >
+                            Remover
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          disabled={manageBusy || !manageSelected}
+                          onClick={async () => {
+                            setManageBusy(true);
+                            try {
+                              await sbAssignDriver(supabase, order.id, order.company_id, manageSelected);
+                              const detail = await sbGetOrderDetail(supabase, order.company_id, order.id);
+                              onOrderUpdated(detail || { ...order, driver_id: manageSelected });
+                              toast({ title: 'Entregador atualizado!' });
+                              setManagingDriver(false);
+                            } catch (err) {
+                              toast({ title: 'Erro ao atribuir', description: err?.message, variant: 'destructive' });
+                            } finally {
+                              setManageBusy(false);
+                            }
+                          }}
+                        >
+                          Salvar
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
+              )}
+              {order.order_type === 'retirada' && (
+                <p className="flex items-center gap-2 text-sm font-semibold text-foreground pt-1">
+                  <ShoppingBag className="h-4 w-4 shrink-0" /> 🛍️ RETIRADA no balcão
+                </p>
+              )}
+              {order.order_type === 'mesa' && (
+                <p className="flex items-center gap-2 text-sm font-semibold text-foreground pt-1">
+                  <UtensilsCrossed className="h-4 w-4 shrink-0" /> 🍽️ MESA {order.table_number || ''}
+                </p>
               )}
             </div>
 
@@ -381,6 +618,74 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
             {/* Actions by status */}
             {(primaryAction || cancelAction) && (
               <div className="shrink-0 border-t border-border px-4 sm:px-6 py-3 sm:py-4">
+                {keepStep && (
+                  <div className="rounded-xl border border-border bg-muted/40 p-3 mb-3 space-y-2">
+                    <p className="text-sm font-semibold text-foreground">Entregador já vinculado</p>
+                    <p className="text-sm text-muted-foreground">
+                      Este pedido já está atribuído a <span className="font-medium text-foreground">{driver?.name || 'este entregador'}</span>.
+                      Deseja manter este entregador para a entrega?
+                    </p>
+                    <div className="flex flex-row justify-end gap-2">
+                      <Button variant="ghost" size="sm" className="min-h-11" onClick={() => setKeepStep(null)}>
+                        Cancelar
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="min-h-11"
+                        onClick={() => {
+                          const action = keepStep;
+                          setKeepStep(null);
+                          openAssignStep(action, order.driver_id || '');
+                        }}
+                      >
+                        Alterar entregador
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="min-h-11"
+                        onClick={() => {
+                          const action = keepStep;
+                          setKeepStep(null);
+                          runStatusAction(action);
+                        }}
+                      >
+                        Manter entregador
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {assignStep && (
+                  <div className="rounded-xl border border-border bg-muted/40 p-3 mb-3 space-y-2">
+                    <Label>🛵 Entregador</Label>
+                    {drivers.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">Nenhum entregador ativo cadastrado.</p>
+                    ) : (
+                      <Select value={selectedDriver} onValueChange={setSelectedDriver}>
+                        <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                        <SelectContent>
+                          {drivers.map(d => (
+                            <SelectItem key={d.id} value={d.id}>
+                              {d.name}{d.vehicle_plate ? ` • ${d.vehicle_plate}` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                    <div className="flex flex-row justify-end gap-2">
+                      <Button variant="outline" className="flex-1 sm:flex-none min-h-11" onClick={() => confirmDispatch(false)} disabled={assigning}>
+                        Pular
+                      </Button>
+                      <Button
+                        className="flex-1 sm:flex-none min-h-11"
+                        onClick={() => confirmDispatch(true)}
+                        disabled={assigning || !selectedDriver}
+                      >
+                        {assigning ? 'Saindo...' : 'Confirmar saída'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <div className="flex flex-row justify-end gap-2">
                   {cancelAction && (
                     <Button variant="destructive" className="flex-1 sm:flex-none sm:min-w-32 min-h-11" onClick={onCancel} disabled={busy}>
@@ -505,6 +810,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
           </>
         )}
       </DialogContent>
+      <RouteModal open={routeOpen} onClose={() => setRouteOpen(false)} order={order} company={company} />
     </Dialog>
   );
 }

@@ -57,9 +57,74 @@ Log de decisões da FASE 1 (chronológico). Próximas fases adicionam entradas n
 **Decisão:** Migration incremental (`20260925000002`, só local): colunas customers + triggers mesma-empresa em orders (customer/zone/driver) e whatsapp_messages (connection/customer); adapters com endereço jsonb↔planos e dedupe preservada; 3 pontos de tela com branch Supabase/Base44; Checkout/zones-anon e drivers fora do escopo.
 **Motivo:** Cobrir CRUD/filtros/favoritos/bloqueados/tags/importação sem quebrar Pedidos; validação 44/44 unit + 20/20 E2E + 5/5 RBAC, tudo local.
 
+## 2026-09-25 — FASE 5.4 ETAPA B: Pedidos no Supabase (sem commit)
+
+**Decisão:** B1 migration só-ADD + trigger produto-empresa + publication realtime (estava vazia); B2 três RPCs DEFINER espelhando createOrder/manageOrder/getOrderByToken com divergências documentadas (active no lugar de is_open, sem delivery_fee/minimum company, sem stats); B3 sem enfraquecer RLS (achado: default privileges davam EXECUTE anon — revogado); B4 adapter com mapeamentos; B5 52/52 + ~40 RPC + RBAC + regressão 82/82; B6-B9 telas com branch sbActive, realtime real validado, tracking/Checkout via RPC.
+**Motivo:** Camada por camada com teste; Base44 como fallback; tudo local.
+
+## 2026-09-25 — Correção create restaurant / onboarding (sem commit)
+
+**Decisão:** Distinguir usuário novo (signup+provision) de autenticado (só provision; `created:false` se já tem empresa); aceitar `VITE_SUPABASE_PUBLISHABLE_KEY`; `.env.local` local com publishable do stack local.
+**Motivo:** Diagnóstico reproduziu `User already registered` no retry com sessão + fallback Base44 sem env; RPC/RLS intactos. Validado A-D + regressão 55/55.
+
+## 2026-09-25 — QA: realtime duplicado quebrava Dashboard (sem commit)
+
+**Decisão:** Registro por tópico com refcount em `subscribeCompanyTable` (um binding, N listeners, cleanup no último); cobre 2 bells + remount + troca de empresa; validado unit (4) + real (5) + build.
+**Motivo:** Eliminar a duplicação na origem em vez de engolir o erro; sem mudar comportamento funcional.
+
+## 2026-09-25 — FASE 5.4-C: Company + Storefront (sem commit)
+
+**Decisão:** Colunas display em `companies` (C1, só local); sem mexer em RLS (C2); adapter company + useCompany via contexto (C3-C4); Configurações salva via adapter (C5); RPC pública `get_storefront_by_slug` sem abrir tabelas + Menu/Checkout-leitura via ela (C6-C9); validado 66/66 + 17/17 + ADMIN.
+**Motivo:** Desbloquear habilitar/publicar, cardápio e checkout E2E mantendo Base44 como fallback; tudo local.
+
+## 2026-09-25 — FASE 5.4 UX Novo Pedido (sem commit)
+
+**Decisão:** Helpers puros + RouteModal (externo garantido, iframe progressivo) + endereço destacado/clicável + labels por tipo; reutilizado som/fila/badge/RPCs; validado 73/73 + realtime + build.
+**Motivo:** Experiência operacional sem tocar backend; tudo local.
+
+## 2026-09-25 — FASE 5.5 ETAPA B1: Equipe (sem commit)
+
+**Decisão:** RPC `list_team` (tenant pelo auth.uid(), anon negado) + menu/rota + adapter + página com abas e gating espelhando RLS/trigger; entregadores sem delete na UI e sem upload; validado unit 82/82 + E2E + ADMIN real + build.
+**Motivo:** Gestão de pessoas sem reabrir escalada ADMIN→OWNER; tudo local.
+
+## 2026-09-25 — FASE 5.5-B2: Storage/Upload (sem commit)
+
+**Decisão:** Buckets por dono (avatar=user, demais=company), leitura pública, escrita escopada, limite app 5 MB/bucket 8 MB; adapter + 4 trocas com fallback; validado unit 87/87 + E2E 9/9 + build.
+**Motivo:** Substituir UploadFile Base44 com isolamento; tudo local.
+
+## 2026-09-25 — FASE 5.5-B3: Atribuição Entregador→Pedido (sem commit)
+
+**Decisão:** `assignDriver` no adapter (validações + history/audit, sem notification) + passo opcional no modal + linha no Kanban; Pular nunca bloqueia; validado unit 91/91 + E2E 10/10 + trigger + build.
+**Motivo:** Fechar loop delivery sem tocar backend; tudo local.
+
+## 2026-09-25 — UX Kanban + entregador no pedido (sem commit)
+
+**Decisão:** Setas de scroll + Voltar explícito + gerenciar entregador no modal (reuso do passo 🛵); validado E2E + 91/91 + build.
+**Motivo:** Operação sem barra horizontal e sem sair do pedido; tudo local.
+
+## 2026-09-25 — Correção fluxo entregador + setas Kanban (sem commit)
+
+**Decisão:** Confirmação manter/alterar/cancelar via `resolveAdvanceFlow` + setas início/fim imediato; validado unit 92/92 + E2E + build.
+**Motivo:** Só frontend, sem tocar backend; tudo local.
+
+## 2026-09-25 — Cards fila/atraso no Dashboard (sem commit)
+
+**Decisão:** Regras em `orderQueue.js` (fonte única), cards removidos do Kanban e recriados clicáveis no Dashboard com modal de lista → OrderModal; validado 95/95 + realtime + build.
+**Motivo:** Mesmos números, melhor UX; tudo local.
+
+## 2026-09-25 — Dashboard compacto + finalizados por tipo (sem commit)
+
+**Decisão:** Cards compactos clicáveis (misto: hoje só-hoje, demais carregado), 3 modais de finalizados, filtro de entregador só em Entregas; validado 96/96 + build.
+**Motivo:** Mesmos números, melhor operação; tudo local.
+
 ## Pendências para FASE 2 restante
 
 - Adapter `supabaseClient` espelhando `base44.entities` + Realtime.
 - Migração de functions para VPS (`createOrder` público server-side price, `manageOrder` etc.).
 - Módulos novos (entregadores, funcionários, caixa/PDV, preview/QR, WhatsApp provider, Master, Marketing em breve) — só arquitetura nesta fase.
 - `npx supabase db push` remoto somente após autorização (gate final).
+
+## 2026-09-25 � Tracking com foto dos itens (sem commit)
+
+**Decis�o:** migration local + thumbs no acompanhamento; RPC validado com token real; 98/98 + build. Sem backend remoto/Git.
+

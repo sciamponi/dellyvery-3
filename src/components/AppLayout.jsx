@@ -4,9 +4,11 @@ import { base44 } from '@/api/base44Client';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { Button } from '@/components/ui/button';
 import NotificationBell from '@/components/NotificationBell';
+import SelectGuard from '@/components/SelectGuard';
 import {
   LayoutDashboard, ShoppingBag, UtensilsCrossed, Users, User,
-  Settings, LogOut, Menu as MenuIcon, X, Store, Wallet, CreditCard, LayoutGrid
+  Settings, LogOut, Menu as MenuIcon, X, Store, Wallet, CreditCard, LayoutGrid,
+  ContactRound
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -14,6 +16,7 @@ const NAV_ITEMS = [
   { label: 'Pedidos', path: '/pedidos', icon: ShoppingBag },
   { label: 'Cardápio', path: '/gestao-produtos', icon: UtensilsCrossed },
   { label: 'Clientes', path: '/clientes', icon: Users },
+  { label: 'Equipe', path: '/equipe', icon: ContactRound },
   { label: 'Assinatura', path: '/assinatura', icon: CreditCard },
   { label: 'Financeiro', path: '/financeiro', icon: Wallet },
   { label: 'Configurações', path: '/configuracoes', icon: Settings },
@@ -77,8 +80,15 @@ export default function AppLayout() {
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex fixed inset-y-0 left-0 w-64 flex-col border-r border-border bg-sidebar">
         <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary font-heading text-lg font-bold text-primary-foreground">D</div>
-          <span className="font-heading font-bold text-sidebar-foreground">DELLYVERY</span>
+          <button
+            type="button"
+            onClick={() => navigate('/dashboard')}
+            aria-label="Ir para o Dashboard"
+            className="flex items-center gap-2 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary font-heading text-lg font-bold text-primary-foreground">D</div>
+            <span className="font-heading font-bold text-sidebar-foreground">DELLYVERY</span>
+          </button>
           <span className="ml-auto">
             <NotificationBell companyId={company?.id} onSelectOrder={handleSelectNotification} />
           </span>
@@ -132,14 +142,19 @@ export default function AppLayout() {
 
       {/* Mobile top bar */}
 <header className="lg:hidden sticky top-0 z-50 flex min-h-16 items-center justify-between border-b border-border bg-card px-4">
-  <div className="flex items-center gap-2">
+  <button
+    type="button"
+    onClick={() => navigate('/dashboard')}
+    aria-label="Ir para o Dashboard"
+    className="flex items-center gap-2 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+  >
     <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary font-heading text-sm font-bold text-primary-foreground">
       D
     </div>
     <span className="font-heading font-bold text-foreground">
       DELLYVERY
     </span>
-  </div>
+  </button>
 
   <div className="flex items-center gap-1">
     <NotificationBell companyId={company?.id} onSelectOrder={handleSelectNotification} />
@@ -197,7 +212,9 @@ export default function AppLayout() {
       {/* Main content */}
       <main className="lg:pl-64 lg:h-screen">
         <div className="mx-auto max-w-6xl p-4 md:p-8 lg:h-full lg:min-h-0 lg:overflow-y-auto">
-          <Outlet />
+          <SelectGuard>
+            <Outlet />
+          </SelectGuard>
         </div>
       </main>
     </div>

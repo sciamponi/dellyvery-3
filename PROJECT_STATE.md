@@ -80,7 +80,97 @@
 - **Validação local:** unit 44/44; E2E 20/20 (CRUD, address JSON, isolamento, cross bloqueado RLS+trigger com posterior, anon sem acesso, deletes OWNER); RBAC 5/5 (OPERATOR lista/atualiza cliente, DELETE cliente/zona bloqueado 0 linhas, posterior intacto); dados de teste removidos.
 - **Build** OK; **lint** só os 11 pré-existentes. Sem db push/push/commit; prisma-studio e DELLVERY 2.0 intocados.
 
-## 11. Próximos passos bloqueados (aguardando autorização)
+## 11. FASE 5.4 — Pedidos no Supabase ETAPA B (2026-09-25, sem commit)
+
+- **B1 migration (só local):** `20260925000003_dellyvery3_orders_hardening` (+`table_number`/`cancel_reason`, CHECK source, índice zona, trigger `trg_order_items_product_company`); `20260925000005_dellyvery3_realtime_pub` (publication estava VAZIA; +replica FULL). Notification.title/customer_* derivados na RPC (sem duplicar).
+- **B2 RPCs DEFINER:** `create_order` (anon+auth; valida slug/active/produtos/preços/complements/max_select/qty/cliente/endereço/mesa/taxa/mínimo; upsert customer por whatsapp; seq; tracking; items/history/notification idempotente; só retorna id/number/token), `manage_order` (só auth; status/cancel/edit + history/audit/notification; achados e corrigidos: cast order_type, grants anon revogados inclusive em `create_company_with_owner`, msg 'Status inválido', old_status correto), `get_order_by_token` (anon; só campos safe; items no formato Base44).
+- **B3:** RLS intacta (sem anon em tabelas); grants mínimos verificados; RPCs validam membership/tenant internamente.
+- **B4 adapter** `src/api/orders.js` (+`orders.test.js`, 8 asserts): mapeamentos created_date/customer_*/items/history, WithItems, notifications com title derivado, `subscribeCompanyTable` (corrigido `postgres`→`postgres_changes` v2).
+- **B5:** unit 52/52; RPC reais ~40 checks (CRUD 3 tipos, preços, 9 validações, seq 1-2-3, fluxos 3 tipos, cancel, edit server-side, isolamento, tracking, notifications); RBAC OPERATOR avança mas não apaga; regressão unit 52/52 + RLS SQL 82/82 (1 FAIL inicial era poluição de dados de teste, limpo e verde).
+- **B6 telas** (branch sbActive): Pedidos (kanban+merge+realtime), OrderModal (edit via adapter), CancelDialog, Dashboard, Financeiro (leitura). **B7:** Bell/Queue/Alert; realtime real validado (INSERT+UPDATE via postgres_changes). **B8:** tracking via RPC, polling 5s. **B9:** Checkout cria via RPC; empresa/zonas seguem Base44 (público).
+- **Build** OK; **lint** só os 11 pré-existentes. Residuais: excluir empresa com audit_logs falha (trigger imutabilidade × SET NULL — pré-existente 4.2); realtime exige `postgres_changes` (v2). Sem db push/push/commit.
+
+## 12. Correção onboarding autenticado + .env.local (2026-09-25, sem commit)
+
+- **Causa:** `createCompanySupabase()` refazia signup com sessão existente → `User already registered`, sem empresa e sem redirect; workspace sem `.env.local` caía no fallback Base44 morto.
+- **Correção (só `supabaseAuth.js`, `CreateRestaurant.jsx`, `supabaseClient.js`):** `provisionCompanyForCurrentUser()` — sessão existente reaproveitada (nunca re-signup); com empresa existente retorna `created:false` sem criar outra; `supabaseClient` aceita `VITE_SUPABASE_PUBLISHABLE_KEY` (ou ANON_KEY); `.env.local` recriado local (gitignored) com URL + publishable do Supabase local.
+- **Testes:** unit 55/55 (+3 novos); E2E A novo/D retry/C existente/B login-sem-empresa — todos PASS com posterior (OWNER/Solo trial/settings/themes; seq só-admin por desenho); dados de teste removidos (0 restantes).
+- **Build** OK; **lint** só os 11 pré-existentes. Segurança: sem service_role no front, sem migration/policy nova, remoto 0. Sem commit/push/db push.
+
+## 13. QA realtime duplicado (2026-09-25, sem commit)
+
+- **Causa raiz:** `supabase.channel(tópico)` devolve a MESMA instância; `subscribeCompanyTable` chamava `.on('postgres_changes')` a cada mount — AppLayout monta 2 NotificationBells + re-run do effect ao `sbActive` virar true → throw quebrava o Dashboard. (404 Base44 /analytics e 11 unused-imports NÃO tratados, fora do escopo.)
+- **Correção (`src/api/orders.js` + `orders.test.js`):** registro idempotente por tópico com refcount e fan-out; `.on()` uma única vez; cleanup remove o channel só no último listener. Sem try/catch mascarando.
+- **Validação:** unit 59/59 (+4 novos); real local: double-mount sem throw, INSERT/UPDATE nos 2 listeners, unmount parcial, remount; dados limpos. Build OK.
+- Sem migration/RLS/RPC/schema novo; remoto 0; sem commit/push/db push.
+
+## 14. FASE 5.4-C — Company + Storefront (2026-09-25, sem commit)
+
+- **C1 migration (só local):** `20260925000006_dellyvery3_company_fields` (+slogan/cores/is_open/minimum/delivery_fee/estimativa/whatsapp/city/state/zip em `companies`; nada duplicado).
+- **C2 RLS:** policies existentes já cobrem as colunas (row-level); OWNER/ADMIN validados, cross/anon bloqueados — sem alteração.
+- **C3-C4:** `src/api/company.js` (company/settings/theme) + `useCompany.js` via identidade Supabase + adapter (sem null silencioso; redirect real).
+- **C5:** `Configuracoes` salva via adapter (is_open=habilitar preservado); upload e Delivery como estavam.
+- **C6-C8:** `20260925000007_dellyvery3_storefront` + `get_storefront_by_slug` (anon+auth, só display/ativos, sem tabelas abertas) + `src/api/storefront.js`; `Menu.jsx` e leitura do `Checkout.jsx` via RPC (createOrder já era RPC).
+- **Testes:** unit 66/66 (+7); E2E real 17/17 storefront+RBAC (ativos, cross-tenant, anon sem SELECT, OWNER/ADMIN ok, is_open round-trip) + ADMIN extra; dados limpos.
+- **Build** OK; **lint** só os 11 pré-existentes. Remoto 0; sem commit/push/db push.
+
+## 15. FASE 5.4 UX Novo Pedido (2026-09-25, sem commit)
+
+- **Novos:** `src/lib/deliveryRoute.js` (+7 testes: endereço/rota/auto-open/origem), `src/components/orders/RouteModal.jsx` (origem→destino, botão externo principal + iframe progressivo, sem key, sem ETA).
+- **Alterados:** `OrderModal` (endereço delivery destacado/clicável, labels RETIRADA/MESA, prop company), `Pedidos` (linha 📍 no card delivery + company ao modal), `Dashboard` (company ao modal).
+- **Preservados:** badge NOVO, som+fila/dedupe/throttle/janela, aceitar/cancelar, RPCs/migrations/RLS, realtime registry.
+- **Validação:** unit 73/73; realtime E2E revalidado; build OK; lint só os 11 pré-existentes; dados limpos. Remoto 0; sem commit/push/db push.
+
+## 16. FASE 5.5 ETAPA B1 — Equipe (2026-09-25, sem commit)
+
+- **B1 migration (só função, local):** `20260925000009_dellyvery3_team_rpc` — `list_team(uuid default)` DEFINER, empresa derivada do auth.uid() (param opcional validado), só próprias empresas, anon revogado.
+- **B2-B4:** item Equipe no menu + rota `/equipe`; `src/api/team.js` (members via RPC, drivers direto, labels novas, patches parciais); `src/pages/Equipe.jsx` (abas Funcionários/Entregadores, gating OWNER/ADMIN/leitura, sem delete de entregador na UI) + `DriverFormDialog.jsx` (sem upload).
+- **B5:** unit 82/82 (+9); E2E real (RPC lista/isolamento/cross rejeitado/anon negado, drivers CRUD/isolamento/status) + ADMIN real (não desativa OWNER, não self-promove, posterior intacto); dados de teste removidos.
+- **Regressão:** RLS SQL 81/82 — único FAIL é o 8a (`cnt=3`) por existir a empresa real `samuel` do usuário no banco (não é dado de teste; não removida); todo o resto verde.
+- **Build** OK; **lint** só os 11 pré-existentes (5 meus removidos). Sem convite/upload/fornecedores/atribuição. Remoto 0; sem commit/push/db push.
+
+## 17. FASE 5.5-B2 — Storage/Upload (2026-09-25, sem commit)
+
+- **Migration (só local):** `20260925000010_dellyvery3_storage` — buckets públicos `avatars(user_id/)`, `logos/company_id/`, `catalog/company_id/`, limite 8 MB, MIME jpg/png/webp; 12 policies (SELECT público; escrita autenticada escopada: avatar=dono, demais=membro ativo).
+- **Adapter** `src/api/storage.js` (+5 testes: 5 MB app, MIME, paths por dono, URL pública, erro).
+- **Trocas:** logo (`Configuracoes`), avatar (`Perfil`, pasta do user), produto/categoria (bucket catalog); fallback Base44 sem sessão/empresa.
+- **E2E real 9/9:** uploads, leitura pública, cross-company/avatar-alheio/anon/MIME/>8MB bloqueados; órfãos removidos (API + flag de cleanup local).
+- **Build** OK; **lint** só os 11 pré-existentes. Remoto 0; sem commit/push/db push.
+
+## 18. FASE 5.5-B3 — Atribuição Entregador→Pedido (2026-09-25, sem commit)
+
+- **Adapter** `orders.assignDriver` (+4 testes): valida mesma empresa/ativo/não-terminal no adapter; trigger `trg_orders_company_refs` como segunda barreira (confirmada via SQL direto); history (old=new, oculto na timeline) + audit; sem notification.
+- **UI:** `OrderModal` passo 🛵 (Select só ativos + Confirmar/Pular, só delivery→saiu_entrega); Kanban linha 🛵 com mapa de nomes.
+- **E2E real 10/10:** atribuir/trocar/remover, cross e inativo e terminal bloqueados com posterior, history/audit, sem notification extra; dados limpos.
+- **Unit 91/91; build OK; lint 11 pré-existentes.** Sem migration/RPC/RLS novas. Remoto 0; sem commit/push/db push.
+
+## 19. UX Kanban + entregador no pedido (2026-09-25, sem commit)
+
+- **Kanban:** setas ←/→ (desktop, scroll suave, drag intacto); **Voltar** explícito no `OrderModal` (=X).
+- **Entregador no pedido:** seção delivery com nome atual + Alterar (reabre passo 🛵) + Remover; Kanban já mostrava 🛵.
+- **Validação:** unit 91/91; E2E alterar/remover com posterior; build OK (1 erro JSX meu corrigido); lint 11 pré-existentes; dados limpos. Sem backend/Git/remoto tocados.
+
+## 20. Correção fluxo entregador + setas Kanban (2026-09-25, sem commit)
+
+- **OrderModal:** delivery com driver vinculado mostra confirmação (Manter/Alterar/Cancelar) antes de avançar; sem driver mantém o seletor; `resolveAdvanceFlow` puro + testes; Manter não reatribui; retirada/mesa/terminal intactos.
+- **Kanban:** setas vão direto início/fim com `behavior:auto`; visual/drag intactos.
+- **Validação:** unit 92/92; E2E manter/alterar com posterior; build OK; lint 11 pré-existentes; dados limpos. Sem backend/Git/remoto.
+
+## 21. Cards fila/atraso → Dashboard (2026-09-25, sem commit)
+
+- **Pedidos:** removidos os cards superiores (Kanban/colunas/drag/setas/modal intactos).
+- **Regras centralizadas** em `src/lib/orderQueue.js` (+3 testes): fila = 5 status; atraso >30min — mesmos valores.
+- **Dashboard:** 2 cards clicáveis (mesmo visual) + `OrdersListModal.jsx` (compacto, scroll, X/Voltar, click abre OrderModal existente); indicadores derivam de `orders` (realtime já atualiza).
+- **Validação:** unit 95/95; realtime E2E revalidado; build OK; lint 11 pré-existentes; dados limpos. Sem backend/Git/remoto.
+
+## 22. Dashboard compacto + finalizados por tipo (2026-09-25, sem commit)
+
+- **Cards compactos** (p-4, 2 colunas): Pedidos hoje (só hoje), Em andamento, Finalizados, Cancelados, Na fila, Em atraso — todos clicáveis com modal.
+- **Finalizados em 3 grupos:** Entregas/Retiradas/Mesas; filtro de entregador (Todos/Sem/cada) só no modal de Entregas.
+- **Regras** em `orderQueue.js` (fonte única, +1 teste); modal com `headerExtra` p/ o Select; `driversById` carregado 1x.
+- **Validação:** unit 96/96; build OK; lint 11 pré-existentes. Sem backend/Git/remoto.
+
+## 23. Próximos passos bloqueados (aguardando autorização)
 
 - NÃO criar banco/Supabase/VPS remoto adicional, NÃO migrar Auth/Base44 completamente, NÃO remover Base44, NÃO implementar novos módulos (entregadores, funcionários, caixa/PDV, preview, WhatsApp, Master, Marketing/Publicidade em breve). Conectar ao Lovable só após estabilizar `ZIP → DELLVERY 3 → GitHub`.
 
@@ -95,3 +185,10 @@ psql -h 127.0.0.1 -p 54325 -U postgres -d postgres -f supabase/tests/rls_dellyve
 npm run build
 npm run lint -- --quiet
 ```
+
+## 24. Tracking com foto dos itens (2026-09-25, sem commit)
+
+- **Migration local 20260925000011_dellyvery3_tracking_item_media.sql** (aplicada SOMENTE no Supabase local, versionada em schema_migrations): get_order_by_token recriado adicionando product_id + image_url (subquery mesma-empresa, null-safe) aos itens; demais campos e grants anon/authenticated intactos.
+- **Frontend OrderTracking.jsx**: thumb h-12 w-12 rounded-lg object-cover via Image + fallback Package; polling/totais/checkout/tracking inalterados.
+- **Valida��o:** RPC antes/depois via token real (#8/#9/#10); pedido misto (com/sem imagem); reload; token inv�lido segue 400; unit 98/98 (+teste contrato tracking); build OK; lint 0 erros nos arquivos do escopo. Sem RLS/policy nova, sem Storage, sem commit/push, sem db push.
+

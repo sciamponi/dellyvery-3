@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { supabase } from '@/api/supabaseClient';
 import { createCategory as sbCreateCategory, updateCategory as sbUpdateCategory } from '@/api/catalog';
+import { uploadImage as sbUploadImage } from '@/api/storage';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,13 +29,19 @@ export default function CategoryFormDialog({ open, onOpenChange, category, compa
 
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
+  // FASE 5.5-B2: imagem no bucket catalog (pasta da empresa) quando Supabase ativo.
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
-      update('image_url', file_url);
+      if (useSupabase && companyId) {
+        const { file_url } = await sbUploadImage(supabase, 'catalog', companyId, file);
+        update('image_url', file_url);
+      } else {
+        const { file_url } = await base44.integrations.Core.UploadFile({ file });
+        update('image_url', file_url);
+      }
     } catch (err) {
       toast({ title: 'Erro no upload', description: err?.message, variant: 'destructive' });
     } finally {

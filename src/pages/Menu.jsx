@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { getStorefrontBySlug } from '@/api/storefront';
 import { useCart } from '@/lib/CartContext';
 import { Button } from '@/components/ui/button';
 import { Image } from '@/components/ui/image';
@@ -17,31 +18,29 @@ export default function Menu() {
   const [company, setCompany] = useState(null);
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
-  const [activeCategory, setActiveCategory] = useState(null);
+  const [activeCategory, setActiveCategory] = useState('all');
   const [notFound, setNotFound] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [cartOpen, setCartOpen] = useState(false);
 
+  // Cardápio público Supabase-only via RPC pública (sem SELECT anon direto).
   useEffect(() => {
     const load = async () => {
       try {
-        const results = await base44.entities.Company.filter({ slug });
-        if (results.length === 0) {
+        if (!isSupabaseConfigured()) {
           setNotFound(true);
           return;
         }
-        const comp = results[0];
+        const storefront = await getStorefrontBySlug(supabase, slug);
+        const comp = storefront.company;
         setCartCompany(comp);
-        const [cats, prods] = await Promise.all([
-          base44.entities.Category.filter({ company_id: comp.id, active: true }, 'order'),
-          base44.entities.Product.filter({ company_id: comp.id, available: true }),
-        ]);
         setCompany(comp);
-        setCategories(cats);
-        setProducts(prods);
-        if (cats.length > 0) setActiveCategory(cats[0].id);
+        setCategories(storefront.categories || []);
+        setProducts(storefront.products || []);
+        setActiveCategory('all');
       } catch (err) {
-        console.error(err);
+        if (err?.code === 'NOT_FOUND') setNotFound(true);
+        else console.error(err);
       } finally {
         setLoading(false);
       }
@@ -74,9 +73,9 @@ export default function Menu() {
   if (!company) return null;
 
   const primaryColor = company.primary_color || '#DC2626';
-  const filteredProducts = activeCategory
-    ? products.filter(p => p.category_id === activeCategory)
-    : products;
+  const filteredProducts = (!activeCategory || activeCategory === 'all')
+    ? products
+    : products.filter(p => p.category_id === activeCategory);
 
   return (
     <div className="min-h-screen bg-background">
@@ -114,16 +113,26 @@ export default function Menu() {
       {categories.length > 0 && (
         <div className="border-b border-border bg-card overflow-x-auto">
           <div className="mx-auto max-w-4xl px-4 flex gap-2 py-3">
+            <button
+              onClick={() => setActiveCategory('all')}
+              className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+                activeCategory === 'all' ? 'text-white' : 'bg-muted text-muted-foreground hover:text-foreground'
+              }`}
+              style={activeCategory === 'all' ? { backgroundColor: primaryColor } : {}}
+            >
+              🍽️ Todos
+            </button>
             {categories.map(cat => (
               <button
                 key={cat.id}
                 onClick={() => setActiveCategory(cat.id)}
+                title={cat.name}
                 className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors ${
                   activeCategory === cat.id ? 'text-white' : 'bg-muted text-muted-foreground hover:text-foreground'
                 }`}
                 style={activeCategory === cat.id ? { backgroundColor: primaryColor } : {}}
               >
-                {cat.name}
+                {cat.icon ? `${cat.icon} ` : '🏷️ '}{cat.name}
               </button>
             ))}
           </div>
@@ -142,7 +151,9 @@ export default function Menu() {
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
-            {filteredProducts.map(product => (
+            {filteredProducts.map(product => {
+              const cat = categories.find(c => c.id === product.category_id);
+              return (
               <button
                 key={product.id}
                 onClick={() => setSelectedProduct(product)}
@@ -150,6 +161,7 @@ export default function Menu() {
               >
                 <div className="flex-1 min-w-0">
                   <h3 className="font-heading font-semibold text-foreground">{product.name}</h3>
+                  {cat && <p className="text-xs text-muted-foreground mt-0.5 truncate">{cat.icon ? `${cat.icon} ` : ''}{cat.name}</p>}
                   {product.description && (
                     <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{product.description}</p>
                   )}
@@ -178,7 +190,8 @@ export default function Menu() {
                   </div>
                 </div>
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

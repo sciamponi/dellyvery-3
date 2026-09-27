@@ -51,7 +51,7 @@ export default function Landing() {
   const [plans, setPlans] = useState([]);
 
   useEffect(() => {
-    base44.entities.Plan.filter({ active: true }, 'sort_order').then(setPlans).catch(() => {});
+    base44.entities.Plan.filter({ active: true }, 'sort_order').then(p => setPlans(Array.isArray(p) ? p : [])).catch(() => {});
   }, []);
 
   return (

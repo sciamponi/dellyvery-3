@@ -82,7 +82,7 @@ export async function fetchMemberships(client, userId) {
   const c = mustBeConfigured(client);
   const { data, error } = await c
     .from('company_members')
-    .select('company_id, role, active, companies(id, name, slug, active)')
+    .select('company_id, role, active, companies(id, name, slug, active, is_open)')
     .eq('user_id', userId)
     .eq('active', true);
   if (error) throw error;
@@ -90,7 +90,7 @@ export async function fetchMemberships(client, userId) {
     companyId: m.company_id,
     role: m.role,
     company: m.companies
-      ? { id: m.companies.id, name: m.companies.name, slug: m.companies.slug, active: m.companies.active }
+      ? { id: m.companies.id, name: m.companies.name, slug: m.companies.slug, active: m.companies.active, is_open: m.companies.is_open }
       : null,
   }));
 }
@@ -150,16 +150,36 @@ export async function signUpRestaurant(client, { email, password, companyName, s
   const c = mustBeConfigured(client);
   const { user } = await signUpWithPassword(c, { email, password });
   if (!user) throw new Error('Cadastro não retornou usuário');
+  return provisionCompanyForUser(c, user, { email, companyName, slug, phone, address });
+}
+
+// Usuário JÁ autenticado: NUNCA chama signUp de novo (daria
+// "User already registered"). Usa a sessão existente; se já tem empresa,
+// não cria outra — retorna a existente para seleção/redirect.
+export async function provisionCompanyForCurrentUser(client, { companyName, slug, phone, address, email }) {
+  const c = mustBeConfigured(client);
+  const session = await getSession(c);
+  const user = session?.user || null;
+  if (!user) throw new Error('Sessão não encontrada. Entre novamente.');
+  return provisionCompanyForUser(c, user, { email: email || user.email, companyName, slug, phone, address });
+}
+
+async function provisionCompanyForUser(client, user, { email, companyName, slug, phone, address }) {
+  const c = mustBeConfigured(client);
   await ensureProfile(c, user);
+  const existing = await fetchMemberships(c, user.id);
+  if (existing.length > 0) {
+    return { user, companyId: existing[0].companyId, memberships: existing, created: false };
+  }
   const segment = await fetchRestaurantSegment(c);
   const companyId = await createCompanyWithOwner(c, {
     name: companyName,
     slug: slug || slugifyCompanyName(companyName),
     segmentId: segment.id,
     phone: phone ?? null,
-    email,
+    email: email || user.email,
     address: address ?? null,
   });
   const memberships = await fetchMemberships(c, user.id);
-  return { user, companyId, memberships };
+  return { user, companyId, memberships, created: true };
 }

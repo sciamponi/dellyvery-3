@@ -1,18 +1,29 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
+import {
+  listOrdersWithItems, getOrder as sbGetOrder, getOrderDetail as sbGetOrderDetail,
+  listNovoNotifications, markNotificationRead as sbMarkRead, subscribeCompanyTable,
+  fromSupabaseOrder,
+} from '@/api/orders';
+import { listDrivers as sbListDrivers } from '@/api/team';
 import { useCompany } from '@/hooks/useCompany';
 import PageHeader from '@/components/PageHeader';
+import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { ShoppingBag, Clock, AlertTriangle, Smartphone, MessageSquare, Store } from 'lucide-react';
+import { ShoppingBag, Clock, Smartphone, MessageSquare, Store, ChevronLeft, ChevronRight } from 'lucide-react';
 import OrderModal from '@/components/orders/OrderModal';
 import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
 import NewOrderAlert from '@/components/orders/NewOrderAlert';
 import NewOrdersQueue from '@/components/orders/NewOrdersQueue';
 import { playNewOrderAlert, requestNotificationPermission, showOrderNotification } from '@/lib/orderSound';
 import { getAlertPrefs } from '@/lib/alertPrefs';
+import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
 import { changeOrderStatus, getAvailableActions, STATUS_LABELS } from '@/lib/orderStatusFlow';
+import { shortAddress } from '@/lib/deliveryRoute';
 
 const COLUMNS = [
   { id: 'novo', label: 'Novo', dot: 'bg-blue-500' },
@@ -50,9 +61,32 @@ function Spinner() {
 }
 
 export default function Pedidos() {
-  const { loading, company } = useCompany();
+  const { loading, company: base44Company } = useCompany();
   const { toast } = useToast();
+  // FASE 5.4: com sessão Supabase + empresa atual, pedidos via Supabase.
+  const { user: sbUser, currentCompany: sbCompany } = useSupabaseAuth();
+  const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
+  const company = sbActive ? { id: sbCompany.id, ...sbCompany } : base44Company;
+  // Deps estáveis do efeito realtime: o objeto `company` acima é recriado a
+  // cada render; usar o id primitivo evita resubscribe (e refetch) em loop,
+  // que derrubava o canal realtime.
+  const companyId = company?.id || null;
+  const sbUserId = sbUser?.id || null;
+
+  // RPC de status retorna a linha sem items/history; preserva os já carregados.
+  const mergeUpdated = (prev, updated) => prev.map(o => {
+    if (o.id !== updated.id) return o;
+    return {
+      ...o,
+      ...updated,
+      items: updated.items && updated.items.length > 0 ? updated.items : (o.items || []),
+      status_history: updated.status_history && updated.status_history.length > 0
+        ? updated.status_history
+        : (o.status_history || []),
+    };
+  });
   const [orders, setOrders] = useState([]);
+  const [driversById, setDriversById] = useState({});
   const [dataLoading, setDataLoading] = useState(true);
   const companyIdRef = useRef(null);
   const [, setTick] = useState(0);
@@ -61,20 +95,33 @@ export default function Pedidos() {
   const [queueOpen, setQueueOpen] = useState(false);
   const [highlightId, setHighlightId] = useState(null);
   const [alertQueue, setAlertQueue] = useState([]);
-  const initialLoadRef = useRef(true);
-  const loadFinishedAtRef = useRef(0);
+
   const seenOrderIdsRef = useRef(new Set());
   const highlightTimerRef = useRef(null);
   const alertPrefsRef = useRef({ sound: true, visual: true });
+  const autoAssignRunner = useRef(null);
   const pendingStatusRef = useRef(new Set());
+  const kanbanRef = useRef(null);
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // UX: setas levam direto ao início/fim, com scroll imediato.
+  const scrollKanban = (dir) => {
+    const el = kanbanRef.current;
+    if (!el) return;
+    el.scrollTo({ left: dir > 0 ? el.scrollWidth : 0, behavior: 'auto' });
+  };
 
   // Marca como lida a notificação de "novo" do pedido (best-effort).
   const markNovoNotificationRead = async (orderId) => {
     try {
-      const list = await base44.entities.Notification.filter({ order_id: orderId, status: 'novo' });
-      const unread = list.filter(n => !n.read);
-      await Promise.all(unread.map(n => base44.entities.Notification.update(n.id, { read: true })));
+      if (sbActive) {
+        const list = await listNovoNotifications(supabase, orderId);
+        await Promise.all(list.filter(n => !n.read).map(n => sbMarkRead(supabase, n.id)));
+      } else {
+        const list = await base44.entities.Notification.filter({ order_id: orderId, status: 'novo' });
+        const unread = list.filter(n => !n.read);
+        await Promise.all(unread.map(n => base44.entities.Notification.update(n.id, { read: true })));
+      }
     } catch (err) { /* ignore */ }
   };
 
@@ -87,48 +134,69 @@ export default function Pedidos() {
       return;
     }
     try {
-      const found = await base44.entities.Order.filter({ id: orderId, company_id: companyIdRef.current });
-      if (found.length > 0) setSelectedOrder(found[0]);
+      if (sbActive) {
+        const found = await sbGetOrder(supabase, companyIdRef.current, orderId);
+        if (found) setSelectedOrder(found);
+      } else {
+        const found = await base44.entities.Order.filter({ id: orderId, company_id: companyIdRef.current });
+        if (found.length > 0) setSelectedOrder(found[0]);
+      }
     } catch (err) { /* ignore */ }
   };
 
   useEffect(() => {
-    if (!company) return;
-    companyIdRef.current = company.id;
+    if (!companyId) return;
+    companyIdRef.current = companyId;
+    if (sbActive) {
+      autoAssignRunner.current = createAutoAssignRunner({
+        client: supabase,
+        getCompanyId: () => companyIdRef.current,
+      });
+    } else {
+      autoAssignRunner.current = null;
+    }
     requestNotificationPermission();
-    base44.auth.me().then(u => {
-      if (u) alertPrefsRef.current = getAlertPrefs(company.id, u.id);
-    }).catch(() => {});
+    if (sbActive && sbUserId) {
+      alertPrefsRef.current = getAlertPrefs(companyId, sbUserId);
+    } else {
+      base44.auth.me().then(u => {
+        if (u) alertPrefsRef.current = getAlertPrefs(companyId, u.id);
+      }).catch(() => {});
+    }
     const load = async () => {
       try {
-        const ords = await base44.entities.Order.filter({ company_id: company.id }, '-created_date', 100);
+        const ords = sbActive
+          ? await listOrdersWithItems(supabase, companyId, 100)
+          : await base44.entities.Order.filter({ company_id: companyId }, '-created_date', 100);
         setOrders(ords);
         ords.forEach(o => seenOrderIdsRef.current.add(o.id));
+        // FASE 5.5-B3: mapa de entregadores para a linha 🛵 do card.
+        if (sbActive) {
+          sbListDrivers(supabase, companyId)
+            .then(list => setDriversById(Object.fromEntries((list || []).map(d => [d.id, d]))))
+            .catch(() => {});
+        }
       } catch (err) { console.error(err); }
       finally {
         setDataLoading(false);
-        initialLoadRef.current = false;
-        loadFinishedAtRef.current = Date.now();
       }
     };
     load();
 
-    const unsub = base44.entities.Order.subscribe((event) => {
+    const handleRealtimeEvent = (event) => {
       if (!companyIdRef.current) return;
       if (event.data?.company_id && event.data.company_id !== companyIdRef.current) return;
       if (event.type === 'create') {
         const isNew = !seenOrderIdsRef.current.has(event.data.id);
         seenOrderIdsRef.current.add(event.data.id);
         setOrders(prev => [event.data, ...prev.filter(o => o.id !== event.data.id)]);
-        // Som + alerta + destaque SOMENTE na primeira vez que o pedido aparece.
-        // Updates/realtime/re-renders/refresh do mesmo pedido não repetem.
-        // Janela de graça: evento que chega durante o load inicial (ou até 10s
-        // após) ainda alerta, desde que o pedido seja realmente recente
-        // (created_date < 120s) — pedidos antigos nunca disparam.
+        // Som + alerta + destaque SOMENTE na primeira vez que o pedido aparece
+        // (seenOrderIds). Updates/realtime/re-renders/refresh do mesmo pedido
+        // não repetem; pedidos antigos nunca disparam (created_date < 120s).
+        // Sem janela de tempo: painel aberto há horas também deve alertar.
         const createdAt = event.data.created_date ? new Date(event.data.created_date).getTime() : 0;
         const isFresh = createdAt > 0 && (Date.now() - createdAt) < 120000;
-        const inGraceWindow = initialLoadRef.current || (Date.now() - loadFinishedAtRef.current) < 10000;
-        if (isNew && inGraceWindow && isFresh) {
+        if (isNew && isFresh) {
           const prefs = alertPrefsRef.current;
           if (prefs.sound) playNewOrderAlert();
           if (prefs.visual) {
@@ -138,19 +206,59 @@ export default function Pedidos() {
           setHighlightId(event.data.id);
           if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
           highlightTimerRef.current = setTimeout(() => setHighlightId(null), 8000);
+          // Motoboy padrão: atribui na chegada (somente delivery novo, sem driver).
+          if (sbActive) void autoAssignRunner.current?.maybeAssign(event.data);
         }
       }
-      else if (event.type === 'update') setOrders(prev => prev.map(o => o.id === event.data.id ? event.data : o));
+      else if (event.type === 'update') setOrders(prev => mergeUpdated(prev, event.data));
       else if (event.type === 'delete') setOrders(prev => prev.filter(o => o.id !== event.id));
-    });
+    };
+
+    // FASE 5.4: realtime via postgres_changes (com detalhe no create); senão Base44.
+    // Deps estáveis (companyId/sbActive/sbUserId): o objeto `company` muda a
+    // cada render e NÃO pode ser dep (causava resubscribe em loop, que
+    // derrubava o canal realtime).
+    let unsub;
+    let retryTimer = null;
+    const doSubscribe = () => {
+      if (sbActive) {
+        return subscribeCompanyTable(supabase, 'orders', companyId, async (event) => {
+          if (event.type === 'create' && event.data?.id) {
+            try {
+              const detail = await sbGetOrderDetail(supabase, companyId, event.data.id);
+              handleRealtimeEvent({ type: 'create', data: detail || fromSupabaseOrder(event.data) });
+            } catch {
+              handleRealtimeEvent({ type: 'create', data: fromSupabaseOrder(event.data) });
+            }
+          } else if (event.type === 'update') {
+            handleRealtimeEvent({ type: 'update', data: fromSupabaseOrder(event.data) });
+          } else {
+            handleRealtimeEvent(event);
+          }
+        });
+      }
+      return base44.entities.Order.subscribe(handleRealtimeEvent);
+    };
+    try {
+      unsub = doSubscribe();
+    } catch (err) {
+      // Canal temporariamente indisponível (instância anterior ainda liberando
+      // o tópico): uma nova tentativa sem quebrar a página.
+      retryTimer = setTimeout(() => {
+        try {
+          unsub = doSubscribe();
+        } catch { /* próxima montagem tenta de novo */ }
+      }, 2000);
+    }
 
     const timer = setInterval(() => setTick(t => t + 1), 30000);
     return () => {
+      if (retryTimer) clearTimeout(retryTimer);
       unsub?.();
       clearInterval(timer);
       if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     };
-  }, [company]);
+  }, [companyId, sbActive, sbUserId]);
 
   // Abre pedido vindo do sino (?pedido=<id>) uma única vez por parâmetro.
   useEffect(() => {
@@ -172,7 +280,7 @@ export default function Pedidos() {
     try {
       const updated = await changeOrderStatus(order.id, action.next);
       if (updated) {
-        setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));
+        setOrders(prev => mergeUpdated(prev, updated));
         toast({ title: action.id === 'accept' ? 'Pedido confirmado!' : `Pedido: ${STATUS_LABELS[action.next]}` });
       }
     } catch (err) {
@@ -191,42 +299,22 @@ export default function Pedidos() {
     setOrders(prev => prev.map(o => o.id === draggableId ? { ...o, status: newStatus } : o));
     try {
       const updated = await changeOrderStatus(draggableId, newStatus);
-      if (updated) setOrders(prev => prev.map(o => o.id === draggableId ? updated : o));
+      if (updated) setOrders(prev => mergeUpdated(prev, { ...updated, id: draggableId }));
     } catch (err) {
       toast({ title: 'Erro ao atualizar pedido', variant: 'destructive' });
-      const ords = await base44.entities.Order.filter({ company_id: company.id }, '-created_date', 100);
+      const ords = sbActive
+        ? await listOrdersWithItems(supabase, company.id, 100)
+        : await base44.entities.Order.filter({ company_id: company.id }, '-created_date', 100);
       setOrders(ords);
     } finally {
       pendingStatusRef.current.delete(draggableId);
     }
   };
 
-  const inQueue = orders.filter(o => ['novo', 'confirmado', 'em_preparo', 'aguardando_retirada', 'saiu_entrega'].includes(o.status));
-  const delayed = inQueue.filter(o => {
-    const min = (Date.now() - new Date(o.created_date).getTime()) / 60000;
-    return min > 30;
-  });
-  const stats = [
-    { icon: ShoppingBag, label: 'Na fila', value: inQueue.length, color: 'text-blue-600', bg: 'bg-blue-50' },
-    { icon: AlertTriangle, label: 'Em atraso', value: delayed.length, color: 'text-red-600', bg: 'bg-red-50' },
-  ];
-
   return (
     <div className="w-full max-w-full min-w-0 lg:h-full lg:min-h-0 lg:flex lg:flex-col">
       <div className="shrink-0">
         <PageHeader title="Fila de pedidos" description="Arraste os pedidos entre as colunas para atualizar o status" />
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 mb-6 shrink-0">
-        {stats.map((s, i) => (
-          <div key={i} className="rounded-2xl border border-border bg-card p-4">
-            <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${s.bg} mb-2`}>
-              <s.icon className={`h-5 w-5 ${s.color}`} />
-            </div>
-            <p className="text-xs text-muted-foreground">{s.label}</p>
-            <p className="font-heading text-xl font-bold text-foreground mt-0.5">{s.value}</p>
-          </div>
-        ))}
       </div>
 
       {orders.length === 0 ? (
@@ -238,8 +326,17 @@ export default function Pedidos() {
           <p className="text-sm text-muted-foreground mt-1">Os pedidos aparecerão aqui em tempo real.</p>
         </div>
       ) : (
+        <>
+        <div className="hidden md:flex justify-end gap-2 mb-2 shrink-0">
+          <Button variant="outline" size="icon" onClick={() => scrollKanban(-1)} aria-label="Rolar Kanban para a esquerda">
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" size="icon" onClick={() => scrollKanban(1)} aria-label="Rolar Kanban para a direita">
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
         <DragDropContext onDragEnd={onDragEnd}>
-          <div className="flex gap-3 sm:gap-4 overflow-x-auto kanban-scroll pb-4 -mx-1 px-1 lg:flex-1 lg:min-h-0 lg:overflow-y-hidden lg:pb-2">
+          <div ref={kanbanRef} className="flex gap-3 sm:gap-4 overflow-x-auto kanban-scroll pb-4 -mx-1 px-1 lg:flex-1 lg:min-h-0 lg:overflow-y-hidden lg:pb-2">
             {COLUMNS.map(col => {
               const colOrders = orders.filter(o => o.status === col.id);
               return (
@@ -313,6 +410,12 @@ export default function Pedidos() {
                                   <div className="rounded-md bg-muted/60 px-2 py-0.5 text-[11px] font-semibold text-foreground truncate mb-1.5">{col.label}</div>
                                   <p className="font-medium text-sm text-foreground truncate">{order.customer_name}</p>
                                   {order.customer_phone && <p className="text-xs text-muted-foreground mt-0.5 truncate">{order.customer_phone}</p>}
+                                  {order.driver_id && driversById[order.driver_id] && (
+                                    <p className="text-xs text-muted-foreground mt-0.5 truncate">🛵 {driversById[order.driver_id].name}</p>
+                                  )}
+                                  {order.order_type === 'delivery' && shortAddress(order) && (
+                                    <p className="text-xs text-muted-foreground mt-0.5 truncate">📍 {shortAddress(order)}</p>
+                                  )}
                                   {(order.items?.length || 0) > 0 && (
                                     <div className="mt-2 rounded-lg bg-muted/40 px-2 py-1.5 space-y-0.5">
                                       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Pedido</p>
@@ -373,6 +476,7 @@ export default function Pedidos() {
             })}
           </div>
         </DragDropContext>
+        </>
       )}
 
       {alertQueue.length > 0 && (
@@ -394,10 +498,12 @@ export default function Pedidos() {
         <OrderModal
           order={selectedOrder}
           isOpen={!!selectedOrder}
+          company={company}
+          driver={selectedOrder?.driver_id ? driversById[selectedOrder.driver_id] : null}
           onClose={() => setSelectedOrder(null)}
           onOrderUpdated={(updated) => {
-            setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));
-            setSelectedOrder(updated);
+            setOrders(prev => mergeUpdated(prev, updated));
+            setSelectedOrder(prev => (prev ? mergeUpdated([prev], updated)[0] : updated));
           }}
           onCancel={() => setCancelOrderData(selectedOrder)}
           onSelectOrder={(o) => setSelectedOrder(o)}
@@ -409,7 +515,7 @@ export default function Pedidos() {
           isOpen={!!cancelOrderData}
           onClose={() => setCancelOrderData(null)}
           onCancelled={(updated) => {
-            setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));
+            setOrders(prev => mergeUpdated(prev, updated));
             setSelectedOrder(null);
           }}
         />
@@ -419,7 +525,7 @@ export default function Pedidos() {
         onClose={() => setQueueOpen(false)}
         orders={orders}
         onOrderUpdated={(updated) => {
-          setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));
+          setOrders(prev => mergeUpdated(prev, updated));
         }}
       />
     </div>

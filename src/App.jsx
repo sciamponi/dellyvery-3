@@ -23,6 +23,7 @@ import GestaoProdutos from './pages/GestaoProdutos';
 import Pedidos from './pages/Pedidos';
 import Configuracoes from './pages/Configuracoes';
 import Clientes from './pages/Clientes';
+import Equipe from './pages/Equipe';
 import Perfil from './pages/Perfil';
 import Assinatura from './pages/Assinatura';
 import Financeiro from './pages/Financeiro';
@@ -60,6 +61,7 @@ function App() {
                 <Route path="/pedidos" element={<Pedidos />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
                 <Route path="/clientes" element={<Clientes />} />
+                <Route path="/equipe" element={<Equipe />} />
                 <Route path="/perfil" element={<Perfil />} />
                 <Route path="/assinatura" element={<Assinatura />} />
                 <Route path="/financeiro" element={<Financeiro />} />

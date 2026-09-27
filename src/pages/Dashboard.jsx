@@ -1,12 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
+import { listOrdersWithItems, fromSupabaseOrder, subscribeCompanyTable, getOrderDetail as sbGetOrderDetail, listNovoNotifications, markNotificationRead as sbMarkRead } from '@/api/orders';
+import { getCurrentCompany as sbGetCurrentCompany } from '@/api/company';
+import { listProducts as sbListProducts } from '@/api/catalog';
 import { Button } from '@/components/ui/button';
 import { Image } from '@/components/ui/image';
 import { isToday } from 'date-fns';
-import { ShoppingBag, Clock, CheckCircle, Package, ArrowRight, Bell, Store } from 'lucide-react';
+import { ShoppingBag, Clock, CheckCircle, Package, ArrowRight, Bell, Store, AlertTriangle, XCircle, Bike } from 'lucide-react';
 import OrderModal from '@/components/orders/OrderModal';
 import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
+import OrdersListModal from '@/components/orders/OrdersListModal';
+import NewOrderAlert from '@/components/orders/NewOrderAlert';
+import { playNewOrderAlert, requestNotificationPermission, showOrderNotification } from '@/lib/orderSound';
+import { getAlertPrefs } from '@/lib/alertPrefs';
+import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
+import { getQueueOrders, getDelayedOrders, getFinalizedByType, getCanceled, filterByDriver } from '@/lib/orderQueue';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { listDrivers as sbListDrivers } from '@/api/team';
 
 const STATUS_CONFIG = {
   novo: { label: 'Novo', cls: 'bg-blue-100 text-blue-700' },
@@ -37,12 +50,89 @@ export default function Dashboard() {
   const [products, setProducts] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [cancelOrderData, setCancelOrderData] = useState(null);
+  // UX: modais de fila/atraso (mesmas regras do Kanban, via orderQueue).
+  const [queueModal, setQueueModal] = useState(null);
+  const [driversById, setDriversById] = useState({});
+  const [driverFilter, setDriverFilter] = useState('all');
   const [, setTick] = useState(0);
   const companyIdRef = useRef(null);
+  // Alerta de novo pedido: mesmo mecanismo do Kanban (Pedidos.jsx) —
+  // som + modal somente no primeiro evento realtime de pedido recente.
+  const [alertQueue, setAlertQueue] = useState([]);
+  const [highlightId, setHighlightId] = useState(null);
+  const seenOrderIdsRef = useRef(new Set());
+  const highlightTimerRef = useRef(null);
+  const alertPrefsRef = useRef({ sound: true, visual: true });
+  const autoAssignRunner = useRef(null);
+
+  // RPC de status retorna a linha sem items/history; preserva os já carregados.
+  const mergeUpdated = (prev, updated) => prev.map(o => {
+    if (o.id !== updated.id) return o;
+    return {
+      ...o,
+      ...updated,
+      items: updated.items && updated.items.length > 0 ? updated.items : (o.items || []),
+      status_history: updated.status_history && updated.status_history.length > 0
+        ? updated.status_history
+        : (o.status_history || []),
+    };
+  });
+
+  // Marca como lida a notificação de "novo" do pedido (best-effort).
+  const markNovoNotificationRead = async (orderId) => {
+    try {
+      if (sbActive) {
+        const list = await listNovoNotifications(supabase, orderId);
+        await Promise.all(list.filter(n => !n.read).map(n => sbMarkRead(supabase, n.id)));
+      } else {
+        const list = await base44.entities.Notification.filter({ order_id: orderId, status: 'novo' });
+        const unread = list.filter(n => !n.read);
+        await Promise.all(unread.map(n => base44.entities.Notification.update(n.id, { read: true })));
+      }
+    } catch (err) { /* ignore */ }
+  };
+  // FASE 5.4: com sessão Supabase, pedidos/produtos via Supabase (RLS).
+  const { user: sbUser, currentCompany: sbCompany } = useSupabaseAuth();
+  const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
 
   useEffect(() => {
+    if (sbActive) companyIdRef.current = sbCompany.id;
+    if (sbActive) {
+      autoAssignRunner.current = createAutoAssignRunner({
+        client: supabase,
+        getCompanyId: () => companyIdRef.current,
+      });
+    } else {
+      autoAssignRunner.current = null;
+    }
+    requestNotificationPermission();
+    if (sbActive && sbUser) {
+      alertPrefsRef.current = getAlertPrefs(sbCompany.id, sbUser.id);
+    } else {
+      base44.auth.me().then(u => {
+        if (u) alertPrefsRef.current = getAlertPrefs(u.company_id, u.id);
+      }).catch(() => {});
+    }
     const load = async () => {
       try {
+        if (sbActive) {
+          companyIdRef.current = sbCompany.id;
+          const [ords, prods, fullCompany] = await Promise.all([
+            listOrdersWithItems(supabase, sbCompany.id, 50),
+            sbListProducts(supabase, sbCompany.id).catch(() => []),
+            // Linha completa da empresa (is_open fresh); identidade do
+            // contexto não traz todos os campos operacionais.
+            sbGetCurrentCompany(supabase, sbCompany.id).catch(() => null),
+          ]);
+          setCompany(fullCompany || { id: sbCompany.id, ...sbCompany });
+          setOrders(ords);
+          ords.forEach(o => seenOrderIdsRef.current.add(o.id));
+          setProducts(prods);
+          sbListDrivers(supabase, sbCompany.id)
+            .then(list => setDriversById(Object.fromEntries((list || []).map(d => [d.id, d]))))
+            .catch(() => {});
+          return;
+        }
         const user = await base44.auth.me();
         if (!user.company_id) {
           navigate('/criar-restaurante');
@@ -56,6 +146,7 @@ export default function Dashboard() {
         ]);
         setCompany(comp);
         setOrders(ords);
+        ords.forEach(o => seenOrderIdsRef.current.add(o.id));
         setProducts(prods);
       } catch (err) {
         console.error(err);
@@ -65,16 +156,57 @@ export default function Dashboard() {
     };
     load();
 
-    const unsub = base44.entities.Order.subscribe((event) => {
+    const handleEvent = (event) => {
       if (!companyIdRef.current) return;
       if (event.data?.company_id && event.data.company_id !== companyIdRef.current) return;
-      if (event.type === 'create') setOrders(prev => [event.data, ...prev].slice(0, 50));
-      else if (event.type === 'update') setOrders(prev => prev.map(o => o.id === event.data.id ? event.data : o));
+      if (event.type === 'create') {
+        const isNew = !seenOrderIdsRef.current.has(event.data.id);
+        seenOrderIdsRef.current.add(event.data.id);
+        setOrders(prev => [event.data, ...prev.filter(o => o.id !== event.data.id)].slice(0, 50));
+        // Som + alerta + destaque SOMENTE na primeira vez que o pedido aparece
+        // (seenOrderIds). Pedidos antigos no carregamento inicial nunca
+        // disparam (isFresh < 120s). Sem janela de tempo: painel aberto há
+        // horas também deve alertar.
+        const createdAt = event.data.created_date ? new Date(event.data.created_date).getTime() : 0;
+        const isFresh = createdAt > 0 && (Date.now() - createdAt) < 120000;
+        if (isNew && isFresh) {
+          const prefs = alertPrefsRef.current;
+          if (prefs.sound) playNewOrderAlert();
+          if (prefs.visual) {
+            showOrderNotification(event.data);
+            setAlertQueue(prev => prev.some(o => o.id === event.data.id) ? prev : [...prev, event.data]);
+          }
+          setHighlightId(event.data.id);
+          if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+          highlightTimerRef.current = setTimeout(() => setHighlightId(null), 8000);
+          // Motoboy padrão: atribui na chegada (somente delivery novo, sem driver).
+          if (sbActive) void autoAssignRunner.current?.maybeAssign(event.data);
+        }
+      }
+      else if (event.type === 'update') setOrders(prev => mergeUpdated(prev, event.data));
       else if (event.type === 'delete') setOrders(prev => prev.filter(o => o.id !== event.id));
-    });
+    };
+    const unsub = sbActive
+      ? subscribeCompanyTable(supabase, 'orders', companyIdRef.current || sbCompany?.id, async (event) => {
+          if (event.type === 'create' && event.data?.id) {
+            try {
+              const detail = await sbGetOrderDetail(supabase, companyIdRef.current || sbCompany?.id, event.data.id);
+              handleEvent({ type: 'create', data: detail || fromSupabaseOrder(event.data) });
+            } catch {
+              handleEvent({ type: 'create', data: fromSupabaseOrder(event.data) });
+            }
+          } else if (event.type === 'update') {
+            handleEvent({ type: 'update', data: fromSupabaseOrder(event.data) });
+          } else handleEvent(event);
+        })
+      : base44.entities.Order.subscribe(handleEvent);
     // Timer único (30s) para atualizar todos os cronômetros da lista
     const timer = setInterval(() => setTick(t => t + 1), 30000);
-    return () => { unsub?.(); clearInterval(timer); };
+    return () => {
+      unsub?.();
+      clearInterval(timer);
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    };
   }, []);
 
   if (loading) {
@@ -90,17 +222,84 @@ export default function Dashboard() {
   const ordersToday = orders.filter(o => o.created_date && isToday(new Date(o.created_date)));
   const inProgress = orders.filter(o => ['novo', 'confirmado', 'em_preparo', 'aguardando_retirada', 'saiu_entrega'].includes(o.status));
   const finished = orders.filter(o => o.status === 'finalizado');
+  // Mesmas regras que o Kanban usava (orderQueue: fila + atraso >30min).
+  const inQueue = getQueueOrders(orders);
+  const delayed = getDelayedOrders(orders);
+  const canceled = getCanceled(orders);
+  const hasNovo = orders.some(o => o.status === 'novo');
+  const finDelivery = getFinalizedByType(orders, 'delivery');
+  const finRetirada = getFinalizedByType(orders, 'retirada');
+  const finMesa = getFinalizedByType(orders, 'mesa');
+  const finDeliveryFiltered = filterByDriver(finDelivery, driverFilter);
 
-  // Mais recente primeiro (por created_date); realtime faz prepend, sort garante a ordem
+  // Últimos pedidos: ativos primeiro (ordem de chegada, sem reordenar por
+  // status), depois finalizados (pela conclusão), por fim cancelados.
+  // Usa created_date para chegada e o histórico para o momento da transição
+  // terminal; nunca o número do pedido como substituto da data.
+  const terminalAt = (order, status) => {
+    const h = order.status_history || [];
+    for (let i = h.length - 1; i >= 0; i--) {
+      const s = h[i]?.status || h[i]?.new_status;
+      if (s === status) {
+        const t = new Date(h[i]?.timestamp || h[i]?.created_at).getTime();
+        if (t > 0) return t;
+      }
+    }
+    return 0;
+  };
+  const arrivalAt = (o) => new Date(o.created_date).getTime() || 0;
+  const groupRank = (s) => (s === 'finalizado' ? 1 : s === 'cancelado' ? 2 : 0);
   const recentOrders = [...orders]
-    .sort((a, b) => new Date(b.created_date) - new Date(a.created_date))
+    .sort((a, b) => {
+      const ga = groupRank(a.status);
+      const gb = groupRank(b.status);
+      if (ga !== gb) return ga - gb;
+      if (ga === 1) return (terminalAt(b, 'finalizado') || arrivalAt(b)) - (terminalAt(a, 'finalizado') || arrivalAt(a));
+      if (ga === 2) return (terminalAt(b, 'cancelado') || arrivalAt(b)) - (terminalAt(a, 'cancelado') || arrivalAt(a));
+      return arrivalAt(b) - arrivalAt(a);
+    })
     .slice(0, 8);
 
-  const stats = [
-    { icon: ShoppingBag, label: 'Pedidos hoje', value: ordersToday.length, color: 'text-blue-600', bg: 'bg-blue-50', ariaLabel: 'Ver pedidos de hoje' },
-    { icon: Clock, label: 'Em andamento', value: inProgress.length, color: 'text-orange-600', bg: 'bg-orange-50', ariaLabel: 'Ver pedidos em andamento' },
-    { icon: CheckCircle, label: 'Finalizados', value: finished.length, color: 'text-green-600', bg: 'bg-green-50', ariaLabel: 'Ver pedidos finalizados' },
+  const queueCards = [
+    { icon: ShoppingBag, label: 'Na fila', value: inQueue.length, color: 'text-blue-600', bg: 'bg-blue-50', ariaLabel: `Ver pedidos na fila (${inQueue.length})`, modal: 'fila' },
+    { icon: AlertTriangle, label: 'Em atraso', value: delayed.length, color: 'text-red-600', bg: 'bg-red-50', ariaLabel: `Ver pedidos em atraso (${delayed.length})`, modal: 'atraso' },
   ];
+
+  // Compactos: Pedidos hoje (só hoje); demais sobre o carregado (como antes).
+  const todayCards = [
+    { icon: ShoppingBag, label: 'Pedidos hoje', value: ordersToday.length, color: 'text-blue-600', bg: 'bg-blue-50', ariaLabel: `Ver pedidos de hoje (${ordersToday.length})`, modal: 'hoje' },
+    { icon: Clock, label: 'Em andamento', value: inProgress.length, color: 'text-orange-600', bg: 'bg-orange-50', ariaLabel: `Ver em andamento (${inProgress.length})`, modal: 'andamento' },
+    { icon: CheckCircle, label: 'Finalizados', value: finished.length, color: 'text-green-600', bg: 'bg-green-50', ariaLabel: `Ver finalizados (${finished.length})`, modal: 'finalizados' },
+    { icon: XCircle, label: 'Cancelados', value: canceled.length, color: 'text-red-600', bg: 'bg-red-50', ariaLabel: `Ver cancelados (${canceled.length})`, modal: 'cancelados' },
+  ];
+
+  const finCards = [
+    { label: 'Entregas', value: finDelivery.length, modal: 'finDelivery' },
+    { label: 'Retiradas', value: finRetirada.length, modal: 'finRetirada' },
+    { label: 'Mesas', value: finMesa.length, modal: 'finMesa' },
+  ];
+
+  const modalOrders = queueModal === 'atraso' ? delayed
+    : queueModal === 'hoje' ? ordersToday
+    : queueModal === 'andamento' ? inProgress
+    : queueModal === 'finalizados' ? finished
+    : queueModal === 'cancelados' ? canceled
+    : queueModal === 'finDelivery' ? finDeliveryFiltered
+    : queueModal === 'finRetirada' ? finRetirada
+    : queueModal === 'finMesa' ? finMesa
+    : inQueue;
+
+  const modalTitle = queueModal === 'atraso' ? 'Pedidos em atraso'
+    : queueModal === 'hoje' ? 'Pedidos de hoje'
+    : queueModal === 'andamento' ? 'Em andamento'
+    : queueModal === 'finalizados' ? 'Finalizados'
+    : queueModal === 'cancelados' ? 'Cancelados'
+    : queueModal === 'finDelivery' ? 'Entregas finalizadas'
+    : queueModal === 'finRetirada' ? 'Retiradas finalizadas'
+    : queueModal === 'finMesa' ? 'Mesas finalizadas'
+    : 'Pedidos na fila';
+
+  const driverOptions = Object.values(driversById);
 
   return (
     <div className="space-y-8 w-full max-w-full min-w-0">
@@ -123,24 +322,73 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {stats.map((s, i) => (
+      {/* Stats compactos */}
+      <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+        {[...todayCards, ...queueCards].map((s) => {
+          const isAlertCard = hasNovo && (s.label === 'Pedidos hoje' || s.label === 'Na fila');
+          return (
           <button
-            key={i}
+            key={s.modal || s.label}
             type="button"
-            onClick={() => navigate('/pedidos')}
+            onClick={() => (s.modal ? setQueueModal(s.modal) : navigate('/pedidos'))}
             aria-label={s.ariaLabel}
-            className="w-full rounded-2xl border border-border bg-card p-5 text-left cursor-pointer transition-all hover:border-primary/50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className={`w-full rounded-2xl border bg-card p-4 text-left cursor-pointer transition-all hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${isAlertCard ? 'border-red-500 hover:border-red-600' : 'border-border hover:border-primary/50'}`}
           >
-            <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${s.bg} mb-3`}>
-              <s.icon className={`h-5 w-5 ${s.color}`} />
+            <div className="flex items-center gap-3">
+              <div className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${isAlertCard ? 'bg-red-100' : s.bg}`}>
+                <s.icon className={`h-4 w-4 ${isAlertCard ? 'text-red-600' : s.color}`} />
+                {isAlertCard && <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-red-600 animate-pulse" />}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground truncate">{s.label}</p>
+                <p className="font-heading text-xl font-bold text-foreground leading-tight">{s.value}</p>
+              </div>
             </div>
-            <p className="text-sm text-muted-foreground">{s.label}</p>
-            <p className="font-heading text-2xl font-bold text-foreground mt-1">{s.value}</p>
+          </button>
+          );
+        })}
+      </div>
+
+      {/* Finalizados por tipo */}
+      <div className="grid gap-3 grid-cols-3">
+        {finCards.map((s) => (
+          <button
+            key={s.modal}
+            type="button"
+            onClick={() => { setDriverFilter('all'); setQueueModal(s.modal); }}
+            aria-label={`Ver ${s.label.toLowerCase()} finalizadas (${s.value})`}
+            className="w-full rounded-2xl border border-border bg-card p-4 text-left cursor-pointer transition-all hover:border-primary/50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <p className="text-xs text-muted-foreground truncate">{s.label}</p>
+            <p className="font-heading text-xl font-bold text-foreground leading-tight mt-0.5">{s.value}</p>
           </button>
         ))}
       </div>
+
+      <OrdersListModal
+        open={queueModal !== null}
+        onClose={(order) => {
+          setQueueModal(null);
+          if (order?.id) setSelectedOrder(order);
+        }}
+        title={modalTitle}
+        orders={modalOrders}
+        headerExtra={queueModal === 'finDelivery' ? (
+          <div className="flex items-center gap-2">
+            <Bike className="h-4 w-4 text-muted-foreground shrink-0" />
+            <Select value={driverFilter} onValueChange={setDriverFilter}>
+              <SelectTrigger className="flex-1"><SelectValue placeholder="Entregador" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="none">Sem entregador</SelectItem>
+                {driverOptions.map(d => (
+                  <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
+      />
 
       {/* Two columns */}
       <div className="grid gap-6 lg:grid-cols-3 min-w-0">
@@ -165,6 +413,7 @@ export default function Dashboard() {
             <div className="space-y-2">
               {recentOrders.map(order => {
                 const st = STATUS_CONFIG[order.status] || STATUS_CONFIG.novo;
+                const isNovo = order.status === 'novo';
                 const who = order.order_type === 'mesa' && order.table_number ? `Mesa ${order.table_number}` : (order.customer_name || '—');
                 return (
                   <button
@@ -172,12 +421,16 @@ export default function Dashboard() {
                     type="button"
                     onClick={() => setSelectedOrder(order)}
                     aria-label={`Ver pedido ${order.order_number} de ${who}`}
-                    className="flex w-full min-w-0 items-center justify-between gap-2 sm:gap-3 rounded-xl border border-border p-3 text-left cursor-pointer transition-colors hover:bg-muted/50 hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className={`flex w-full min-w-0 items-center justify-between gap-2 sm:gap-3 rounded-xl border p-3 text-left cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${isNovo ? 'border-red-500 bg-red-50/60 hover:bg-red-50 hover:border-red-600' : 'border-border hover:bg-muted/50 hover:border-primary/50'} ${highlightId === order.id ? 'ring-2 ring-red-500 border-red-600' : ''}`}
                   >
                     <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-                      <div className={`shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium ${st.cls}`}>{st.label}</div>
+                      {isNovo ? (
+                        <div className="shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-bold bg-red-600 text-white">NOVO</div>
+                      ) : (
+                        <div className={`shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium ${st.cls}`}>{st.label}</div>
+                      )}
                       <div className="min-w-0 flex-1">
-                        <p className="font-medium text-foreground truncate">#{order.order_number} • {who}</p>
+                        <p className={`truncate ${isNovo ? 'font-heading font-bold text-red-700' : 'font-medium text-foreground'}`}>#{order.order_number} • {who}</p>
                         <p className="text-xs text-muted-foreground truncate">{order.items?.length || 0} {order.items?.length === 1 ? 'item' : 'itens'} • {timeSince(order.created_date)}</p>
                       </div>
                     </div>
@@ -232,10 +485,26 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {alertQueue.length > 0 && (
+        <NewOrderAlert
+          order={alertQueue[0]}
+          open={alertQueue.length > 0}
+          onView={() => {
+            const current = alertQueue[0];
+            setAlertQueue(prev => prev.slice(1));
+            if (current) {
+              markNovoNotificationRead(current.id);
+              setSelectedOrder(current);
+            }
+          }}
+          onClose={() => setAlertQueue(prev => prev.slice(1))}
+        />
+      )}
       {selectedOrder && (
         <OrderModal
           order={selectedOrder}
           isOpen={!!selectedOrder}
+          company={company}
           onClose={() => setSelectedOrder(null)}
           onOrderUpdated={(updated) => {
             setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));

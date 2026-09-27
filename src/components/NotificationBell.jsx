@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
+import { listNotifications, markNotificationRead, subscribeCompanyTable } from '@/api/orders';
 import { Bell } from 'lucide-react';
 
 /**
@@ -10,36 +13,49 @@ export default function NotificationBell({ companyId, onSelectOrder }) {
   const [notifications, setNotifications] = useState([]);
   const [open, setOpen] = useState(false);
   const companyIdRef = useRef(null);
+  // FASE 5.4: via Supabase (RLS + realtime) quando há sessão.
+  const { user: sbUser } = useSupabaseAuth();
+  const sbActive = isSupabaseConfigured() && !!sbUser && !!companyId;
 
   useEffect(() => {
     if (!companyId) return;
     companyIdRef.current = companyId;
     let alive = true;
-    const load = async () => {
-      try {
-        const list = await base44.entities.Notification.filter(
-          { company_id: companyId },
-          '-created_date',
-          30
-        );
-        if (alive) setNotifications(list);
-      } catch (err) { /* ignore */ }
-    };
-    load();
-
-    const unsub = base44.entities.Notification.subscribe?.((event) => {
-      if (!companyIdRef.current) return;
-      if (event.data?.company_id && event.data.company_id !== companyIdRef.current) return;
+    const applyEvent = (event) => {
       if (event.type === 'create') {
-        setNotifications(prev => [event.data, ...prev.filter(n => n.id !== event.data.id)].slice(0, 30));
+        const item = sbActive
+          ? { ...event.data, title: event.data?.status === 'novo' ? `Novo pedido #${event.data?.order_number ?? '—'}` : `Pedido #${event.data?.order_number ?? '—'}`, created_date: event.data?.created_at }
+          : event.data;
+        setNotifications(prev => [item, ...prev.filter(n => n.id !== item.id)].slice(0, 30));
       } else if (event.type === 'update') {
         setNotifications(prev => prev.map(n => n.id === event.data.id ? event.data : n));
       } else if (event.type === 'delete') {
         setNotifications(prev => prev.filter(n => n.id !== event.id));
       }
-    });
+    };
+    const load = async () => {
+      try {
+        const list = sbActive
+          ? await listNotifications(supabase, companyId, 30)
+          : await base44.entities.Notification.filter(
+            { company_id: companyId },
+            '-created_date',
+            30
+          );
+        if (alive) setNotifications(list);
+      } catch (err) { /* ignore */ }
+    };
+    load();
+
+    const unsub = sbActive
+      ? subscribeCompanyTable(supabase, 'notifications', companyId, applyEvent)
+      : base44.entities.Notification.subscribe?.((event) => {
+        if (!companyIdRef.current) return;
+        if (event.data?.company_id && event.data.company_id !== companyIdRef.current) return;
+        applyEvent(event);
+      });
     return () => { alive = false; unsub?.(); };
-  }, [companyId]);
+  }, [companyId, sbActive]);
 
   if (!companyId) return null;
 
@@ -49,7 +65,8 @@ export default function NotificationBell({ companyId, onSelectOrder }) {
   const markRead = async (notif) => {
     if (notif.read) return;
     try {
-      await base44.entities.Notification.update(notif.id, { read: true });
+      if (sbActive) await markNotificationRead(supabase, notif.id);
+      else await base44.entities.Notification.update(notif.id, { read: true });
       setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
     } catch (err) { /* ignore */ }
   };

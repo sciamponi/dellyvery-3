@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
+import { listOrders } from '@/api/orders';
 import { useCompany } from '@/hooks/useCompany';
 import PageHeader from '@/components/PageHeader';
 import { Input } from '@/components/ui/input';
@@ -25,24 +27,28 @@ function Spinner() {
 }
 
 export default function Financeiro() {
-  const { loading, company } = useCompany();
+  const { loading, company: base44Company } = useCompany();
+  // FASE 5.4: leitura de pedidos via Supabase quando há sessão (agregações intactas).
+  const { user: sbUser, currentCompany: sbCompany } = useSupabaseAuth();
+  const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
+  const company = sbActive ? { id: sbCompany.id, ...sbCompany } : base44Company;
   const [orders, setOrders] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
   const [period, setPeriod] = useState('hoje');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
 
+  // Financeiro Supabase-only (agregações em @/lib/finance, intactas).
   useEffect(() => {
     if (!company) return;
     const load = async () => {
       try {
-        const ords = await base44.entities.Order.filter({ company_id: company.id }, '-created_date', 500);
-        setOrders(ords);
+        setOrders(await listOrders(supabase, company.id, 500));
       } catch (err) { console.error(err); }
       finally { setDataLoading(false); }
     };
     load();
-  }, [company]);
+  }, [company?.id, sbActive]);
 
   const summary = useMemo(() => {
     const range = getPeriodRange(period, customStart, customEnd);

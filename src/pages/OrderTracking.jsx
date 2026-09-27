@@ -1,8 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
+import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { getOrderByToken as sbGetOrderByToken } from '@/api/orders';
 import { Button } from '@/components/ui/button';
-import { Package, CheckCircle, Clock, Bike, Store, Table2, Phone, MapPin, Receipt, ChefHat, ShoppingBag, Home, XCircle } from 'lucide-react';
+import { Image } from '@/components/ui/image';
+import { useToast } from '@/components/ui/use-toast';
+import { playOrderSound, showOrderNotification } from '@/lib/orderSound';
+import { Package, CheckCircle, Clock, Bike, Store, Table2, Phone, MapPin, Receipt, ChefHat, Home, XCircle } from 'lucide-react';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -30,25 +35,62 @@ const STATUS_FLOW = {
   ],
 };
 
+const STATUS_TOASTS = {
+  novo: { title: 'Pedido atualizado', message: (o) => `Seu pedido #${o.order_number} foi recebido.` },
+  confirmado: { title: 'Pedido atualizado', message: () => 'Seu pedido foi aceito pelo restaurante.' },
+  em_preparo: { title: 'Pedido atualizado', message: () => 'Seu pedido está sendo preparado.' },
+  aguardando_retirada: { title: 'Pedido atualizado', message: () => 'Seu pedido está pronto para retirada.' },
+  saiu_entrega: { title: 'Pedido atualizado', message: () => 'Seu pedido saiu para entrega.' },
+  finalizado: { title: 'Pedido atualizado', message: () => 'Seu pedido foi finalizado. Obrigado!' },
+  cancelado: { title: 'Pedido atualizado', message: () => 'Seu pedido foi cancelado.', variant: 'destructive' },
+};
+
 export default function OrderTracking() {
   const { token } = useParams();
+  const { toast } = useToast();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const timerRef = useRef(null);
+  // Chave lógica order+status na sessão: notifica cada transição uma única
+  // vez; primeira carga e reloads não disparam (sem popup de "mudança").
+  const knownStatusRef = useRef(null);
+  const firstLoadRef = useRef(true);
 
+  const notifyStatusChange = (next) => {
+    if (!next?.status) return;
+    const prev = knownStatusRef.current;
+    knownStatusRef.current = next.status;
+    if (firstLoadRef.current || !prev || prev === next.status) return;
+    const tpl = STATUS_TOASTS[next.status];
+    if (!tpl) return;
+    toast({ title: tpl.title, description: tpl.message(next), variant: tpl.variant });
+    try { playOrderSound(); } catch (err) { /* visual basta */ }
+    try { showOrderNotification(next); } catch (err) { /* visual basta */ }
+  };
+
+  // FASE 5.4: tracking via RPC get_order_by_token (anon seguro, sem SELECT
+  // direto); sem Supabase configurado, fluxo Base44 original. Polling 5s mantido.
   const fetchOrder = async () => {
     try {
-      const res = await base44.functions.invoke('getOrderByToken', { tracking_token: token });
-      if (res.data?.error) {
-        setError(res.data.error);
+      if (isSupabaseConfigured()) {
+        const order = await sbGetOrderByToken(supabase, token);
+        notifyStatusChange(order);
+        setOrder(order);
       } else {
-        setOrder(res.data.order);
+        const res = await base44.functions.invoke('getOrderByToken', { tracking_token: token });
+        if (res.data?.error) {
+          setError(res.data.error);
+        } else {
+          notifyStatusChange(res.data.order);
+          setOrder(res.data.order);
+        }
       }
     } catch (err) {
-      setError('Pedido não encontrado');
+      setError(err?.message || 'Pedido não encontrado');
     } finally {
       setLoading(false);
+      firstLoadRef.current = false;
     }
   };
 
@@ -156,7 +198,16 @@ export default function OrderTracking() {
           {/* Items */}
           <div className="space-y-2 pt-2 border-t border-border">
             {order.items?.map((item, i) => (
-              <div key={i} className="flex justify-between gap-2">
+              <div key={i} className="flex gap-3">
+                {item.image_url ? (
+                  <div className="h-12 w-12 rounded-lg overflow-hidden bg-muted shrink-0">
+                    <Image src={item.image_url} fittingType="fill" className="h-full w-full" alt={item.name} />
+                  </div>
+                ) : (
+                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-muted shrink-0">
+                    <Package className="h-5 w-5 text-muted-foreground/60" />
+                  </div>
+                )}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-foreground">{item.quantity}x {item.name}</p>
                   {item.complements && item.complements.length > 0 && (

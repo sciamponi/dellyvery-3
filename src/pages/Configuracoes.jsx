@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listZones, createZone as sbCreateZone, deleteZone as sbDeleteZone } from '@/api/deliveryZones';
+import { updateCompany as sbUpdateCompany, getCompanySettings as sbGetSettings, updateCompanySettings as sbUpdateSettings } from '@/api/company';
+import { listDrivers as sbListDrivers } from '@/api/team';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { uploadImage as sbUploadImage } from '@/api/storage';
 import { useCompany } from '@/hooks/useCompany';
 import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -13,7 +16,8 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/use-toast';
 import { Image } from '@/components/ui/image';
-import { Upload, Loader2, Save, Plus, Trash2, X, Check } from 'lucide-react';
+import { Upload, Loader2, Save, Plus, Trash2, X, Check, Link2, QrCode, Share2, Download, Copy, ExternalLink, Megaphone, Printer, Globe } from 'lucide-react';
+import { normalizeSlug, isValidSlug, buildMenuUrl, buildShareMessage, buildWhatsAppUrl } from '@/lib/menuShare';
 
 const COLOR_PRESETS = ['#DC2626', '#F97316', '#2563EB', '#16A34A', '#9333EA', '#DB2777', '#0D9488', '#1E293B'];
 
@@ -28,8 +32,7 @@ function Spinner() {
 export default function Configuracoes() {
   const { loading, company, setCompany } = useCompany();
   const { toast } = useToast();
-  // FASE 5.3: CRUD de zonas via Supabase quando há sessão + empresa atual.
-  // Leitura do Checkout permanece Base44 (sem anon nesta fase).
+  // Configurações Supabase-only.
   const { user: sbUser, currentCompany: sbCompany } = useSupabaseAuth();
   const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
   const [saving, setSaving] = useState(false);
@@ -37,59 +40,134 @@ export default function Configuracoes() {
   const [form, setForm] = useState(null);
   const [zones, setZones] = useState([]);
   const [newZone, setNewZone] = useState({ name: '', fee: 0, estimated_time: 30 });
+  const [drivers, setDrivers] = useState([]);
+  const [opsSettings, setOpsSettings] = useState({ default_driver_id: '', auto_assign_delivery: false });
+  const [opsSaving, setOpsSaving] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const qrRef = useRef(null);
+
+  const menuUrl = form?.slug ? buildMenuUrl(window.location.origin, normalizeSlug(form.slug) || form.slug) : '';
+
+  useEffect(() => {
+    const canvas = qrRef.current;
+    if (!canvas || !menuUrl) return;
+    let cancelled = false;
+    import('qrcode').then(({ default: QRCode }) => {
+      if (!cancelled) QRCode.toCanvas(canvas, menuUrl, { width: 200, margin: 2 }).catch(() => {});
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [menuUrl]);
+
+  const copyMenuLink = async () => {
+    if (!menuUrl) return;
+    try {
+      await navigator.clipboard.writeText(menuUrl);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    } catch (err) {
+      toast({ title: 'Não foi possível copiar', variant: 'destructive' });
+    }
+  };
+
+  const downloadQr = () => {
+    const canvas = qrRef.current;
+    if (!canvas) return;
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = `qrcode-cardapio-${normalizeSlug(form?.slug || 'loja')}.png`;
+    a.click();
+  };
+
+  const shareWhatsApp = () => {
+    if (!menuUrl) return;
+    window.open(buildWhatsAppUrl(buildShareMessage(form?.name || 'Nosso cardápio', menuUrl)), '_blank', 'noopener');
+  };
 
   useEffect(() => {
     if (company) {
+      const cid = sbCompany?.id || company.id;
       setForm({ ...company });
-      if (sbActive && sbCompany) listZones(supabase, sbCompany.id).then(setZones).catch(() => {});
-      else base44.entities.DeliveryZone.filter({ company_id: company.id }).then(setZones);
+      listZones(supabase, cid).then(setZones).catch(() => {});
+      sbListDrivers(supabase, cid).then(setDrivers).catch(() => {});
+      sbGetSettings(supabase, cid).then(s => {
+        const cur = s?.settings || {};
+        setOpsSettings({ default_driver_id: cur.default_driver_id || '', auto_assign_delivery: !!cur.auto_assign_delivery });
+      }).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company, sbActive]);
+
+  const saveOpsSettings = async (next) => {
+    setOpsSettings(next);
+    setOpsSaving(true);
+    try {
+      const cid = sbCompany?.id || company.id;
+      const cur = await sbGetSettings(supabase, cid).catch(() => null);
+      const merged = { ...(cur?.settings || {}), default_driver_id: next.default_driver_id || null, auto_assign_delivery: !!next.auto_assign_delivery };
+      await sbUpdateSettings(supabase, cid, merged);
+      toast({ title: 'Motoboy padrão salvo!' });
+    } catch (err) {
+      toast({ title: 'Erro ao salvar', description: err?.message, variant: 'destructive' });
+    } finally {
+      setOpsSaving(false);
+    }
+  };
 
   if (loading || !form) return <Spinner />;
   if (!company) return null;
 
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
+  // Logo via Supabase Storage (bucket logos, pasta da empresa).
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const { file_url } = await sbUploadImage(supabase, 'logo', sbCompany?.id || company.id, file);
       update('logo_url', file_url);
     } catch (err) {
       toast({ title: 'Erro no upload', description: err?.message, variant: 'destructive' });
     } finally { setUploading(false); }
   };
 
+  // Salvamento Supabase-only (RLS OWNER/ADMIN).
   const handleSave = async () => {
     setSaving(true);
     try {
+      if (form.slug !== undefined && form.slug !== company.slug) {
+        const clean = normalizeSlug(form.slug);
+        if (!isValidSlug(clean)) {
+          toast({ title: 'Endereço inválido', description: 'Use letras minúsculas, números e hífens.', variant: 'destructive' });
+          return;
+        }
+      }
       const safeData = {};
       [
-        'name', 'slogan', 'description', 'logo_url',
+        'name', 'slug', 'slogan', 'description', 'logo_url',
         'primary_color', 'accent_color', 'secondary_color',
         'phone', 'whatsapp', 'email', 'address', 'city', 'state', 'zip_code',
         'instagram', 'facebook', 'website',
         'is_open', 'opening_hours', 'minimum_order', 'delivery_fee',
         'estimated_delivery_time', 'delivery_radius'
       ].forEach(key => { if (form[key] !== undefined) safeData[key] = form[key]; });
-      const updated = await base44.entities.Company.update(company.id, safeData);
+      if (safeData.slug !== undefined) safeData.slug = normalizeSlug(safeData.slug);
+      const updated = await sbUpdateCompany(supabase, sbCompany?.id || company.id, safeData);
       setCompany(updated);
+      setForm(prev => ({ ...prev, ...updated }));
       toast({ title: 'Configurações salvas!' });
     } catch (err) {
-      toast({ title: 'Erro ao salvar', description: err?.message, variant: 'destructive' });
+      const msg = err?.code === '23505' || /duplicate|unique|já está em uso/i.test(err?.message || '')
+        ? 'Este endereço já está em uso por outra loja.'
+        : err?.message;
+      toast({ title: 'Erro ao salvar', description: msg, variant: 'destructive' });
     } finally { setSaving(false); }
   };
 
   const addZone = async () => {
     if (!newZone.name.trim()) return;
     try {
-      const z = sbActive && sbCompany
-        ? await sbCreateZone(supabase, sbCompany.id, { ...newZone, fee: Number(newZone.fee) || 0, estimated_time: Number(newZone.estimated_time) || 30 })
-        : await base44.entities.DeliveryZone.create({ ...newZone, company_id: company.id, fee: Number(newZone.fee) || 0, estimated_time: Number(newZone.estimated_time) || 30 });
+      const z = await sbCreateZone(supabase, sbCompany?.id || company.id, { ...newZone, fee: Number(newZone.fee) || 0, estimated_time: Number(newZone.estimated_time) || 30 });
       setZones(prev => [...prev, z]);
       setNewZone({ name: '', fee: 0, estimated_time: 30 });
     } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }
@@ -97,8 +175,7 @@ export default function Configuracoes() {
 
   const deleteZone = async (id) => {
     try {
-      if (sbActive) await sbDeleteZone(supabase, id);
-      else await base44.entities.DeliveryZone.delete(id);
+      await sbDeleteZone(supabase, id);
       setZones(prev => prev.filter(z => z.id !== id));
     } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }
   };
@@ -116,6 +193,7 @@ export default function Configuracoes() {
       <Tabs defaultValue="identidade">
         <TabsList className="mb-6 flex-wrap h-auto">
           <TabsTrigger value="identidade">Identidade</TabsTrigger>
+          <TabsTrigger value="cardapio">🍔 Cardápio</TabsTrigger>
           <TabsTrigger value="contato">Contato</TabsTrigger>
           <TabsTrigger value="funcionamento">Funcionamento</TabsTrigger>
           <TabsTrigger value="delivery">Delivery</TabsTrigger>
@@ -151,6 +229,14 @@ export default function Configuracoes() {
               <div className="space-y-2"><Label>Nome</Label><Input value={form.name || ''} onChange={e => update('name', e.target.value)} /></div>
               <div className="space-y-2"><Label>Slogan</Label><Input value={form.slogan || ''} onChange={e => update('slogan', e.target.value)} /></div>
             </div>
+            <div className="space-y-2">
+              <Label>Endereço do cardápio (slug)</Label>
+              <div className="flex gap-2">
+                <Input value={form.slug || ''} onChange={e => update('slug', normalizeSlug(e.target.value))} placeholder="minha-loja" className="flex-1" />
+                <Button variant="outline" onClick={handleSave} disabled={saving}>Salvar</Button>
+              </div>
+              <p className="text-xs text-muted-foreground">Letras minúsculas, números e hífens. Ao trocar, o endereço antigo deixa de funcionar.</p>
+            </div>
             <div className="space-y-2"><Label>Descrição</Label><Textarea value={form.description || ''} onChange={e => update('description', e.target.value)} rows={3} /></div>
             <div className="space-y-3">
               <Label>Cor principal</Label>
@@ -173,6 +259,78 @@ export default function Configuracoes() {
                 ))}
                 <input type="color" value={form.accent_color || '#F97316'} onChange={e => update('accent_color', e.target.value)} className="h-9 w-9 rounded-xl border border-border cursor-pointer bg-transparent" />
               </div>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* Cardápio — divulgação */}
+        <TabsContent value="cardapio">
+          <div className="rounded-2xl border border-border bg-card p-6 space-y-4 max-w-2xl">
+            <div className="flex items-center gap-2">
+              <Link2 className="h-5 w-5 text-primary" />
+              <h3 className="font-heading font-semibold text-foreground">Endereço do cardápio</h3>
+            </div>
+            <div className="flex items-center gap-2 rounded-xl bg-muted px-3 py-2.5">
+              <span className="text-sm text-foreground truncate flex-1">{menuUrl || '—'}</span>
+              <Button variant="ghost" size="sm" onClick={copyMenuLink} className="shrink-0">
+                {copiedLink ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                {copiedLink ? 'Copiado!' : 'Copiar link'}
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => menuUrl && window.open(menuUrl, '_blank', 'noopener')}>
+                <ExternalLink className="h-4 w-4" /> Abrir cardápio
+              </Button>
+              <Button variant="outline" size="sm" onClick={shareWhatsApp}>
+                <Share2 className="h-4 w-4" /> Compartilhar no WhatsApp
+              </Button>
+            </div>
+          </div>
+
+          {/* QR Code */}
+          <div className="rounded-2xl border border-border bg-card p-6 space-y-4 max-w-2xl">
+            <div className="flex items-center gap-2">
+              <QrCode className="h-5 w-5 text-primary" />
+              <h3 className="font-heading font-semibold text-foreground">QR Code do cardápio</h3>
+            </div>
+            <div className="flex flex-col sm:flex-row items-center gap-4">
+              <div className="rounded-xl border border-border bg-white p-3">
+                <canvas ref={qrRef} width={200} height={200} className="h-[180px] w-[180px]" aria-label="QR Code do cardápio" />
+              </div>
+              <div className="flex flex-col gap-2 w-full sm:w-auto">
+                <Button variant="outline" size="sm" onClick={downloadQr}>
+                  <Download className="h-4 w-4" /> Baixar QR Code
+                </Button>
+                <Button variant="outline" size="sm" onClick={shareWhatsApp}>
+                  <Share2 className="h-4 w-4" /> Compartilhar
+                </Button>
+                <p className="text-xs text-muted-foreground">Aponta sempre para o endereço atual do cardápio.</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Material de divulgação (futuro) */}
+          <div className="rounded-2xl border border-dashed border-border bg-card p-6 space-y-3 max-w-2xl opacity-90">
+            <div className="flex items-center gap-2">
+              <Megaphone className="h-5 w-5 text-muted-foreground" />
+              <h3 className="font-heading font-semibold text-foreground">Material de divulgação</h3>
+              <span className="rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">Em breve</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" disabled>
+                <Megaphone className="h-4 w-4" /> Enviar para clientes
+              </Button>
+              <Button variant="outline" size="sm" disabled>
+                <Printer className="h-4 w-4" /> Criar cardápio para impressão
+              </Button>
+            </div>
+            <div className="flex items-start gap-2 rounded-xl bg-muted/60 p-3">
+              <Globe className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground">Domínio personalizado <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground ml-1">Em breve</span></p>
+                <p className="text-xs text-muted-foreground mt-0.5">Use um endereço próprio, ex.: cardapio.meurestaurante.com.br</p>
+              </div>
+              <Button variant="outline" size="sm" disabled>Configurar domínio</Button>
             </div>
           </div>
         </TabsContent>
@@ -221,6 +379,26 @@ export default function Configuracoes() {
         {/* Delivery */}
         <TabsContent value="delivery">
           <div className="rounded-2xl border border-border bg-card p-6 space-y-4 max-w-2xl">
+            <div className="space-y-3">
+              <Label>🚴 Motoboy padrão</Label>
+              <p className="text-xs text-muted-foreground">Selecione o entregador atribuído automaticamente aos novos pedidos de delivery.</p>
+              <Select value={opsSettings.default_driver_id || 'none'} onValueChange={v => saveOpsSettings({ ...opsSettings, default_driver_id: v === 'none' ? '' : v })} disabled={opsSaving}>
+                <SelectTrigger><SelectValue placeholder="Nenhum" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Nenhum</SelectItem>
+                  {drivers.filter(d => d.status === 'ativo').map(d => (
+                    <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {opsSettings.default_driver_id && !drivers.some(d => d.id === opsSettings.default_driver_id && d.status === 'ativo') && (
+                <p className="text-xs text-amber-600">O motoboy padrão está inativo — a atribuição automática está pausada.</p>
+              )}
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <Switch checked={!!opsSettings.auto_assign_delivery} onCheckedChange={v => saveOpsSettings({ ...opsSettings, auto_assign_delivery: v })} disabled={opsSaving} />
+                <span>✓ Atribuir automaticamente aos pedidos de delivery</span>
+              </label>
+            </div>
             <div className="space-y-2"><Label>Raio de entrega (km)</Label><Input type="number" min="0" value={form.delivery_radius || 0} onChange={e => update('delivery_radius', e.target.value)} /></div>
             <div>
               <Label className="mb-3 block">Zonas de entrega</Label>

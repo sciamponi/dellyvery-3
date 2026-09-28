@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listZones, createZone as sbCreateZone, deleteZone as sbDeleteZone } from '@/api/deliveryZones';
@@ -48,14 +48,15 @@ export default function Configuracoes() {
 
   const menuUrl = form?.slug ? buildMenuUrl(window.location.origin, normalizeSlug(form.slug) || form.slug) : '';
 
-  useEffect(() => {
-    const canvas = qrRef.current;
+  // QR desenhado via callback ref: dispara na montagem do canvas (ao abrir a
+  // aba Cardápio) e quando a URL muda. O useEffect anterior não redesenhava
+  // porque o conteúdo da aba inativa não está montado.
+  const qrCallbackRef = useCallback((canvas) => {
+    qrRef.current = canvas;
     if (!canvas || !menuUrl) return;
-    let cancelled = false;
     import('qrcode').then(({ default: QRCode }) => {
-      if (!cancelled) QRCode.toCanvas(canvas, menuUrl, { width: 200, margin: 2 }).catch(() => {});
+      QRCode.toCanvas(canvas, menuUrl, { width: 200, margin: 2 }).catch(() => {});
     }).catch(() => {});
-    return () => { cancelled = true; };
   }, [menuUrl]);
 
   const copyMenuLink = async () => {
@@ -192,11 +193,11 @@ export default function Configuracoes() {
 
       <Tabs defaultValue="identidade">
         <TabsList className="mb-6 flex-wrap h-auto">
-          <TabsTrigger value="identidade">Identidade</TabsTrigger>
+          <TabsTrigger value="identidade">🏪 Identidade</TabsTrigger>
           <TabsTrigger value="cardapio">🍔 Cardápio</TabsTrigger>
-          <TabsTrigger value="contato">Contato</TabsTrigger>
-          <TabsTrigger value="funcionamento">Funcionamento</TabsTrigger>
-          <TabsTrigger value="delivery">Delivery</TabsTrigger>
+          <TabsTrigger value="contato">📞 Contato</TabsTrigger>
+          <TabsTrigger value="funcionamento">🕐 Funcionamento</TabsTrigger>
+          <TabsTrigger value="delivery">🚴 Delivery</TabsTrigger>
         </TabsList>
 
         {/* Identidade */}
@@ -295,7 +296,7 @@ export default function Configuracoes() {
             </div>
             <div className="flex flex-col sm:flex-row items-center gap-4">
               <div className="rounded-xl border border-border bg-white p-3">
-                <canvas ref={qrRef} width={200} height={200} className="h-[180px] w-[180px]" aria-label="QR Code do cardápio" />
+                <canvas ref={qrCallbackRef} width={200} height={200} className="h-[180px] w-[180px]" aria-label="QR Code do cardápio" />
               </div>
               <div className="flex flex-col gap-2 w-full sm:w-auto">
                 <Button variant="outline" size="sm" onClick={downloadQr}>

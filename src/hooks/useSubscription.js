@@ -1,39 +1,57 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/supabaseClient';
+import { fromSupabasePlan } from '@/api/plans';
 
-export function useSubscription() {
+// Assinatura Supabase-only: lê subscriptions (+plan) da empresa via RLS.
+// trial_ends_at é derivado de expires_at; limites vêm de plans.limits.
+export function useSubscription(companyId) {
   const [loading, setLoading] = useState(true);
   const [subscription, setSubscription] = useState(null);
   const [plan, setPlan] = useState(null);
 
   useEffect(() => {
+    if (!companyId) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
     const load = async () => {
       try {
-        const user = await base44.auth.me();
-        if (!user.company_id) { setLoading(false); return; }
-        const subs = await base44.entities.Subscription.filter({ company_id: user.company_id });
-        const sub = subs[0];
-        setSubscription(sub);
+        const { data: sub, error } = await supabase
+          .from('subscriptions')
+          .select('*')
+          .eq('company_id', companyId)
+          .maybeSingle();
+        if (error) throw error;
+        if (cancelled) return;
+        setSubscription(sub || null);
         if (sub?.plan_id) {
-          try {
-            const p = await base44.entities.Plan.get(sub.plan_id);
-            setPlan(p);
-          } catch (e) { /* ignore */ }
+          const { data: p, error: pErr } = await supabase
+            .from('plans')
+            .select('*')
+            .eq('id', sub.plan_id)
+            .maybeSingle();
+          if (pErr) throw pErr;
+          if (!cancelled) setPlan(p ? fromSupabasePlan(p) : null);
+        } else if (!cancelled) {
+          setPlan(null);
         }
       } catch (err) { console.error(err); }
-      finally { setLoading(false); }
+      finally { if (!cancelled) setLoading(false); }
     };
     load();
-  }, []);
+    return () => { cancelled = true; };
+  }, [companyId]);
 
   const now = Date.now();
+  const trialEndsAt = subscription?.trial_ends_at || subscription?.expires_at || null;
   const isActive = subscription?.status === 'ativo';
   const isTrial = subscription?.status === 'trial';
-  const trialDaysLeft = isTrial && subscription?.trial_ends_at
-    ? Math.max(0, Math.ceil((new Date(subscription.trial_ends_at).getTime() - now) / (24 * 60 * 60 * 1000)))
+  const trialDaysLeft = isTrial && trialEndsAt
+    ? Math.max(0, Math.ceil((new Date(trialEndsAt).getTime() - now) / (24 * 60 * 60 * 1000)))
     : 0;
   const isCanceled = subscription?.status === 'cancelado';
   const hasAccess = isActive || (isTrial && trialDaysLeft > 0);
 
-  return { loading, subscription, plan, isActive, isTrial, trialDaysLeft, isCanceled, hasAccess, setSubscription };
+  return { loading, subscription, plan, trialDaysLeft, isActive, isTrial, isCanceled, hasAccess, setSubscription };
 }

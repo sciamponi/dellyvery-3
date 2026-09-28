@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/supabaseClient';
+import { listPlans } from '@/api/plans';
 import { useCompany } from '@/hooks/useCompany';
 import { useSubscription } from '@/hooks/useSubscription';
 import PageHeader from '@/components/PageHeader';
@@ -29,7 +30,7 @@ function Spinner() {
 
 export default function Assinatura() {
   const { loading: companyLoading, company } = useCompany();
-  const { loading: subLoading, subscription, plan, trialDaysLeft, isCanceled, setSubscription } = useSubscription();
+  const { loading: subLoading, subscription, plan, trialDaysLeft, isCanceled, setSubscription } = useSubscription(company?.id);
   const { toast } = useToast();
   const [plans, setPlans] = useState([]);
   const [usage, setUsage] = useState({ products: 0, orders: 0, customers: 0 });
@@ -37,19 +38,22 @@ export default function Assinatura() {
   const [cancelDialog, setCancelDialog] = useState(false);
 
   useEffect(() => {
-    base44.entities.Plan.filter({ active: true }, 'sort_order').then(setPlans).catch(() => {});
+    listPlans(supabase, { onlyActive: true }).then(setPlans).catch(() => {});
   }, []);
 
   useEffect(() => {
     const loadUsage = async () => {
       if (!company) return;
       try {
+        const count = async (table) => {
+          const { count, error } = await supabase.from(table).select('id', { count: 'exact', head: true }).eq('company_id', company.id);
+          if (error) throw error;
+          return count || 0;
+        };
         const [prods, ords, custs] = await Promise.all([
-          base44.entities.Product.filter({ company_id: company.id }),
-          base44.entities.Order.filter({ company_id: company.id }),
-          base44.entities.Customer.filter({ company_id: company.id }),
+          count('products'), count('orders'), count('customers'),
         ]);
-        setUsage({ products: prods.length, orders: ords.length, customers: custs.length });
+        setUsage({ products: prods, orders: ords, customers: custs });
       } catch (e) { /* ignore */ }
     };
     loadUsage();

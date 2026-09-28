@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/supabaseClient';
+import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
+import { listPlans, createPlan, updatePlan, deletePlan, isPlatformAdmin } from '@/api/plans';
 import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
@@ -23,6 +25,7 @@ function Spinner() {
 
 export default function MasterPlanos() {
   const { toast } = useToast();
+  const { user: sbUser } = useSupabaseAuth();
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [plans, setPlans] = useState([]);
@@ -33,21 +36,20 @@ export default function MasterPlanos() {
   const [form, setForm] = useState({});
 
   const loadPlans = async () => {
-    const list = await base44.entities.Plan.list('-sort_order');
-    setPlans(list);
+    setPlans(await listPlans(supabase, { onlyActive: false }));
   };
 
   useEffect(() => {
     const load = async () => {
       try {
-        const user = await base44.auth.me();
-        setIsAdmin(user.role === 'admin');
-        if (user.role === 'admin') await loadPlans();
+        const admin = await isPlatformAdmin(supabase, sbUser?.id);
+        setIsAdmin(admin);
+        if (admin) await loadPlans();
       } catch (e) { console.error(e); }
       finally { setLoading(false); }
     };
     load();
-  }, []);
+  }, [sbUser?.id]);
 
   if (loading) return <Spinner />;
 
@@ -80,32 +82,31 @@ export default function MasterPlanos() {
       const features = (form.featuresText || '').split('\n').map(f => f.trim()).filter(Boolean);
       const payload = { ...form, features, price: Number(form.price) || 0, limits_users: Number(form.limits_users) || 1, limits_orders: Number(form.limits_orders) ?? -1, limits_products: Number(form.limits_products) ?? -1, limits_customers: Number(form.limits_customers) ?? -1, limits_whatsapp: Number(form.limits_whatsapp) || 0, limits_storage_mb: Number(form.limits_storage_mb) || 100, sort_order: Number(form.sort_order) || 0 };
       delete payload.featuresText; delete payload.id; delete payload.created_date; delete payload.updated_date; delete payload.created_by_id;
-      const action = editPlan ? 'update' : 'create';
-      const data = editPlan ? { action, plan: { ...payload, id: editPlan.id } } : { action, plan: payload };
-      await base44.functions.invoke('managePlan', data);
+      if (editPlan) await updatePlan(supabase, editPlan.id, payload);
+      else await createPlan(supabase, payload);
       toast({ title: editPlan ? 'Plano atualizado!' : 'Plano criado!' });
       setDialog(false);
       loadPlans();
     } catch (err) {
-      toast({ title: 'Erro', description: err?.response?.data?.error || 'Tente novamente', variant: 'destructive' });
+      toast({ title: 'Erro', description: err?.message || 'Tente novamente', variant: 'destructive' });
     } finally { setSaving(false); }
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
-      await base44.functions.invoke('managePlan', { action: 'delete', plan: { id: deleteTarget.id } });
+      await deletePlan(supabase, deleteTarget.id);
       setPlans(prev => prev.filter(p => p.id !== deleteTarget.id));
       toast({ title: 'Plano excluído' });
-    } catch (err) { toast({ title: 'Erro', variant: 'destructive' }); }
+    } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }
     finally { setDeleteTarget(null); }
   };
 
   const toggleActive = async (p) => {
     try {
-      await base44.functions.invoke('managePlan', { action: 'toggle_active', plan: { id: p.id, active: p.active } });
+      await updatePlan(supabase, p.id, { active: !p.active });
       loadPlans();
-    } catch (err) { toast({ title: 'Erro', variant: 'destructive' }); }
+    } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }
   };
 
   return (

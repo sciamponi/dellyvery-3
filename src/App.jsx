@@ -27,6 +27,7 @@ import Equipe from './pages/Equipe';
 import Perfil from './pages/Perfil';
 import Assinatura from './pages/Assinatura';
 import Financeiro from './pages/Financeiro';
+import Atualizacoes from './pages/Atualizacoes';
 import MasterPlanos from './pages/MasterPlanos';
 
 function App() {
@@ -65,6 +66,7 @@ function App() {
                 <Route path="/perfil" element={<Perfil />} />
                 <Route path="/assinatura" element={<Assinatura />} />
                 <Route path="/financeiro" element={<Financeiro />} />
+                <Route path="/atualizacoes" element={<Atualizacoes />} />
                 <Route path="/master/planos" element={<MasterPlanos />} />
               </Route>
             </Route>

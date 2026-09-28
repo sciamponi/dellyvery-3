@@ -399,8 +399,8 @@ export default function Pdv() {
 
         {/* Pedido atual */}
         <div className="min-w-0 flex flex-col lg:h-full lg:min-h-0">
-          <div className="rounded-2xl border border-border bg-card p-4 flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-hidden">
-            <div className="shrink-0 space-y-4">
+          <div className="rounded-2xl border border-border bg-card p-4 flex flex-col gap-3 lg:h-full lg:min-h-0 lg:overflow-hidden">
+            <div className="shrink-0 space-y-3">
             <div>
               <Label className="mb-2 block">Tipo do pedido</Label>
               <div className="grid grid-cols-3 gap-1.5">
@@ -441,7 +441,9 @@ export default function Pdv() {
                 )}
               </div>
             )}
+            </div>
 
+            <div className="flex-1 min-h-0 lg:overflow-y-auto space-y-4 lg:pr-1">
             <div className="space-y-1.5">
               <Label>👤 Cliente</Label>
               <div className="relative">
@@ -480,9 +482,8 @@ export default function Pdv() {
                 {PAYMENTS.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
-            </div>
 
-            <div className="flex-1 min-h-0 flex flex-col overflow-y-auto">
+            <div className="min-w-0">
               {selectedComanda ? (
                 <button
                   type="button"
@@ -498,7 +499,7 @@ export default function Pdv() {
               {items.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4 shrink-0">Toque em Adicionar nos produtos.</p>
               ) : (
-                <div className="space-y-2 max-h-64 lg:max-h-none lg:flex-1 lg:min-h-0 overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-64 lg:max-h-none overflow-y-auto lg:overflow-visible pr-1">
                   {items.map(x => (
                     <div key={x.product_id} className="flex items-center gap-2 rounded-xl border border-border p-2 min-w-0">
                       <div className="min-w-0 flex-1">
@@ -515,6 +516,7 @@ export default function Pdv() {
                   ))}
                 </div>
               )}
+            </div>
             </div>
 
             <div className="shrink-0 space-y-1 pt-2 border-t border-border text-sm">

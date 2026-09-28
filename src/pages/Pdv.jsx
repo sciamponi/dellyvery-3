@@ -4,21 +4,26 @@ import { useCompany } from '@/hooks/useCompany';
 import { listProducts, listCategories } from '@/api/catalog';
 import { listCustomers } from '@/api/customers';
 import { listZones } from '@/api/deliveryZones';
-import { createOrder } from '@/api/orders';
+import { createOrder, editOrder, cancelOrder, getOrderDetail, listOrdersWithItems } from '@/api/orders';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Image } from '@/components/ui/image';
 import { useToast } from '@/components/ui/use-toast';
 import { calcPdvTotals } from '@/lib/orderDay';
+import { groupComandasByTable, mergeComandaItems, toPdvDraftItem, normalizeTable } from '@/lib/tableComandas';
+import { buildWhatsAppUrl } from '@/lib/menuShare';
+import TableSelectModal, { MergeConfirmModal, TableMergePicker } from '@/components/pdv/TableSelectModal';
+import OrderModal from '@/components/orders/OrderModal';
+import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
 import { Plus, Minus, Trash2, Search, Package, CheckCircle, Bike, Store, Table2, User } from 'lucide-react';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
 const ORDER_TYPES = [
-  { id: 'mesa', label: 'Mesa', icon: Table2 },
-  { id: 'retirada', label: 'Retirada', icon: Store },
-  { id: 'delivery', label: 'Entrega', icon: Bike },
+  { id: 'mesa', label: '🍽️ Mesa', icon: Table2 },
+  { id: 'retirada', label: '🛍️ Retirada', icon: Store },
+  { id: 'delivery', label: '🛵 Entrega', icon: Bike },
 ];
 
 const PAYMENTS = ['Dinheiro', 'Cartão (na entrega)', 'Pix (na entrega)'];
@@ -50,8 +55,21 @@ export default function Pdv() {
   const [address, setAddress] = useState('');
   const [deliveryZoneId, setDeliveryZoneId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [discount, setDiscount] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [doneOrder, setDoneOrder] = useState(null);
+
+  // Comandas de mesa (derivadas dos pedidos ativos — sem entidade Mesa).
+  const [mesaOrders, setMesaOrders] = useState([]);
+  const [tableOpen, setTableOpen] = useState(false);
+  const [selectedComandaId, setSelectedComandaId] = useState(null);
+  const [mergeTable, setMergeTable] = useState(null);
+  const [mergeIds, setMergeIds] = useState([]);
+  const [mergeConfirm, setMergeConfirm] = useState(null);
+  const [merging, setMerging] = useState(false);
+  // Detalhe da comanda (reuso do OrderModal) + cancelamento.
+  const [detailOrder, setDetailOrder] = useState(null);
+  const [cancelTarget, setCancelTarget] = useState(null);
 
   useEffect(() => {
     if (!company) return;
@@ -75,6 +93,31 @@ export default function Pdv() {
     };
     load();
   }, [company?.id]);
+
+  const refreshMesaOrders = async () => {
+    if (!company) return;
+    try {
+      const all = await listOrdersWithItems(supabase, company.id, 200);
+      setMesaOrders(all.filter(o => o.order_type === 'mesa'));
+    } catch {
+      // comandas são auxiliares: falha silenciosa, PDV continua funcionando
+    }
+  };
+
+  useEffect(() => {
+    if (orderType === 'mesa' && company) refreshMesaOrders();
+  }, [orderType, company?.id]);
+
+  const tables = useMemo(() => groupComandasByTable(mesaOrders), [mesaOrders]);
+  const currentComandas = useMemo(() => {
+    const t = normalizeTable(tableNumber);
+    if (!t) return [];
+    return tables.find(x => x.table === t)?.comandas || [];
+  }, [tables, tableNumber]);
+  const selectedComanda = useMemo(
+    () => mesaOrders.find(o => o.id === selectedComandaId) || null,
+    [mesaOrders, selectedComandaId],
+  );
 
   const filtered = useMemo(() => products.filter(p => {
     const ms = !search || p.name?.toLowerCase().includes(search.toLowerCase());
@@ -114,7 +157,128 @@ export default function Pdv() {
 
   const zone = zones.find(z => z.id === deliveryZoneId);
   const fee = orderType === 'delivery' ? (zone?.fee ?? company?.delivery_fee ?? 0) : 0;
-  const { subtotal, total, count: itemCount } = calcPdvTotals(items, fee);
+  const { subtotal, count: itemCount } = calcPdvTotals(items, fee);
+  const discountValue = Math.max(0, Math.min(Number(discount) || 0, subtotal));
+  const total = subtotal + fee - discountValue;
+
+  const resetDraft = (keepTable = false) => {
+    setItems([]);
+    setCustomer({ name: '', phone: '' });
+    setCustomerSearch('');
+    setPaymentMethod('');
+    setDiscount('');
+    setSelectedComandaId(null);
+    if (!keepTable) {
+      setTableNumber('');
+      setAddress('');
+      setDeliveryZoneId('');
+    }
+  };
+
+  // Mesa → comanda ativa → cliente (nome/telefone automáticos).
+  const loadComanda = (order) => {
+    if (!order) return;
+    setTableNumber(order.table_number || '');
+    setCustomer({ name: order.customer_name || '', phone: order.customer_phone || '' });
+    setCustomerSearch('');
+    setPaymentMethod(order.payment_method || '');
+    setDiscount(String(order.discount || ''));
+    setItems((Array.isArray(order.items) ? order.items : []).map(toPdvDraftItem));
+    setSelectedComandaId(order.id);
+    setTableOpen(false);
+    setMergeTable(null);
+    setMergeIds([]);
+  };
+
+  const pickTable = (table) => {
+    const t = normalizeTable(table);
+    setTableNumber(t);
+    const group = tables.find(x => x.table === t);
+    if (group && group.comandas.length === 1) {
+      const full = mesaOrders.find(o => o.id === group.comandas[0].id);
+      if (full) loadComanda(full);
+      else setTableOpen(false);
+    } else if (!group) {
+      setTableOpen(false);
+    }
+    // várias comandas: mantém o modal aberto para escolha
+  };
+
+  const newComanda = (table) => {
+    const t = normalizeTable(table) || normalizeTable(tableNumber);
+    resetDraft(true);
+    setTableNumber(t);
+    setTableOpen(false);
+    setMergeTable(null);
+    setMergeIds([]);
+    toast({ title: t ? `Nova comanda na Mesa ${t}` : 'Nova comanda' });
+  };
+
+  const openDetail = async (orderId) => {
+    try {
+      const detail = await getOrderDetail(supabase, company.id, orderId);
+      if (detail) {
+        setTableOpen(false);
+        setDetailOrder(detail);
+      }
+    } catch (err) {
+      toast({ title: 'Erro ao abrir comanda', description: err?.message, variant: 'destructive' });
+    }
+  };
+
+  const requestPayment = (order) => {
+    const phone = (order.customer_phone || order.customer_data?.phone || '').replace(/\D/g, '');
+    const msg = `Olá ${order.customer_name || ''}! Sua comanda da Mesa ${order.table_number || ''} (Pedido #${order.order_number}) totalizou ${fmtCurrency(order.total)}. Segue para pagamento. Obrigado!`;
+    // Sem automação de WhatsApp nesta fase (u17 = em breve): abre conversa.
+    const url = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(msg)}` : buildWhatsAppUrl(msg);
+    window.open(url, '_blank', 'noopener');
+  };
+
+  const runMerge = async () => {
+    if (!mergeConfirm || mergeConfirm.comandas.length < 2) return;
+    setMerging(true);
+    try {
+      const full = mergeConfirm.comandas
+        .map(c => mesaOrders.find(o => o.id === c.id))
+        .filter(Boolean);
+      if (full.length < 2) throw new Error('Comandas não encontradas. Recarregue e tente de novo.');
+      const [target, ...sources] = full;
+      await editOrder(supabase, target.id, {
+        items: mergeComandaItems(full.map(o => o.items)),
+      });
+      const failed = [];
+      for (const s of sources) {
+        try {
+          await cancelOrder(supabase, s.id, `Juntada à comanda #${target.order_number} (Mesa ${mergeConfirm.table})`);
+        } catch {
+          failed.push(`#${s.order_number}`);
+        }
+      }
+      if (failed.length > 0) {
+        toast({
+          title: 'Junção parcial',
+          description: `Itens somados na comanda #${target.order_number}, mas não foi possível cancelar: ${failed.join(', ')}. Cancele manualmente em Pedidos.`,
+          variant: 'destructive',
+        });
+      } else {
+        toast({ title: `Comandas juntadas na #${target.order_number}!` });
+      }
+      setMergeConfirm(null);
+      setMergeTable(null);
+      setMergeIds([]);
+      setTableOpen(true);
+      if (selectedComandaId && sources.some(s => s.id === selectedComandaId)) {
+        const fresh = await getOrderDetail(supabase, company.id, target.id).catch(() => null);
+        if (fresh) loadComanda(fresh);
+        else setSelectedComandaId(null);
+      }
+      refreshMesaOrders();
+    } catch (err) {
+      toast({ title: 'Erro ao juntar comandas', description: err?.message, variant: 'destructive' });
+    } finally {
+      setMerging(false);
+    }
+  };
 
   const handleSubmit = async () => {
     if (items.length === 0) {
@@ -135,19 +299,39 @@ export default function Pdv() {
     }
     setSubmitting(true);
     try {
-      const created = await createOrder(supabase, {
-        companySlug: company.slug,
-        orderType,
-        tableNumber,
-        items: items.map(i => ({ product_id: i.product_id, quantity: i.quantity, complements: i.complements || [], notes: i.notes || '' })),
-        customer: { name: customer.name, phone: customer.phone, address },
-        deliveryZoneId: deliveryZoneId || null,
-        paymentMethod: paymentMethod || null,
-        notes: '',
-      });
-      setDoneOrder(created);
-      setItems([]);
-      toast({ title: `Pedido #${created.order_number} criado!` });
+      const apiItems = items.map(i => ({ product_id: i.product_id, quantity: i.quantity, complements: i.complements || [], notes: i.notes || '' }));
+      let number;
+      if (selectedComanda) {
+        // Comanda existente: soma ao pedido via edit (totais recalculados no backend).
+        await editOrder(supabase, selectedComanda.id, { items: apiItems, discount: discountValue });
+        number = selectedComanda.order_number;
+        toast({ title: `Comanda #${number} atualizada!` });
+      } else {
+        const created = await createOrder(supabase, {
+          companySlug: company.slug,
+          orderType,
+          tableNumber,
+          items: apiItems,
+          customer: { name: customer.name, phone: customer.phone, address },
+          deliveryZoneId: deliveryZoneId || null,
+          paymentMethod: paymentMethod || null,
+          notes: '',
+        });
+        number = created.order_number;
+        // create_order não aceita desconto: aplica via edit em seguida.
+        if (discountValue > 0) {
+          try {
+            await editOrder(supabase, created.order_id, { discount: discountValue });
+          } catch {
+            toast({ title: `Pedido #${number} criado sem desconto`, description: 'Não foi possível aplicar o desconto. Ajuste em Pedidos.', variant: 'destructive' });
+          }
+        }
+        toast({ title: `Pedido #${number} criado!` });
+      }
+      setDoneOrder({ order_number: number });
+      const keepTable = orderType === 'mesa';
+      resetDraft(keepTable);
+      refreshMesaOrders();
     } catch (err) {
       toast({ title: 'Erro ao criar pedido', description: err?.message, variant: 'destructive' });
     } finally {
@@ -161,7 +345,7 @@ export default function Pdv() {
   return (
     <div className={`flex flex-col lg:h-[calc(100vh-4rem)] lg:min-h-0 lg:overflow-hidden ${items.length > 0 ? 'pb-20 lg:pb-0' : ''}`}>
       <div className="shrink-0 mb-3">
-        <h1 className="font-heading text-xl font-bold text-foreground">PDV</h1>
+        <h1 className="font-heading text-xl font-bold text-foreground">🧾 PDV</h1>
         <p className="text-xs text-muted-foreground mt-0.5">Crie pedidos de mesa, retirada ou entrega</p>
       </div>
 
@@ -225,10 +409,10 @@ export default function Pdv() {
                     key={t.id}
                     type="button"
                     onClick={() => setOrderType(t.id)}
-                    className={`flex flex-col items-center gap-1 rounded-xl border px-2 py-2.5 text-xs font-medium transition-colors min-w-0 ${orderType === t.id ? 'border-primary bg-primary/5 text-foreground' : 'border-border text-muted-foreground'}`}
+                    className={`flex flex-col items-center gap-0.5 rounded-xl border px-1 py-2 text-[11px] font-medium transition-colors min-w-0 ${orderType === t.id ? 'border-primary bg-primary/5 text-foreground' : 'border-border text-muted-foreground'}`}
                   >
                     <t.icon className="h-4 w-4 shrink-0" />
-                    <span className="truncate">{t.label}</span>
+                    <span className="truncate leading-tight">{t.label}</span>
                   </button>
                 ))}
               </div>
@@ -236,13 +420,30 @@ export default function Pdv() {
 
             {orderType === 'mesa' && (
               <div className="space-y-1.5">
-                <Label>Mesa *</Label>
-                <Input value={tableNumber} onChange={e => setTableNumber(e.target.value)} placeholder="Número da mesa" inputMode="numeric" />
+                <Label>🍽️ Mesa *</Label>
+                <button
+                  type="button"
+                  onClick={() => setTableOpen(true)}
+                  className="flex w-full items-center gap-2 rounded-md border border-input bg-transparent px-3 py-2 text-sm min-w-0 text-left hover:bg-muted/50"
+                >
+                  <span className="flex-1 min-w-0 truncate">
+                    {tableNumber ? `Mesa ${tableNumber}` : 'Selecionar mesa...'}
+                    {currentComandas.length > 0 && (
+                      <span className="text-muted-foreground"> • {currentComandas.length} {currentComandas.length === 1 ? 'comanda' : 'comandas'}</span>
+                    )}
+                  </span>
+                  <span className="text-xs text-primary font-medium shrink-0">Trocar</span>
+                </button>
+                {selectedComanda && (
+                  <p className="text-xs text-muted-foreground truncate">
+                    👥 Comanda #{selectedComanda.order_number} • 👤 {selectedComanda.customer_name || 'Sem cliente'}
+                  </p>
+                )}
               </div>
             )}
 
             <div className="space-y-1.5">
-              <Label>Cliente</Label>
+              <Label>👤 Cliente</Label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input value={customerSearch || customer.name} onChange={e => { setCustomerSearch(e.target.value); setCustomer({ name: e.target.value, phone: customer.phone }); }} placeholder="Buscar ou nome avulso" className="pl-9" />
@@ -273,19 +474,29 @@ export default function Pdv() {
             )}
 
             <div className="space-y-1.5">
-              <Label>Pagamento</Label>
+              <Label>💳 Pagamento</Label>
               <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm min-w-0">
                 <option value="">Selecione...</option>
                 {PAYMENTS.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
-
             </div>
 
-            <div className="flex-1 min-h-0 flex flex-col">
-              <Label className="mb-2 block shrink-0">Itens ({itemCount})</Label>
+            <div className="flex-1 min-h-0 flex flex-col overflow-y-auto">
+              {selectedComanda ? (
+                <button
+                  type="button"
+                  onClick={() => openDetail(selectedComanda.id)}
+                  className="mb-2 shrink-0 flex items-center gap-1 text-left rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  title="Abrir detalhes da comanda"
+                >
+                  <Label className="cursor-pointer">🧾 Itens ({itemCount}) — ver detalhes</Label>
+                </button>
+              ) : (
+                <Label className="mb-2 block shrink-0">🧾 Itens ({itemCount})</Label>
+              )}
               {items.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">Toque em Adicionar nos produtos.</p>
+                <p className="text-sm text-muted-foreground text-center py-4 shrink-0">Toque em Adicionar nos produtos.</p>
               ) : (
                 <div className="space-y-2 max-h-64 lg:max-h-none lg:flex-1 lg:min-h-0 overflow-y-auto pr-1">
                   {items.map(x => (
@@ -308,14 +519,36 @@ export default function Pdv() {
 
             <div className="shrink-0 space-y-1 pt-2 border-t border-border text-sm">
               <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{fmtCurrency(subtotal)}</span></div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">Desconto</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-muted-foreground text-xs">R$</span>
+                  <Input
+                    value={discount}
+                    onChange={e => setDiscount(e.target.value.replace(/[^0-9.,]/g, '').replace(',', '.'))}
+                    placeholder="0,00"
+                    inputMode="decimal"
+                    className="h-8 w-24 text-right"
+                    aria-label="Desconto em reais"
+                  />
+                </div>
+              </div>
+              {discountValue > 0 && (
+                <div className="flex justify-between text-green-600"><span>Desconto aplicado</span><span>-{fmtCurrency(discountValue)}</span></div>
+              )}
               {orderType === 'delivery' && (
                 <div className="flex justify-between"><span className="text-muted-foreground">Taxa de entrega</span><span>{fmtCurrency(fee)}</span></div>
               )}
-              <div className="flex justify-between font-heading text-lg font-bold pt-1"><span>Total</span><span>{fmtCurrency(total)}</span></div>
+              <div className="flex justify-between font-heading text-lg font-bold pt-1"><span>💰 Total</span><span>{fmtCurrency(total)}</span></div>
             </div>
 
+            {selectedComanda && (
+              <Button variant="outline" className="w-full shrink-0" onClick={() => requestPayment(selectedComanda)}>
+                💳 Solicitar pagamento
+              </Button>
+            )}
             <Button className="w-full h-11 shrink-0" onClick={handleSubmit} disabled={submitting || items.length === 0}>
-              {submitting ? 'Enviando...' : 'Finalizar pedido'}
+              {submitting ? 'Enviando...' : selectedComanda ? `Atualizar comanda #${selectedComanda.order_number}` : 'Finalizar pedido'}
             </Button>
           </div>
         </div>
@@ -331,6 +564,78 @@ export default function Pdv() {
           <Button onClick={handleSubmit} disabled={submitting} className="h-11 px-6">Finalizar</Button>
         </div>
       )}
+
+      {/* Seletor de mesa / comandas */}
+      <TableSelectModal
+        open={tableOpen}
+        onClose={() => { setTableOpen(false); setMergeTable(null); setMergeIds([]); }}
+        mesaOrders={mesaOrders}
+        initialTable={tableNumber}
+        onPickTable={pickTable}
+        onPickComanda={(id) => { const full = mesaOrders.find(o => o.id === id); if (full) loadComanda(full); }}
+        onNewComanda={newComanda}
+        onMergeTable={(table) => { setTableOpen(false); setMergeTable(table); setMergeIds([]); }}
+        onViewComanda={openDetail}
+      />
+
+      {/* Escolha de comandas para juntar (dentro do contexto da mesa) */}
+      {mergeTable && (
+        <div className="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => { setMergeTable(null); setMergeIds([]); }} />
+          <div className="relative w-full max-w-md">
+            <TableMergePicker
+              table={mergeTable}
+              comandas={tables.find(x => x.table === mergeTable)?.comandas || []}
+              selected={mergeIds}
+              onToggle={(id) => setMergeIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])}
+              onCancel={() => { setMergeTable(null); setMergeIds([]); setTableOpen(true); }}
+              onContinue={() => {
+                const all = tables.find(x => x.table === mergeTable)?.comandas || [];
+                setMergeConfirm({ table: mergeTable, comandas: all.filter(c => mergeIds.includes(c.id)) });
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Dupla confirmação da junção */}
+      <MergeConfirmModal
+        open={!!mergeConfirm}
+        onClose={() => { if (!merging) setMergeConfirm(null); }}
+        table={mergeConfirm?.table || ''}
+        comandas={mergeConfirm?.comandas || []}
+        busy={merging}
+        onConfirm={runMerge}
+      />
+
+      {/* Detalhe da comanda (reuso do OrderModal) */}
+      <OrderModal
+        order={detailOrder}
+        isOpen={!!detailOrder}
+        onClose={() => setDetailOrder(null)}
+        company={company}
+        driver={null}
+        onOrderUpdated={(updated) => {
+          setDetailOrder(updated);
+          setMesaOrders(prev => prev.map(o => o.id === updated.id ? { ...o, ...updated } : o));
+        }}
+        onCancel={() => setCancelTarget(detailOrder)}
+        onSelectOrder={(o) => openDetail(o.id)}
+        onRequestPayment={requestPayment}
+      />
+      <CancelOrderDialog
+        order={cancelTarget}
+        isOpen={!!cancelTarget}
+        onClose={() => setCancelTarget(null)}
+        onCancelled={() => {
+          setCancelTarget(null);
+          setDetailOrder(null);
+          if (cancelTarget && cancelTarget.id === selectedComandaId) {
+            resetDraft(true);
+          }
+          refreshMesaOrders();
+        }}
+      />
     </div>
   );
 }

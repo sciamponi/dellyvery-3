@@ -39,7 +39,7 @@ function collapseConsecutiveStatuses(history) {
   return history.filter((h, i) => i === 0 || h?.status !== history[i - 1]?.status);
 }
 
-export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onCancel, onSelectOrder, company, driver }) {
+export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onCancel, onSelectOrder, company, driver, onRequestPayment }) {
   const { toast } = useToast();
   // FASE 5.4: edição via adapter Supabase quando há sessão; leituras
   // auxiliares (fotos/histórico) seguem Base44 (dependências de Pedidos).
@@ -704,6 +704,11 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                     </Button>
                   )}
                 </div>
+                {order.status !== 'cancelado' && order.status !== 'finalizado' && onRequestPayment && (
+                  <Button variant="outline" className="w-full mt-2" onClick={() => onRequestPayment(order)} disabled={busy}>
+                    💳 Solicitar pagamento
+                  </Button>
+                )}
                 {order.status !== 'cancelado' && order.status !== 'finalizado' && (
                   <Button variant="ghost" className="w-full mt-2" onClick={startEdit} disabled={busy}>
                     <Pencil className="h-4 w-4" /> Editar itens/endereço

@@ -311,27 +311,29 @@ export default function Configuracoes() {
           </div>
 
           {/* Material de divulgação (futuro) */}
-          <div className="rounded-2xl border border-dashed border-border bg-card p-6 space-y-3 max-w-2xl opacity-90">
+          <div className="rounded-2xl border border-dashed border-border bg-card p-4 sm:p-6 space-y-3 max-w-2xl w-full min-w-0 opacity-90">
             <div className="flex items-center gap-2">
-              <Megaphone className="h-5 w-5 text-muted-foreground" />
-              <h3 className="font-heading font-semibold text-foreground">Material de divulgação</h3>
-              <span className="rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">Em breve</span>
+              <Megaphone className="h-5 w-5 text-muted-foreground shrink-0" />
+              <h3 className="font-heading font-semibold text-foreground min-w-0">Material de divulgação</h3>
+              <span className="rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground shrink-0">Em breve</span>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" disabled>
-                <Megaphone className="h-4 w-4" /> Enviar para clientes
+            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+              <Button variant="outline" size="sm" disabled className="w-full sm:w-auto max-w-full whitespace-normal">
+                <Megaphone className="h-4 w-4 shrink-0" /> Enviar para clientes
               </Button>
-              <Button variant="outline" size="sm" disabled>
-                <Printer className="h-4 w-4" /> Criar cardápio para impressão
+              <Button variant="outline" size="sm" disabled className="w-full sm:w-auto max-w-full whitespace-normal">
+                <Printer className="h-4 w-4 shrink-0" /> Criar cardápio para impressão
               </Button>
             </div>
-            <div className="flex items-start gap-2 rounded-xl bg-muted/60 p-3">
-              <Globe className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
-              <div className="flex-1">
-                <p className="text-sm font-medium text-foreground">Domínio personalizado <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground ml-1">Em breve</span></p>
-                <p className="text-xs text-muted-foreground mt-0.5">Use um endereço próprio, ex.: cardapio.meurestaurante.com.br</p>
+            <div className="flex flex-col sm:flex-row sm:items-center items-stretch gap-2 rounded-xl bg-muted/60 p-3">
+              <div className="flex items-start gap-2 flex-1 min-w-0">
+                <Globe className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground">Domínio personalizado <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground ml-1">Em breve</span></p>
+                  <p className="text-xs text-muted-foreground mt-0.5 break-words">Use um endereço próprio, ex.: cardapio.meurestaurante.com.br</p>
+                </div>
               </div>
-              <Button variant="outline" size="sm" disabled>Configurar domínio</Button>
+              <Button variant="outline" size="sm" disabled className="w-full sm:w-auto max-w-full shrink-0">Configurar domínio</Button>
             </div>
           </div>
         </TabsContent>

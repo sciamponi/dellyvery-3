@@ -8,12 +8,14 @@ import { getCurrentCompany as sbGetCurrentCompany } from '@/api/company';
 import { listProducts as sbListProducts } from '@/api/catalog';
 import { Button } from '@/components/ui/button';
 import { Image } from '@/components/ui/image';
-import { isToday } from 'date-fns';
-import { ShoppingBag, Clock, CheckCircle, Package, ArrowRight, Bell, Store, AlertTriangle, XCircle, Bike } from 'lucide-react';
+import { isToday, startOfDay } from 'date-fns';
+import { isSameDay, isFutureDay, addDaysLocal, formatDayLabel, filterByDay } from '@/lib/orderDay';
+import { ShoppingBag, Clock, CheckCircle, Package, ArrowRight, Store, AlertTriangle, XCircle, Bike, ChevronLeft, ChevronRight, Banknote } from 'lucide-react';
 import OrderModal from '@/components/orders/OrderModal';
 import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
 import OrdersListModal from '@/components/orders/OrdersListModal';
 import NewOrderAlert from '@/components/orders/NewOrderAlert';
+import PdvAnnouncement, { hasSeenPdv } from '@/components/PdvAnnouncement';
 import { playNewOrderAlert, requestNotificationPermission, showOrderNotification } from '@/lib/orderSound';
 import { getAlertPrefs } from '@/lib/alertPrefs';
 import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
@@ -54,12 +56,18 @@ export default function Dashboard() {
   const [queueModal, setQueueModal] = useState(null);
   const [driversById, setDriversById] = useState({});
   const [driverFilter, setDriverFilter] = useState('all');
+  // Navegação por dia em "Últimos pedidos" (padrão: hoje, tempo real).
+  const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
+  const [dayOrders, setDayOrders] = useState(null);
+  const [dayLoading, setDayLoading] = useState(false);
+  const [dayError, setDayError] = useState(null);
   const [, setTick] = useState(0);
   const companyIdRef = useRef(null);
   // Alerta de novo pedido: mesmo mecanismo do Kanban (Pedidos.jsx) —
   // som + modal somente no primeiro evento realtime de pedido recente.
   const [alertQueue, setAlertQueue] = useState([]);
   const [highlightId, setHighlightId] = useState(null);
+  const [showPdvNews, setShowPdvNews] = useState(false);
   const seenOrderIdsRef = useRef(new Set());
   const highlightTimerRef = useRef(null);
   const alertPrefsRef = useRef({ sound: true, visual: true });
@@ -152,6 +160,7 @@ export default function Dashboard() {
         console.error(err);
       } finally {
         setLoading(false);
+        if (!hasSeenPdv(sbUser?.id)) setShowPdvNews(true);
       }
     };
     load();
@@ -209,6 +218,29 @@ export default function Dashboard() {
     };
   }, []);
 
+  // Ao sair de "hoje", busca histórico amplo uma vez e filtra por dia.
+  // Voltar para hoje retoma a lista tempo real.
+  useEffect(() => {
+    if (isToday(selectedDate)) {
+      setDayOrders(null);
+      setDayError(null);
+      return;
+    }
+    if (!company) return;
+    let cancelled = false;
+    setDayLoading(true);
+    setDayError(null);
+    const cid = companyIdRef.current || company.id;
+    const fetchDay = sbActive
+      ? listOrdersWithItems(supabase, cid, 500)
+      : base44.entities.Order.filter({ company_id: cid }, '-created_date', 500);
+    fetchDay
+      .then(ords => { if (!cancelled) setDayOrders(ords); })
+      .catch(() => { if (!cancelled) setDayError('Não foi possível carregar os pedidos deste dia.'); })
+      .finally(() => { if (!cancelled) setDayLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedDate, company?.id]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -232,6 +264,10 @@ export default function Dashboard() {
   const finMesa = getFinalizedByType(orders, 'mesa');
   const finDeliveryFiltered = filterByDriver(finDelivery, driverFilter);
 
+  const viewingToday = isToday(selectedDate);
+  const dayLabel = formatDayLabel(selectedDate);
+  const canGoForward = !isFutureDay(addDaysLocal(selectedDate, 1)) && !isSameDay(selectedDate, new Date());
+
   // Últimos pedidos: ativos primeiro (ordem de chegada, sem reordenar por
   // status), depois finalizados (pela conclusão), por fim cancelados.
   // Usa created_date para chegada e o histórico para o momento da transição
@@ -249,7 +285,9 @@ export default function Dashboard() {
   };
   const arrivalAt = (o) => new Date(o.created_date).getTime() || 0;
   const groupRank = (s) => (s === 'finalizado' ? 1 : s === 'cancelado' ? 2 : 0);
-  const recentOrders = [...orders]
+  const dayBase = dayOrders ?? orders;
+  const dayFiltered = viewingToday ? dayBase : filterByDay(dayBase, selectedDate);
+  const recentOrders = [...dayFiltered]
     .sort((a, b) => {
       const ga = groupRank(a.status);
       const gb = groupRank(b.status);
@@ -313,6 +351,11 @@ export default function Dashboard() {
           <Button asChild variant="outline" size="sm">
             <Link to={`/cardapio/${company.slug}`}>
               <Store className="h-4 w-4 mr-2" /> Ver cardápio
+            </Link>
+          </Button>
+          <Button asChild size="sm" className="bg-primary hover:bg-primary/90">
+            <Link to="/pdv">
+              <Banknote className="h-4 w-4 mr-2" /> PDV
             </Link>
           </Button>
           <div className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium ${company.is_open ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
@@ -394,11 +437,59 @@ export default function Dashboard() {
       <div className="grid gap-6 lg:grid-cols-3 min-w-0">
         {/* Recent orders */}
         <div className="lg:col-span-2 w-full max-w-full min-w-0 overflow-hidden rounded-2xl border border-border bg-card p-4 sm:p-6">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between gap-2 mb-4">
             <h2 className="font-heading font-semibold text-foreground">Últimos pedidos</h2>
-            <Bell className="h-5 w-5 text-muted-foreground" />
+            <div className="flex items-center gap-1 shrink-0" role="group" aria-label="Navegar entre dias">
+              <Button
+                variant="ghost" size="icon" className="h-9 w-9"
+                aria-label="Dia anterior"
+                onClick={() => setSelectedDate(d => addDaysLocal(d, -1))}
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </Button>
+              <span className="text-xs font-medium text-muted-foreground whitespace-nowrap min-w-[7rem] text-center" aria-live="polite">
+                📅 {dayLabel}
+              </span>
+              <Button
+                variant="ghost" size="icon" className="h-9 w-9"
+                aria-label="Próximo dia"
+                disabled={!canGoForward}
+                onClick={() => setSelectedDate(d => addDaysLocal(d, 1))}
+              >
+                <ChevronRight className="h-5 w-5" />
+              </Button>
+            </div>
           </div>
-          {orders.length === 0 ? (
+          {dayLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="w-8 h-8 border-4 border-border border-t-primary rounded-full animate-spin" aria-label="Carregando pedidos do dia" />
+            </div>
+          ) : dayError ? (
+            <div className="text-center py-12">
+              <p className="font-medium text-foreground">Erro ao carregar</p>
+              <p className="text-sm text-muted-foreground mt-1">{dayError}</p>
+              <Button variant="outline" size="sm" className="mt-4" onClick={() => setSelectedDate(d => new Date(d.getTime()))}>
+                Tentar novamente
+              </Button>
+            </div>
+          ) : dayFiltered.length === 0 ? (
+            <div className="text-center py-12">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+                <Package className="h-7 w-7 text-muted-foreground" />
+              </div>
+              <p className="font-medium text-foreground">{viewingToday ? 'Nenhum pedido ainda' : '📦 Nenhum pedido neste dia'}</p>
+              <p className="text-sm text-muted-foreground mt-1">{viewingToday ? 'Compartilhe seu cardápio para receber o primeiro pedido.' : 'Tente outro dia ou volte para hoje.'}</p>
+              {viewingToday ? (
+                <Button asChild variant="outline" size="sm" className="mt-4">
+                  <Link to={`/cardapio/${company.slug}`}>Ver cardápio <ArrowRight className="h-4 w-4 ml-2" /></Link>
+                </Button>
+              ) : (
+                <Button variant="outline" size="sm" className="mt-4" onClick={() => setSelectedDate(startOfDay(new Date()))}>
+                  Voltar para hoje
+                </Button>
+              )}
+            </div>
+          ) : orders.length === 0 ? (
             <div className="text-center py-12">
               <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
                 <ShoppingBag className="h-7 w-7 text-muted-foreground" />
@@ -500,6 +591,7 @@ export default function Dashboard() {
           onClose={() => setAlertQueue(prev => prev.slice(1))}
         />
       )}
+      <PdvAnnouncement open={showPdvNews} userId={sbUser?.id} onClose={() => setShowPdvNews(false)} />
       {selectedOrder && (
         <OrderModal
           order={selectedOrder}

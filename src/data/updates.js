@@ -21,8 +21,15 @@ export const STATUS_META = {
 
 const D = (what, how, why, usage) => ({ what, how, why, usage });
 
+export const NEW_FEATURE_PDV_V1 = 'NEW_FEATURE_PDV_V1';
+
 export const UPDATES = [
   // Destaques
+  { id: 'u00', tab: 'destaques', sort_order: 0, icon: '🧾', title: 'Novo PDV para criar pedidos', desc: 'Agora você pode criar pedidos diretamente pelo Dellyvery usando o novo PDV. Escolha os produtos, monte o pedido e finalize tudo pelo sistema.', status: 'disponivel',
+    details: D('O PDV permite registrar pedidos de mesa, retirada ou entrega diretamente pelo painel.',
+      'Escolha os produtos do cardápio, ajuste quantidades, informe mesa/cliente/endereço e finalize — o pedido entra na fila como qualquer outro.',
+      'Atenda balcão, telefone e presencial sem sair do sistema.',
+      'Abra o PDV pelo botão na Dashboard, monte o pedido e clique em Finalizar pedido.') },
   { id: 'u01', tab: 'destaques', sort_order: 1, icon: '🍔', title: 'Cardápio público', desc: 'Compartilhe seu QR Code e facilite na hora do cliente fazer um pedido. Tudo chega organizado para você.', status: 'disponivel',
     details: D('Seu cardápio fica disponível em um link público, rápido e sempre atualizado.',
       'O cliente aponta a câmera do celular para o QR Code do seu cardápio e é direcionado para fazer o pedido.',

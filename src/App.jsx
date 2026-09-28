@@ -21,6 +21,7 @@ import OrderTracking from './pages/OrderTracking';
 import AppLayout from './components/AppLayout';
 import GestaoProdutos from './pages/GestaoProdutos';
 import Pedidos from './pages/Pedidos';
+import Pdv from './pages/Pdv';
 import Configuracoes from './pages/Configuracoes';
 import Clientes from './pages/Clientes';
 import Equipe from './pages/Equipe';
@@ -60,6 +61,7 @@ function App() {
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/gestao-produtos" element={<GestaoProdutos />} />
                 <Route path="/pedidos" element={<Pedidos />} />
+                <Route path="/pdv" element={<Pdv />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
                 <Route path="/clientes" element={<Clientes />} />
                 <Route path="/equipe" element={<Equipe />} />

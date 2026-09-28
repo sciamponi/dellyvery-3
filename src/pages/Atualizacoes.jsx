@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import PageHeader from '@/components/PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { UPDATE_TABS, STATUS_META, updatesByTab } from '@/data/updates';
+import UpdateDetail from '@/components/UpdateDetail';
+import { UPDATE_TABS, STATUS_META, UPDATES, updatesByTab } from '@/data/updates';
 
 export default function Atualizacoes() {
   const [tab, setTab] = useState('destaques');
+  const [selectedId, setSelectedId] = useState(null);
+  const selected = UPDATES.find((u) => u.id === selectedId) || null;
 
   return (
     <div>
@@ -29,9 +32,12 @@ export default function Atualizacoes() {
                     const st = STATUS_META[item.status] || STATUS_META.disponivel;
                     const future = item.status === 'embreve';
                     return (
-                      <div
+                      <button
                         key={item.id}
-                        className={`rounded-2xl border bg-card p-4 ${future ? 'border-dashed opacity-90' : 'border-border'}`}
+                        type="button"
+                        onClick={() => setSelectedId(item.id)}
+                        aria-label={`Ver detalhes: ${item.title}`}
+                        className={`rounded-2xl border bg-card p-4 text-left cursor-pointer transition-all hover:shadow-md hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${future ? 'border-dashed opacity-90' : 'border-border'}`}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-2xl" aria-hidden="true">{item.icon}</span>
@@ -41,7 +47,7 @@ export default function Atualizacoes() {
                         </div>
                         <h3 className="font-heading font-semibold text-foreground mt-2">{item.title}</h3>
                         <p className="text-sm text-muted-foreground mt-1 leading-snug">{item.desc}</p>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -50,6 +56,8 @@ export default function Atualizacoes() {
           );
         })}
       </Tabs>
+
+      <UpdateDetail item={selected} onClose={() => setSelectedId(null)} />
     </div>
   );
 }

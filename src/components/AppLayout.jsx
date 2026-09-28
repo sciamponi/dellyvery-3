@@ -212,7 +212,7 @@ export default function AppLayout() {
 
       {/* Main content */}
       <main className="lg:pl-64 lg:h-screen">
-        <div className="mx-auto max-w-6xl p-4 md:p-8 lg:h-full lg:min-h-0 lg:overflow-y-auto">
+        <div className="mx-auto max-w-6xl p-4 md:p-8 lg:h-full lg:min-h-0 lg:overflow-y-auto [font-size:98%]">
           <SelectGuard>
             <Outlet />
           </SelectGuard>

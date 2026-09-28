@@ -430,8 +430,8 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                           ))}
                         </SelectContent>
                       </Select>
-                      <div className="flex flex-row justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => setManagingDriver(false)} disabled={manageBusy}>
+                      <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+                        <Button variant="ghost" size="sm" className="w-full sm:w-auto" onClick={() => setManagingDriver(false)} disabled={manageBusy}>
                           Fechar
                         </Button>
                         {order.driver_id && (
@@ -625,14 +625,14 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                       Este pedido já está atribuído a <span className="font-medium text-foreground">{driver?.name || 'este entregador'}</span>.
                       Deseja manter este entregador para a entrega?
                     </p>
-                    <div className="flex flex-row justify-end gap-2">
-                      <Button variant="ghost" size="sm" className="min-h-11" onClick={() => setKeepStep(null)}>
+                    <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+                      <Button variant="ghost" size="sm" className="w-full sm:w-auto min-h-11" onClick={() => setKeepStep(null)}>
                         Cancelar
                       </Button>
                       <Button
                         variant="outline"
                         size="sm"
-                        className="min-h-11"
+                        className="w-full sm:w-auto min-h-11"
                         onClick={() => {
                           const action = keepStep;
                           setKeepStep(null);
@@ -643,7 +643,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                       </Button>
                       <Button
                         size="sm"
-                        className="min-h-11"
+                        className="w-full sm:w-auto min-h-11"
                         onClick={() => {
                           const action = keepStep;
                           setKeepStep(null);
@@ -672,12 +672,12 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                         </SelectContent>
                       </Select>
                     )}
-                    <div className="flex flex-row justify-end gap-2">
-                      <Button variant="outline" className="flex-1 sm:flex-none min-h-11" onClick={() => confirmDispatch(false)} disabled={assigning}>
+                    <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+                      <Button variant="outline" className="w-full sm:w-auto min-h-11" onClick={() => confirmDispatch(false)} disabled={assigning}>
                         Pular
                       </Button>
                       <Button
-                        className="flex-1 sm:flex-none min-h-11"
+                        className="w-full sm:w-auto min-h-11"
                         onClick={() => confirmDispatch(true)}
                         disabled={assigning || !selectedDriver}
                       >
@@ -686,15 +686,15 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                     </div>
                   </div>
                 )}
-                <div className="flex flex-row justify-end gap-2">
+                <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
                   {cancelAction && (
-                    <Button variant="destructive" className="flex-1 sm:flex-none sm:min-w-32 min-h-11" onClick={onCancel} disabled={busy}>
+                    <Button variant="destructive" className="w-full sm:w-auto sm:min-w-32 min-h-11" onClick={onCancel} disabled={busy}>
                       <XCircle className="h-4 w-4" /> Cancelar
                     </Button>
                   )}
                   {primaryAction && (
                     <Button
-                      className="flex-1 sm:flex-none sm:min-w-32 min-h-11"
+                      className="w-full sm:w-auto sm:min-w-32 min-h-11"
                       onClick={() => handleStatusAction(primaryAction)}
                       disabled={busy}
                     >
@@ -799,10 +799,10 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
           </div>
 
             <div className="shrink-0 border-t border-border px-4 sm:px-6 py-3 sm:py-4">
-              <div className="flex flex-row justify-end gap-2">
-                <Button variant="ghost" className="flex-1 sm:flex-none min-h-11" onClick={() => setEditMode(false)}>Fechar</Button>
-                <Button variant="outline" className="flex-1 sm:flex-none sm:min-w-32 min-h-11" onClick={() => setEditMode(false)}>Voltar</Button>
-                <Button className="flex-1 sm:flex-none sm:min-w-32 min-h-11" onClick={saveEdit} disabled={saving}>
+              <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+                <Button variant="ghost" className="w-full sm:w-auto min-h-11" onClick={() => setEditMode(false)}>Fechar</Button>
+                <Button variant="outline" className="w-full sm:w-auto sm:min-w-32 min-h-11" onClick={() => setEditMode(false)}>Voltar</Button>
+                <Button className="w-full sm:w-auto sm:min-w-32 min-h-11" onClick={saveEdit} disabled={saving}>
                   {saving ? 'Salvando...' : 'Salvar alterações'}
                 </Button>
               </div>

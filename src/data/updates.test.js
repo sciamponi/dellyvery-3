@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { UPDATE_TABS, STATUS_META, UPDATES, updatesByTab } from './updates.js';
+import { UPDATE_TABS, STATUS_META, UPDATES, updatesByTab, detailsOf } from './updates.js';
 
 describe('updates — canal de atualizações', () => {
   it('6 abas na ordem', () => {
@@ -31,6 +31,29 @@ describe('updates — canal de atualizações', () => {
     for (const u of UPDATES) {
       assert.ok(u.title && u.desc, u.id);
       assert.ok(['disponivel', 'desenvolvimento', 'embreve'].includes(u.status), u.id);
+    }
+  });
+
+  it('disponíveis têm detalhe próprio completo', () => {
+    const keys = ['what', 'how', 'why', 'usage'];
+    for (const u of UPDATES.filter(u => u.status === 'disponivel')) {
+      assert.ok(u.details, u.id);
+      for (const k of keys) assert.ok(u.details[k]?.length > 10, `${u.id}.${k}`);
+    }
+  });
+
+  it('futuros usam template por status', () => {
+    for (const u of UPDATES.filter(u => u.status !== 'disponivel')) {
+      const d = detailsOf(u);
+      assert.ok(d.what && d.how && d.why && d.usage, u.id);
+    }
+    assert.ok(detailsOf(null).what);
+  });
+
+  it('ordenação por sort_order dentro da aba', () => {
+    for (const t of UPDATE_TABS) {
+      const list = updatesByTab(t.id).map(u => u.sort_order ?? 0);
+      assert.deepEqual(list, [...list].sort((a, b) => a - b), t.id);
     }
   });
 });

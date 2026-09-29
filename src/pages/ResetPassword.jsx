@@ -1,6 +1,7 @@
-import React, { useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import React, { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
+import { supabase } from "@/api/supabaseClient";
+import { getSession, updatePassword } from "@/api/supabaseAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,13 +9,27 @@ import { Lock, Loader2, AlertTriangle } from "lucide-react";
 import AuthLayout from "@/components/AuthLayout";
 
 export default function ResetPassword() {
-  const [searchParams] = useSearchParams();
-  const resetToken = searchParams.get("token");
+  // Sessão criada pelo link de recuperação (detectSessionInUrl).
+  const [hasSession, setHasSession] = useState(null);
 
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    // O link pode levar um instante para estabelecer a sessão.
+    const timer = setTimeout(async () => {
+      try {
+        const sess = await getSession(supabase);
+        if (alive) setHasSession(!!sess);
+      } catch {
+        if (alive) setHasSession(false);
+      }
+    }, 800);
+    return () => { alive = false; clearTimeout(timer); };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -25,7 +40,7 @@ export default function ResetPassword() {
     }
     setLoading(true);
     try {
-      await base44.auth.resetPassword({ resetToken, newPassword });
+      await updatePassword(supabase, newPassword);
       window.location.href = "/login";
     } catch (err) {
       setError(err.message || "Failed to reset password");
@@ -34,7 +49,17 @@ export default function ResetPassword() {
     }
   };
 
-  if (!resetToken) {
+  if (hasSession === null) {
+    return (
+      <AuthLayout icon={Lock} title="New password" subtitle="Verifying your reset link">
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+        </div>
+      </AuthLayout>
+    );
+  }
+
+  if (!hasSession) {
     return (
       <AuthLayout
         icon={AlertTriangle}

@@ -4,6 +4,8 @@ import {
   signUpWithPassword,
   signInWithPassword,
   signOut,
+  requestPasswordReset,
+  updatePassword,
   getSession,
   ensureProfile,
   fetchMemberships,
@@ -57,6 +59,14 @@ function createMockClient({ auth = {}, tables = {}, rpcResult = { data: 'company
         calls.authCalls.push({ op: 'signOut' });
         return auth.signOut || { error: null };
       },
+      resetPasswordForEmail: async (email, opts) => {
+        calls.authCalls.push({ op: 'resetPasswordForEmail', email, opts });
+        return auth.reset || { data: {}, error: null };
+      },
+      updateUser: async (attrs) => {
+        calls.authCalls.push({ op: 'updateUser', attrs });
+        return auth.update || { data: { user: { id: 'u1' } }, error: null };
+      },
       getSession: async () => auth.session || { data: { session: null }, error: null },
       onAuthStateChange: (cb) => {
         calls.authCalls.push({ op: 'onAuthStateChange' });
@@ -93,6 +103,31 @@ describe('supabaseAuth — sessão', () => {
 
   it('sem configuração, operações lançam erro claro', async () => {
     await assert.rejects(() => signInWithPassword(null, { email: 'a', password: 'b' }), /não configurado/);
+  });
+
+  it('recuperação aponta para /reset-password', async () => {
+    const client = createMockClient();
+    await requestPasswordReset(client, 'a@x.com');
+    const call = client.calls.authCalls.find((c) => c.op === 'resetPasswordForEmail');
+    assert.equal(call.email, 'a@x.com');
+    assert.ok(String(call.opts.redirectTo).endsWith('/reset-password'));
+  });
+
+  it('recuperação exige e-mail', async () => {
+    const client = createMockClient();
+    await assert.rejects(() => requestPasswordReset(client, '  '), /E-mail é obrigatório/);
+  });
+
+  it('atualização de senha chama updateUser', async () => {
+    const client = createMockClient();
+    await updatePassword(client, 'nova123');
+    const call = client.calls.authCalls.find((c) => c.op === 'updateUser');
+    assert.deepEqual(call.attrs, { password: 'nova123' });
+  });
+
+  it('atualização rejeita senha curta', async () => {
+    const client = createMockClient();
+    await assert.rejects(() => updatePassword(client, '123'), /no mínimo 6/);
   });
 });
 

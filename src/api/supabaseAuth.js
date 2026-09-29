@@ -40,6 +40,27 @@ export async function signOut(client) {
   if (error) throw error;
 }
 
+// Recuperação de senha por link (o link abre /reset-password já com sessão).
+export async function requestPasswordReset(client, email) {
+  const c = mustBeConfigured(client);
+  if (!email?.trim()) throw new Error('E-mail é obrigatório');
+  const redirectTo = typeof window !== 'undefined' && window.location?.origin
+    ? `${window.location.origin}/reset-password`
+    : '/reset-password';
+  const { data, error } = await c.auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) throw error;
+  return data;
+}
+
+// Redefinição sobre a sessão criada pelo link de recuperação.
+export async function updatePassword(client, password) {
+  const c = mustBeConfigured(client);
+  if (!password || password.length < 6) throw new Error('Senha deve ter no mínimo 6 caracteres');
+  const { data, error } = await c.auth.updateUser({ password });
+  if (error) throw error;
+  return data;
+}
+
 export async function getSession(client) {
   const c = mustBeConfigured(client);
   const { data, error } = await c.auth.getSession();

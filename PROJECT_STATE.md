@@ -190,5 +190,17 @@ npm run lint -- --quiet
 
 - **Migration local 20260925000011_dellyvery3_tracking_item_media.sql** (aplicada SOMENTE no Supabase local, versionada em schema_migrations): get_order_by_token recriado adicionando product_id + image_url (subquery mesma-empresa, null-safe) aos itens; demais campos e grants anon/authenticated intactos.
 - **Frontend OrderTracking.jsx**: thumb h-12 w-12 rounded-lg object-cover via Image + fallback Package; polling/totais/checkout/tracking inalterados.
-- **Valida��o:** RPC antes/depois via token real (#8/#9/#10); pedido misto (com/sem imagem); reload; token inv�lido segue 400; unit 98/98 (+teste contrato tracking); build OK; lint 0 erros nos arquivos do escopo. Sem RLS/policy nova, sem Storage, sem commit/push, sem db push.
+- **Validação:** RPC antes/depois via token real (#8/#9/#10); pedido misto (com/sem imagem); reload; token inválido segue 400; unit 98/98 (+teste contrato tracking); build OK; lint 0 erros nos arquivos do escopo. Sem RLS/policy nova, sem Storage, sem commit/push, sem db push.
+
+## 25. PDV + Ondas de independência Base44 (2026-09-28/29, branch feat/supabase-foundation)
+
+- **PDV** (`1df9390`, `133da02`, `40c0404`): página `/pdv` (mesa/retirada/entrega), comandas por mesa derivadas de pedidos ativos (sem entidade Mesa), merge via edit+cancel, `OrderModal` reutilizado, painel fixo com scroll interno, Atualizações + anúncio visto-uma-vez.
+- **Onda 1** (`6ef6d30`): removido fallback Base44 de 13 módulos com Supabase pronto (167/167, lint 0, build OK).
+- **Fase 2 auth** (`e5ae5f2`): Login/Register/Forgot/Reset Supabase-only (link de confirmação, sem OTP/Google); wrappers `requestPasswordReset`/`updatePassword` + testes.
+- **Onda 2B** (commit próprio): PageNotFound/useCompany/AppLayout/AuthContext/ProtectedRoute/CreateRestaurant Supabase-only; defaults do restaurante preservados via `updateCompany`.
+- **Onda 3** (`16a6f26`): RPC `manage_subscription` (SECURITY DEFINER, OWNER/ADMIN, sem company_id do frontend) + adapter + Assinatura; SQL validado em Postgres real (15 casos).
+- **Onda 4** (`6f59ed3`): removidos `@base44/sdk`, `@base44/vite-plugin`, `input-otp`, `base44Client.js`, `base44/config.jsonc`, 4 componentes órfãos; alias `@/` explícito no Vite (antes vinha do plugin); routeGuard sem param legado. Zero dependência técnica Base44 (restam só comentários/docs e `media.base44.com` em URLs antigas de imagem).
+- **Publicação:** `LOCAL = GITHUB = VPS` via fluxo `push → git pull em ~/dellyvery-3-src → npm run build → cp dist/. ~/dellyvery-3/` (Nginx estático, sem PM2). Produção: `https://dellyvery.localapp.online`. Supabase projeto `dellyvery-3` (`kmpktvcjtxwenlgzjvog`).
+- **Validação final:** suite 167-168/168, lint 0 erros novos, build OK, E2E 7 larguras + fluxos mesa/merge/desconto; QA criado nos testes foi cancelado (motivo registrado).
+
 

@@ -128,3 +128,27 @@ Log de decisões da FASE 1 (chronológico). Próximas fases adicionam entradas n
 
 **Decis�o:** migration local + thumbs no acompanhamento; RPC validado com token real; 98/98 + build. Sem backend remoto/Git.
 
+
+
+## 2026-09-28/29 - PDV + Ondas de independencia Base44 (branch feat/supabase-foundation)
+
+**Decisao:** PDV proprio (/pdv) com comandas derivadas de pedidos ativos (sem entidade Mesa), merge via edit+cancel, OrderModal reutilizado; sem backend novo.
+**Motivo:** Atendimento balcao/mesa/retirada/entrega sem sair do painel; validado E2E (pedido real -> Dashboard) e 7 larguras.
+
+**Decisao:** Onda 1 - remover fallback Base44 somente onde Supabase ja estava pronto (13 modulos); auth/Assinatura/infra excluidos do escopo.
+**Motivo:** Reduzir risco: cada onda validada (testes/lint/build) antes da proxima.
+
+**Decisao:** Fase 2 auth - link de confirmacao Supabase (sem OTP 6 digitos, sem Google OAuth); wrappers requestPasswordReset/updatePassword; contrato ?token= substituido por sessao-do-link.
+**Motivo:** Cobrir fluxos com nativo Supabase; OAuth e OTP exigiriam integracoes novas.
+
+**Decisao:** Onda 2B - AppLayout/useCompany/AuthContext/ProtectedRoute/CreateRestaurant Supabase-only; defaults operacionais (slogan/cores/fees) via updateCompany (colunas ja existiam, sem migration).
+**Motivo:** Paridade funcional sem banco novo; E2E autenticado limitado por sessao de teste expirada (registrado como ressalva, sem credenciais inventadas).
+
+**Decisao:** Onda 3 - RPC manage_subscription SECURITY DEFINER (OWNER/ADMIN, sem company_id do frontend, expires_at preservado); SQL validado em Postgres real (15 casos); sem gateway de cobranca (fora do escopo atual).
+**Motivo:** RLS permite a membros so leitura em subscriptions; escrita exigia RPC.
+
+**Decisao:** Onda 4 - remover @base44/sdk, @base44/vite-plugin, input-otp, base44Client.js, base44/config.jsonc, 4 componentes orfaos; alias @/ explicito no Vite (vinha do plugin); publicacao por onda com stage por hunk para nao vazar ondas anteriores.
+**Motivo:** Independencia tecnica total; validado 167/167, lint 0 novo, build OK, smoke 13 rotas.
+
+**Decisao:** Deploy VPS estatico: push -> git pull em ~/dellyvery-3-src -> npm run build -> cp dist/. ~/dellyvery-3/ (Nginx, sem PM2); nunca base44 deploy (projeto sem vinculo de app).
+**Motivo:** Producao https://dellyvery.localapp.online servida como arquivos estaticos.

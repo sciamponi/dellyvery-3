@@ -9,7 +9,7 @@ import { supabase as defaultClient } from './supabaseClient.js';
 //   Category.order      <-> categories.sort_order
 //   Product.available   <-> products.active
 //   Product.complements <-> products.options
-// Upload de imagem segue no Base44 nesta fase (só image_url trafega aqui).
+// Upload de imagem no bucket Supabase (só image_url trafega aqui).
 
 const withClient = (client) => client || defaultClient;
 

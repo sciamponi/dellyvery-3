@@ -42,15 +42,11 @@ describe('companySelection', () => {
 
 describe('routeGuard', () => {
   it('não autenticado bloqueia', () => {
-    assert.equal(shouldAllowProtected({ base44Authenticated: false, sbConfigured: false, sbUser: null }), false);
-    assert.equal(shouldAllowProtected({ base44Authenticated: false, sbConfigured: true, sbUser: null }), false);
-  });
-
-  it('sessão Base44 permite (legado intacto)', () => {
-    assert.equal(shouldAllowProtected({ base44Authenticated: true, sbConfigured: false, sbUser: null }), true);
+    assert.equal(shouldAllowProtected({ sbConfigured: false, sbUser: null }), false);
+    assert.equal(shouldAllowProtected({ sbConfigured: true, sbUser: null }), false);
   });
 
   it('sessão Supabase permite', () => {
-    assert.equal(shouldAllowProtected({ base44Authenticated: false, sbConfigured: true, sbUser: { id: 'u1' } }), true);
+    assert.equal(shouldAllowProtected({ sbConfigured: true, sbUser: { id: 'u1' } }), true);
   });
 });

@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import {
@@ -31,13 +30,12 @@ function Spinner() {
 }
 
 export default function GestaoProdutos() {
-  const { loading, company: base44Company } = useCompany();
+  const { loading } = useCompany();
   const { toast } = useToast();
-  // FASE 5.2: com sessão Supabase + empresa atual, catálogo via Supabase (RLS).
-  // Sem Supabase configurado, fluxo Base44 original é preservado.
+  // Catálogo via Supabase (RLS) com sessão + empresa atual.
   const { user: sbUser, currentCompany: sbCompany, loading: sbLoading } = useSupabaseAuth();
   const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
-  const effectiveCompany = sbActive ? { id: sbCompany.id, ...sbCompany } : base44Company;
+  const effectiveCompany = sbActive ? { id: sbCompany.id, ...sbCompany } : null;
   const [tab, setTab] = useState('produtos');
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -70,9 +68,9 @@ export default function GestaoProdutos() {
   };
 
   useEffect(() => {
-    if (sbActive || base44Company) loadData();
+    if (sbActive) loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base44Company?.id, sbActive, sbCompany?.id]);
+  }, [sbActive, sbCompany?.id]);
 
   if (loading || sbLoading) return <Spinner />;
   if (!effectiveCompany) return null;

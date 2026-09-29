@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import {
@@ -61,12 +60,12 @@ function Spinner() {
 }
 
 export default function Pedidos() {
-  const { loading, company: base44Company } = useCompany();
+  const { loading } = useCompany();
   const { toast } = useToast();
   // FASE 5.4: com sessão Supabase + empresa atual, pedidos via Supabase.
   const { user: sbUser, currentCompany: sbCompany } = useSupabaseAuth();
   const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
-  const company = sbActive ? { id: sbCompany.id, ...sbCompany } : base44Company;
+  const company = sbActive ? { id: sbCompany.id, ...sbCompany } : null;
   // Deps estáveis do efeito realtime: o objeto `company` acima é recriado a
   // cada render; usar o id primitivo evita resubscribe (e refetch) em loop,
   // que derrubava o canal realtime.

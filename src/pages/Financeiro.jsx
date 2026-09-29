@@ -27,11 +27,11 @@ function Spinner() {
 }
 
 export default function Financeiro() {
-  const { loading, company: base44Company } = useCompany();
+  const { loading } = useCompany();
   // FASE 5.4: leitura de pedidos via Supabase quando há sessão (agregações intactas).
   const { user: sbUser, currentCompany: sbCompany } = useSupabaseAuth();
   const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
-  const company = sbActive ? { id: sbCompany.id, ...sbCompany } : base44Company;
+  const company = sbActive ? { id: sbCompany.id, ...sbCompany } : null;
   const [orders, setOrders] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
   const [period, setPeriod] = useState('hoje');

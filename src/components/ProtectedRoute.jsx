@@ -19,7 +19,7 @@ export default function ProtectedRoute({ fallback = <DefaultFallback /> }) {
   }
 
   // No valid session → redirect to login
-  if (!shouldAllowProtected({ base44Authenticated: false, sbConfigured, sbUser })) {
+  if (!shouldAllowProtected({ sbConfigured, sbUser })) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 

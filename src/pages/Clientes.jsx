@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import {
@@ -37,12 +36,12 @@ const FILTERS = [
 ];
 
 export default function Clientes() {
-  const { loading, company: base44Company } = useCompany();
+  const { loading } = useCompany();
   const { toast } = useToast();
   // FASE 5.3: com sessão Supabase + empresa atual, clientes via Supabase (RLS).
   const { user: sbUser, currentCompany: sbCompany, loading: sbLoading } = useSupabaseAuth();
   const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
-  const company = sbActive ? { id: sbCompany.id, ...sbCompany } : base44Company;
+  const company = sbActive ? { id: sbCompany.id, ...sbCompany } : null;
   const [customers, setCustomers] = useState([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');

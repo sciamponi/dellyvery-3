@@ -13,7 +13,7 @@ export const isSupabaseConfigured = () => Boolean(supabaseUrl && supabaseAnonKey
 
 if (!isSupabaseConfigured() && viteEnv.DEV) {
   // eslint-disable-next-line no-console
-  console.warn('[supabase] VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY ausentes — camada Supabase inativa, Base44 continua.');
+  console.warn('[supabase] VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY ausentes — camada Supabase inativa.');
 }
 
 export const supabase = isSupabaseConfigured()

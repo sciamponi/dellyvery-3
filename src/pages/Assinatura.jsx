@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { listPlans } from '@/api/plans';
+import { manageSubscription as sbManageSubscription } from '@/api/subscriptions';
 import { useCompany } from '@/hooks/useCompany';
 import { useSubscription } from '@/hooks/useSubscription';
 import PageHeader from '@/components/PageHeader';
@@ -68,32 +69,32 @@ export default function Assinatura() {
   const handleUpgrade = async (planId) => {
     setActionLoading(planId);
     try {
-      const res = await base44.functions.invoke('manageSubscription', { action: 'upgrade', plan_id: planId });
-      setSubscription(res.data.subscription);
+      const updated = await sbManageSubscription(supabase, { action: 'upgrade', planId });
+      setSubscription(updated);
       toast({ title: 'Plano atualizado com sucesso!' });
     } catch (err) {
-      toast({ title: 'Erro', description: err?.response?.data?.error || 'Tente novamente', variant: 'destructive' });
+      toast({ title: 'Erro', description: err?.message || 'Tente novamente', variant: 'destructive' });
     } finally { setActionLoading(null); }
   };
 
   const handleCancel = async () => {
     try {
-      const res = await base44.functions.invoke('manageSubscription', { action: 'cancel' });
-      setSubscription(res.data.subscription);
+      const updated = await sbManageSubscription(supabase, { action: 'cancel' });
+      setSubscription(updated);
       toast({ title: 'Assinatura cancelada' });
     } catch (err) {
-      toast({ title: 'Erro', variant: 'destructive' });
+      toast({ title: 'Erro', description: err?.message || 'Tente novamente', variant: 'destructive' });
     } finally { setCancelDialog(false); }
   };
 
   const handleReactivate = async () => {
     setActionLoading('reactivate');
     try {
-      const res = await base44.functions.invoke('manageSubscription', { action: 'reactivate' });
-      setSubscription(res.data.subscription);
+      const updated = await sbManageSubscription(supabase, { action: 'reactivate' });
+      setSubscription(updated);
       toast({ title: 'Assinatura reativada!' });
     } catch (err) {
-      toast({ title: 'Erro', variant: 'destructive' });
+      toast({ title: 'Erro', description: err?.message || 'Tente novamente', variant: 'destructive' });
     } finally { setActionLoading(null); }
   };
 

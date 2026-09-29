@@ -1,15 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
-import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { supabase } from '@/api/supabaseClient';
 import { getSession, signUpRestaurant, provisionCompanyForCurrentUser } from '@/api/supabaseAuth';
+import { updateCompany as sbUpdateCompany } from '@/api/company';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/components/ui/use-toast';
-import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
 import { Store, User, Phone, Mail, Lock, Loader2, ArrowLeft, Check } from 'lucide-react';
 
 const benefits = [
@@ -22,27 +21,19 @@ const benefits = [
 export default function CreateRestaurant() {
   const { toast } = useToast();
   const navigate = useNavigate();
-  // FASE 5.1: com Supabase configurado, onboarding usa Auth + RPC
-  // create_company_with_owner(); sem ele, fluxo Base44 original é preservado.
-  const useSupabase = isSupabaseConfigured();
+  // Onboarding Supabase-only: Auth + RPC create_company_with_owner().
   const { refresh: refreshSb } = useSupabaseAuth();
   const [authed, setAuthed] = useState(null);
-  const [step, setStep] = useState('form');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [otpCode, setOtpCode] = useState('');
   const [form, setForm] = useState({
     restaurantName: '', responsibleName: '', whatsapp: '',
     email: '', password: '', confirmPassword: '', acceptTerms: false,
   });
 
   useEffect(() => {
-    if (useSupabase) {
-      getSession(supabase).then((sess) => setAuthed(!!sess)).catch(() => setAuthed(false));
-    } else {
-      base44.auth.isAuthenticated().then(setAuthed);
-    }
-  }, [useSupabase]);
+    getSession(supabase).then((sess) => setAuthed(!!sess)).catch(() => setAuthed(false));
+  }, []);
 
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
@@ -61,12 +52,29 @@ export default function CreateRestaurant() {
   // FASE 5.1: criação via função SECURITY DEFINER (sem INSERT direto
   // em companies/company_members pelo frontend). Cria company + OWNER +
   // subscription Solo + order_seq + settings + themes.
-  const createCompanySupabase = async () => {
+  // Defaults operacionais equivalentes aos do fluxo antigo.
+  const applyCompanyDefaults = async (companyId) => {
+    try {
+      await sbUpdateCompany(supabase, companyId, {
+        slogan: 'Pedidos online • Controle completo',
+        primary_color: '#DC2626',
+        accent_color: '#F97316',
+        is_open: true,
+        minimum_order: 0,
+        delivery_fee: 0,
+        estimated_delivery_time: 30,
+      });
+    } catch {
+      // Empresa já criada; defaults cosméticos não bloqueiam o onboarding.
+    }
+  };
+
+  const createCompany = async () => {
     setLoading(true);
     setError('');
     try {
-      // Correção onboarding: sessão existente NÃO refaz signup (daria
-      // "User already registered"). Reaproveita a sessão e só provisiona.
+      // Sessão existente NÃO refaz signup (daria "User already registered").
+      // Reaproveita a sessão e só provisiona.
       const existing = await getSession(supabase).catch(() => null);
       const payload = {
         email: form.email,
@@ -76,7 +84,17 @@ export default function CreateRestaurant() {
       const result = existing?.user
         ? await provisionCompanyForCurrentUser(supabase, payload)
         : await signUpRestaurant(supabase, { ...payload, password: form.password });
+      if (result.created !== false && result.companyId) {
+        await applyCompanyDefaults(result.companyId);
+      }
       await refreshSb();
+      // Sem sessão (Confirm Email ON): conta criada, falta clicar no link.
+      const sess = await getSession(supabase).catch(() => null);
+      if (!sess) {
+        toast({ title: 'Conta criada!', description: 'Verifique seu email para ativar e entre.' });
+        navigate('/login', { replace: true });
+        return;
+      }
       toast({
         title: result.created === false ? 'Bem-vindo de volta!' : 'Restaurante criado!',
         description: result.created === false
@@ -91,38 +109,6 @@ export default function CreateRestaurant() {
     }
   };
 
-  const createCompany = async () => {
-    if (useSupabase) {
-      await createCompanySupabase();
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      await base44.functions.invoke('createRestaurant', {
-        form: {
-          name: form.restaurantName,
-          phone: form.whatsapp,
-          email: form.email,
-          slogan: 'Pedidos online • Controle completo',
-          primary_color: '#DC2626',
-          accent_color: '#F97316',
-          is_open: true,
-          minimum_order: 0,
-          delivery_fee: 0,
-          estimated_delivery_time: 30,
-        },
-        zones: [],
-      });
-      toast({ title: 'Restaurante criado!', description: 'Seu trial de 7 dias começou.' });
-      window.location.href = '/dashboard';
-    } catch (err) {
-      setError(err?.response?.data?.error || err?.message || 'Erro ao criar restaurante');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -130,48 +116,12 @@ export default function CreateRestaurant() {
 
     if (authed) {
       await createCompany();
-    } else if (useSupabase) {
-      // Supabase: cadastro + empresa em uma etapa (sem OTP Base44).
+    } else {
+      // Cadastro + empresa em uma etapa (confirmação por link, sem OTP).
       if (form.password.length < 6) { setError('Senha deve ter no mínimo 6 caracteres'); return; }
       if (form.password !== form.confirmPassword) { setError('As senhas não conferem'); return; }
       if (!form.acceptTerms) { setError('Você precisa aceitar os termos'); return; }
-      await createCompanySupabase();
-    } else {
-      setLoading(true);
-      try {
-        await base44.auth.register({ email: form.email, password: form.password });
-        setStep('otp');
-        toast({ title: 'Código enviado!', description: 'Verifique seu email.' });
-      } catch (err) {
-        setError(err.message || 'Erro ao registrar');
-      } finally {
-        setLoading(false);
-      }
-    }
-  };
-
-  const handleVerify = async () => {
-    setError('');
-    setLoading(true);
-    try {
-      const result = await base44.auth.verifyOtp({ email: form.email, otpCode });
-      if (result?.access_token) {
-        base44.auth.setToken(result.access_token);
-      }
       await createCompany();
-    } catch (err) {
-      setError(err.message || 'Código inválido');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleResend = async () => {
-    try {
-      await base44.auth.resendOtp(form.email);
-      toast({ title: 'Código reenviado!' });
-    } catch (err) {
-      setError(err.message || 'Erro ao reenviar');
     }
   };
 
@@ -179,38 +129,6 @@ export default function CreateRestaurant() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-border border-t-primary rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  // OTP step
-  if (step === 'otp') {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="w-full max-w-md">
-          <div className="text-center mb-8">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary font-heading text-2xl font-bold text-primary-foreground">H</div>
-            <h1 className="font-heading text-2xl font-bold text-foreground">Verifique seu email</h1>
-            <p className="text-sm text-muted-foreground mt-1">Enviamos um código para {form.email}</p>
-          </div>
-          <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
-            {error && <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">{error}</div>}
-            <div className="flex justify-center mb-6">
-              <InputOTP maxLength={6} value={otpCode} onChange={setOtpCode} autoFocus autoComplete="one-time-code">
-                <InputOTPGroup>
-                  <InputOTPSlot index={0} /><InputOTPSlot index={1} /><InputOTPSlot index={2} />
-                  <InputOTPSlot index={3} /><InputOTPSlot index={4} /><InputOTPSlot index={5} />
-                </InputOTPGroup>
-              </InputOTP>
-            </div>
-            <Button onClick={handleVerify} disabled={loading || otpCode.length < 6} className="w-full h-12 bg-primary hover:bg-primary/90">
-              {loading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Verificando...</> : 'Verificar e criar restaurante'}
-            </Button>
-            <p className="text-center text-sm text-muted-foreground mt-4">
-              Não recebeu? <button onClick={handleResend} className="text-primary font-medium hover:underline">Reenviar código</button>
-            </p>
-          </div>
-        </div>
       </div>
     );
   }

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listOrdersWithItems, fromSupabaseOrder, subscribeCompanyTable, getOrderDetail as sbGetOrderDetail, listNovoNotifications, markNotificationRead as sbMarkRead } from '@/api/orders';
@@ -89,14 +88,8 @@ export default function Dashboard() {
   // Marca como lida a notificação de "novo" do pedido (best-effort).
   const markNovoNotificationRead = async (orderId) => {
     try {
-      if (sbActive) {
-        const list = await listNovoNotifications(supabase, orderId);
-        await Promise.all(list.filter(n => !n.read).map(n => sbMarkRead(supabase, n.id)));
-      } else {
-        const list = await base44.entities.Notification.filter({ order_id: orderId, status: 'novo' });
-        const unread = list.filter(n => !n.read);
-        await Promise.all(unread.map(n => base44.entities.Notification.update(n.id, { read: true })));
-      }
+      const list = await listNovoNotifications(supabase, orderId);
+      await Promise.all(list.filter(n => !n.read).map(n => sbMarkRead(supabase, n.id)));
     } catch (err) { /* ignore */ }
   };
   // FASE 5.4: com sessão Supabase, pedidos/produtos via Supabase (RLS).
@@ -116,46 +109,28 @@ export default function Dashboard() {
     requestNotificationPermission();
     if (sbActive && sbUser) {
       alertPrefsRef.current = getAlertPrefs(sbCompany.id, sbUser.id);
-    } else {
-      base44.auth.me().then(u => {
-        if (u) alertPrefsRef.current = getAlertPrefs(u.company_id, u.id);
-      }).catch(() => {});
     }
     const load = async () => {
       try {
-        if (sbActive) {
-          companyIdRef.current = sbCompany.id;
-          const [ords, prods, fullCompany] = await Promise.all([
-            listOrdersWithItems(supabase, sbCompany.id, 50),
-            sbListProducts(supabase, sbCompany.id).catch(() => []),
-            // Linha completa da empresa (is_open fresh); identidade do
-            // contexto não traz todos os campos operacionais.
-            sbGetCurrentCompany(supabase, sbCompany.id).catch(() => null),
-          ]);
-          setCompany(fullCompany || { id: sbCompany.id, ...sbCompany });
-          setOrders(ords);
-          ords.forEach(o => seenOrderIdsRef.current.add(o.id));
-          setProducts(prods);
-          sbListDrivers(supabase, sbCompany.id)
-            .then(list => setDriversById(Object.fromEntries((list || []).map(d => [d.id, d]))))
-            .catch(() => {});
+        if (!sbActive) {
+          if (sbUser && !sbCompany) navigate('/criar-restaurante');
           return;
         }
-        const user = await base44.auth.me();
-        if (!user.company_id) {
-          navigate('/criar-restaurante');
-          return;
-        }
-        companyIdRef.current = user.company_id;
-        const [comp, ords, prods] = await Promise.all([
-          base44.entities.Company.get(user.company_id),
-          base44.entities.Order.filter({ company_id: user.company_id }, '-created_date', 50),
-          base44.entities.Product.filter({ company_id: user.company_id }),
+        companyIdRef.current = sbCompany.id;
+        const [ords, prods, fullCompany] = await Promise.all([
+          listOrdersWithItems(supabase, sbCompany.id, 50),
+          sbListProducts(supabase, sbCompany.id).catch(() => []),
+          // Linha completa da empresa (is_open fresh); identidade do
+          // contexto não traz todos os campos operacionais.
+          sbGetCurrentCompany(supabase, sbCompany.id).catch(() => null),
         ]);
-        setCompany(comp);
+        setCompany(fullCompany || { id: sbCompany.id, ...sbCompany });
         setOrders(ords);
         ords.forEach(o => seenOrderIdsRef.current.add(o.id));
         setProducts(prods);
+        sbListDrivers(supabase, sbCompany.id)
+          .then(list => setDriversById(Object.fromEntries((list || []).map(d => [d.id, d]))))
+          .catch(() => {});
       } catch (err) {
         console.error(err);
       } finally {
@@ -195,11 +170,12 @@ export default function Dashboard() {
       else if (event.type === 'update') setOrders(prev => mergeUpdated(prev, event.data));
       else if (event.type === 'delete') setOrders(prev => prev.filter(o => o.id !== event.id));
     };
-    const unsub = sbActive
-      ? subscribeCompanyTable(supabase, 'orders', companyIdRef.current || sbCompany?.id, async (event) => {
+    const watchId = companyIdRef.current || sbCompany?.id;
+    const unsub = watchId
+      ? subscribeCompanyTable(supabase, 'orders', watchId, async (event) => {
           if (event.type === 'create' && event.data?.id) {
             try {
-              const detail = await sbGetOrderDetail(supabase, companyIdRef.current || sbCompany?.id, event.data.id);
+              const detail = await sbGetOrderDetail(supabase, watchId, event.data.id);
               handleEvent({ type: 'create', data: detail || fromSupabaseOrder(event.data) });
             } catch {
               handleEvent({ type: 'create', data: fromSupabaseOrder(event.data) });
@@ -208,7 +184,7 @@ export default function Dashboard() {
             handleEvent({ type: 'update', data: fromSupabaseOrder(event.data) });
           } else handleEvent(event);
         })
-      : base44.entities.Order.subscribe(handleEvent);
+      : null;
     // Timer único (30s) para atualizar todos os cronômetros da lista
     const timer = setInterval(() => setTick(t => t + 1), 30000);
     return () => {
@@ -231,10 +207,7 @@ export default function Dashboard() {
     setDayLoading(true);
     setDayError(null);
     const cid = companyIdRef.current || company.id;
-    const fetchDay = sbActive
-      ? listOrdersWithItems(supabase, cid, 500)
-      : base44.entities.Order.filter({ company_id: cid }, '-created_date', 500);
-    fetchDay
+    listOrdersWithItems(supabase, cid, 500)
       .then(ords => { if (!cancelled) setDayOrders(ords); })
       .catch(() => { if (!cancelled) setDayError('Não foi possível carregar os pedidos deste dia.'); })
       .finally(() => { if (!cancelled) setDayLoading(false); });

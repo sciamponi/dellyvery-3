@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
-import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
+import { supabase } from '@/api/supabaseClient';
 import { getOrderByToken as sbGetOrderByToken } from '@/api/orders';
 import { Button } from '@/components/ui/button';
 import { Image } from '@/components/ui/image';
@@ -69,23 +68,13 @@ export default function OrderTracking() {
     try { showOrderNotification(next); } catch (err) { /* visual basta */ }
   };
 
-  // FASE 5.4: tracking via RPC get_order_by_token (anon seguro, sem SELECT
-  // direto); sem Supabase configurado, fluxo Base44 original. Polling 5s mantido.
+  // Tracking via RPC get_order_by_token (anon seguro, sem SELECT direto).
+  // Polling 5s mantido.
   const fetchOrder = async () => {
     try {
-      if (isSupabaseConfigured()) {
-        const order = await sbGetOrderByToken(supabase, token);
-        notifyStatusChange(order);
-        setOrder(order);
-      } else {
-        const res = await base44.functions.invoke('getOrderByToken', { tracking_token: token });
-        if (res.data?.error) {
-          setError(res.data.error);
-        } else {
-          notifyStatusChange(res.data.order);
-          setOrder(res.data.order);
-        }
-      }
+      const order = await sbGetOrderByToken(supabase, token);
+      notifyStatusChange(order);
+      setOrder(order);
     } catch (err) {
       setError(err?.message || 'Pedido não encontrado');
     } finally {

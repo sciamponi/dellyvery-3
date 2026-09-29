@@ -11,10 +11,9 @@ import RouteModal from '@/components/orders/RouteModal';
 import { formatAddress, resolveAdvanceFlow } from '@/lib/deliveryRoute';
 import { listDrivers } from '@/api/team';
 import { assignDriver as sbAssignDriver } from '@/api/orders';
-import { base44 } from '@/api/base44Client';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
-import { editOrder as sbEditOrder, getOrderDetail as sbGetOrderDetail } from '@/api/orders';
+import { editOrder as sbEditOrder, getOrderDetail as sbGetOrderDetail, listOrdersWithItems as sbListOrdersWithItems } from '@/api/orders';
 import { listProducts as sbListProducts } from '@/api/catalog';
 import { getCompanySettings as sbGetSettings } from '@/api/company';
 import { useToast } from '@/components/ui/use-toast';
@@ -42,7 +41,7 @@ function collapseConsecutiveStatuses(history) {
 export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onCancel, onSelectOrder, company, driver, onRequestPayment }) {
   const { toast } = useToast();
   // FASE 5.4: edição via adapter Supabase quando há sessão; leituras
-  // auxiliares (fotos/histórico) seguem Base44 (dependências de Pedidos).
+  // Leituras auxiliares (fotos/histórico) via adapters Supabase.
   const { user: sbUser } = useSupabaseAuth();
   const sbActive = isSupabaseConfigured() && !!sbUser;
   const [editMode, setEditMode] = useState(false);
@@ -92,21 +91,11 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     const load = async () => {
       try {
         const productIds = [...new Set((order.items || []).map(i => i.product_id).filter(Boolean))];
-        const historyFilter = order.customer_id
-          ? { company_id: order.company_id, customer_id: order.customer_id }
-          : order.customer_phone
-            ? { company_id: order.company_id, customer_phone: order.customer_phone }
-            : null;
 
-        // Fotos: consulta isolada — falha nas seções opcionais (Base44, sem
-        // backend nesta fase) nunca pode impedir as imagens dos itens.
+        // Fotos: consulta isolada — catálogo da mesma empresa em 1 query (RLS).
         try {
           const products = productIds.length > 0
-            ? (sbActive
-                // Supabase: catálogo da mesma empresa em 1 query (RLS); filtra
-                // pelos ids do pedido e resolve a image_url atual do produto.
-                ? (await sbListProducts(supabase, order.company_id)).filter(p => productIds.includes(p.id))
-                : await base44.entities.Product.filter({ company_id: order.company_id, id: { $in: productIds } }))
+            ? (await sbListProducts(supabase, order.company_id)).filter(p => productIds.includes(p.id))
             : [];
           if (!cancelled) {
             const map = {};
@@ -115,18 +104,23 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
           }
         } catch (err) { /* fotos são opcionais */ }
 
-        const [history, customers] = await Promise.all([
-          historyFilter
-            ? base44.entities.Order.filter(historyFilter, '-created_date', 6).catch(() => [])
-            : Promise.resolve([]),
-          order.customer_id
-            ? base44.entities.Customer.filter({ company_id: order.company_id, id: order.customer_id }).catch(() => [])
+        // Histórico do cliente via adapter (com itens); estatísticas
+        // derivadas da lista (orders_count/total_spent não existem no schema).
+        const [allOrders] = await Promise.all([
+          (order.customer_id || order.customer_phone)
+            ? sbListOrdersWithItems(supabase, order.company_id, 50).catch(() => [])
             : Promise.resolve([]),
         ]);
         if (cancelled) return;
-        setCustHistory(history.filter(h => h.id !== order.id).slice(0, 5));
-        if (customers.length > 0) {
-          setCustStats({ count: customers[0].orders_count || 0, total: customers[0].total_spent || 0 });
+        const mine = (allOrders || []).filter(h =>
+          h.id !== order.id && (
+            (order.customer_id && h.customer_id === order.customer_id) ||
+            (!order.customer_id && order.customer_phone && (h.customer_phone === order.customer_phone || h.customer_data?.phone === order.customer_phone))
+          )).slice(0, 5);
+        setCustHistory(mine);
+        if (mine.length > 0 || order.customer_id || order.customer_phone) {
+          const prevTotal = mine.reduce((s, h) => s + (Number(h.total) || 0), 0);
+          setCustStats({ count: mine.length + 1, total: prevTotal + (Number(order.total) || 0) });
         }
       } catch (err) { /* seções extras são opcionais */ }
       finally { if (!cancelled) setExtraLoading(false); }
@@ -229,9 +223,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setMenuSearch('');
     setMenuLoading(true);
     // Cardápio da mesma empresa, só disponíveis (regra do createOrder)
-    (sbActive
-      ? sbListProducts(supabase, order.company_id).catch(() => [])
-      : base44.entities.Product.filter({ company_id: order.company_id }).catch(() => []))
+    sbListProducts(supabase, order.company_id).catch(() => [])
       .then(list => setMenuProducts((list || []).filter(p => p.available && !p.out_of_stock)))
       .catch(() => setMenuProducts([]))
       .finally(() => setMenuLoading(false));
@@ -265,45 +257,24 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const saveEdit = async () => {
     setSaving(true);
     try {
-      if (sbActive) {
-        await sbEditOrder(supabase, order.id, {
-          items: editData.items.map(i => ({
-            product_id: i.product_id,
-            quantity: i.quantity,
-            complements: i.complements || [],
-            notes: i.notes || '',
-          })),
-          discount: Number(editData.discount) || 0,
-          address: {
-            street: editData.customer_address,
-            number: editData.customer_number,
-            complement: editData.customer_complement,
-            neighborhood: editData.customer_neighborhood,
-          },
-          notes: editData.notes,
-        });
-        const detail = await sbGetOrderDetail(supabase, order.company_id, order.id);
-        onOrderUpdated(detail || { ...order });
-      } else {
-        const res = await base44.functions.invoke('manageOrder', {
-          action: 'edit',
-          order_id: order.id,
-          customer_address: editData.customer_address,
-          customer_number: editData.customer_number,
-          customer_complement: editData.customer_complement,
-          customer_neighborhood: editData.customer_neighborhood,
-          customer_notes: editData.notes,
-          discount: Number(editData.discount) || 0,
-          items: editData.items.map(i => ({
-            product_id: i.product_id,
-            quantity: i.quantity,
-            complements: i.complements || [],
-            notes: i.notes || ''
-          }))
-        });
-        if (res.data?.error) throw new Error(res.data.error);
-        onOrderUpdated(res.data.order);
-      }
+      await sbEditOrder(supabase, order.id, {
+        items: editData.items.map(i => ({
+          product_id: i.product_id,
+          quantity: i.quantity,
+          complements: i.complements || [],
+          notes: i.notes || '',
+        })),
+        discount: Number(editData.discount) || 0,
+        address: {
+          street: editData.customer_address,
+          number: editData.customer_number,
+          complement: editData.customer_complement,
+          neighborhood: editData.customer_neighborhood,
+        },
+        notes: editData.notes,
+      });
+      const detail = await sbGetOrderDetail(supabase, order.company_id, order.id);
+      onOrderUpdated(detail || { ...order });
       setEditMode(false);
       toast({ title: 'Pedido atualizado' });
     } catch (err) {

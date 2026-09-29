@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
 import { supabase } from '@/api/supabaseClient';
 import { createCategory as sbCreateCategory, updateCategory as sbUpdateCategory } from '@/api/catalog';
 import { uploadImage as sbUploadImage } from '@/api/storage';
@@ -13,7 +12,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Image } from '@/components/ui/image';
 import { Upload, Loader2, X } from 'lucide-react';
 
-export default function CategoryFormDialog({ open, onOpenChange, category, companyId, useSupabase, onSaved }) {
+export default function CategoryFormDialog({ open, onOpenChange, category, companyId, onSaved }) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -29,19 +28,15 @@ export default function CategoryFormDialog({ open, onOpenChange, category, compa
 
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
-  // FASE 5.5-B2: imagem no bucket catalog (pasta da empresa) quando Supabase ativo.
+  // Imagem no bucket catalog (pasta da empresa).
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
     try {
-      if (useSupabase && companyId) {
-        const { file_url } = await sbUploadImage(supabase, 'catalog', companyId, file);
-        update('image_url', file_url);
-      } else {
-        const { file_url } = await base44.integrations.Core.UploadFile({ file });
-        update('image_url', file_url);
-      }
+      if (!companyId) throw new Error('Empresa não identificada');
+      const { file_url } = await sbUploadImage(supabase, 'catalog', companyId, file);
+      update('image_url', file_url);
     } catch (err) {
       toast({ title: 'Erro no upload', description: err?.message, variant: 'destructive' });
     } finally {
@@ -63,13 +58,10 @@ export default function CategoryFormDialog({ open, onOpenChange, category, compa
       };
       delete data.id; delete data.created_date; delete data.updated_date; delete data.created_by_id;
       if (category) {
-        // FASE 5.2: Supabase via adapter (RLS); senão Base44.
-        if (useSupabase) await sbUpdateCategory(supabase, category.id, data);
-        else await base44.entities.Category.update(category.id, data);
+        await sbUpdateCategory(supabase, category.id, data);
         toast({ title: 'Categoria atualizada!' });
       } else {
-        if (useSupabase) await sbCreateCategory(supabase, companyId, data);
-        else await base44.entities.Category.create(data);
+        await sbCreateCategory(supabase, companyId, data);
         toast({ title: 'Categoria criada!' });
       }
       onSaved?.();

@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
 import { supabase } from '@/api/supabaseClient';
 import { createProduct as sbCreateProduct, updateProduct as sbUpdateProduct } from '@/api/catalog';
 import { uploadImage as sbUploadImage } from '@/api/storage';
@@ -34,7 +33,7 @@ function FlagRow({ label, checked, onChange }) {
   );
 }
 
-export default function ProductFormDialog({ open, onOpenChange, product, categories, companyId, useSupabase, onSaved }) {
+export default function ProductFormDialog({ open, onOpenChange, product, categories, companyId, onSaved }) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -62,7 +61,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
 
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
-  // FASE 5.5-B2: imagem no bucket catalog (pasta da empresa) quando Supabase ativo.
+  // Imagem no bucket catalog (pasta da empresa).
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -73,13 +72,9 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
     }
     setUploading(true);
     try {
-      if (useSupabase && companyId) {
-        const { file_url } = await sbUploadImage(supabase, 'catalog', companyId, file);
-        update('image_url', file_url);
-      } else {
-        const { file_url } = await base44.integrations.Core.UploadFile({ file });
-        update('image_url', file_url);
-      }
+      if (!companyId) throw new Error('Empresa não identificada');
+      const { file_url } = await sbUploadImage(supabase, 'catalog', companyId, file);
+      update('image_url', file_url);
     } catch (err) {
       toast({ title: 'Erro no upload', description: err?.message, variant: 'destructive' });
     } finally {
@@ -110,13 +105,10 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
       };
       delete data.id; delete data.created_date; delete data.updated_date; delete data.created_by_id;
       if (product) {
-        // FASE 5.2: Supabase via adapter (RLS + trigger mesma-empresa); senão Base44.
-        if (useSupabase) await sbUpdateProduct(supabase, product.id, data);
-        else await base44.entities.Product.update(product.id, data);
+        await sbUpdateProduct(supabase, product.id, data);
         toast({ title: 'Produto atualizado!' });
       } else {
-        if (useSupabase) await sbCreateProduct(supabase, companyId, data);
-        else await base44.entities.Product.create(data);
+        await sbCreateProduct(supabase, companyId, data);
         toast({ title: 'Produto criado!' });
       }
       onSaved?.();

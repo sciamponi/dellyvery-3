@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/supabaseClient';
+import { listPlans } from '@/api/plans';
 import { Button } from '@/components/ui/button';
 import { Image } from '@/components/ui/image';
 import {
@@ -51,7 +52,7 @@ export default function Landing() {
   const [plans, setPlans] = useState([]);
 
   useEffect(() => {
-    base44.entities.Plan.filter({ active: true }, 'sort_order').then(p => setPlans(Array.isArray(p) ? p : [])).catch(() => {});
+    listPlans(supabase, { onlyActive: true }).then(p => setPlans(Array.isArray(p) ? p : [])).catch(() => {});
   }, []);
 
   return (

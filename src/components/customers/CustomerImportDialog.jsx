@@ -1,5 +1,4 @@
 import React, { useState, useRef } from 'react';
-import { base44 } from '@/api/base44Client';
 import { supabase } from '@/api/supabaseClient';
 import { createCustomer as sbCreateCustomer, onlyDigits as sbOnlyDigits, isDuplicateCustomer } from '@/api/customers';
 import { Button } from '@/components/ui/button';
@@ -71,7 +70,7 @@ function onlyDigits(v) {
   return (v || '').replace(/\D/g, '');
 }
 
-export default function CustomerImportDialog({ open, onOpenChange, companyId, useSupabase, existingCustomers = [], onImported }) {
+export default function CustomerImportDialog({ open, onOpenChange, companyId, existingCustomers = [], onImported }) {
   const { toast } = useToast();
   const fileRef = useRef(null);
   const [fileName, setFileName] = useState('');
@@ -160,7 +159,7 @@ export default function CustomerImportDialog({ open, onOpenChange, companyId, us
     const errors = [];
     for (const r of valid) {
       try {
-        // FASE 5.3: mesma dedupe; criação via adapter (RLS) quando Supabase.
+        // Criação via adapter Supabase (RLS).
         if (isDuplicateCustomer(existingCustomers, r.obj)) continue;
         const payload = {
           company_id: companyId,
@@ -177,10 +176,7 @@ export default function CustomerImportDialog({ open, onOpenChange, companyId, us
           is_favorite: false,
           is_blocked: false,
         };
-        if (useSupabase) await sbCreateCustomer(supabase, companyId, payload);
-        else {
-          await base44.entities.Customer.create(payload);
-        }
+        await sbCreateCustomer(supabase, companyId, payload);
         created++;
       } catch (err) {
         errors.push(`Linha ${r.idx + 2}: ${err?.message || 'erro'}`);

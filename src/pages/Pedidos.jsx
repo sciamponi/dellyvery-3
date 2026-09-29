@@ -113,14 +113,8 @@ export default function Pedidos() {
   // Marca como lida a notificação de "novo" do pedido (best-effort).
   const markNovoNotificationRead = async (orderId) => {
     try {
-      if (sbActive) {
-        const list = await listNovoNotifications(supabase, orderId);
-        await Promise.all(list.filter(n => !n.read).map(n => sbMarkRead(supabase, n.id)));
-      } else {
-        const list = await base44.entities.Notification.filter({ order_id: orderId, status: 'novo' });
-        const unread = list.filter(n => !n.read);
-        await Promise.all(unread.map(n => base44.entities.Notification.update(n.id, { read: true })));
-      }
+      const list = await listNovoNotifications(supabase, orderId);
+      await Promise.all(list.filter(n => !n.read).map(n => sbMarkRead(supabase, n.id)));
     } catch (err) { /* ignore */ }
   };
 
@@ -133,13 +127,8 @@ export default function Pedidos() {
       return;
     }
     try {
-      if (sbActive) {
-        const found = await sbGetOrder(supabase, companyIdRef.current, orderId);
-        if (found) setSelectedOrder(found);
-      } else {
-        const found = await base44.entities.Order.filter({ id: orderId, company_id: companyIdRef.current });
-        if (found.length > 0) setSelectedOrder(found[0]);
-      }
+      const found = await sbGetOrder(supabase, companyIdRef.current, orderId);
+      if (found) setSelectedOrder(found);
     } catch (err) { /* ignore */ }
   };
 
@@ -157,16 +146,10 @@ export default function Pedidos() {
     requestNotificationPermission();
     if (sbActive && sbUserId) {
       alertPrefsRef.current = getAlertPrefs(companyId, sbUserId);
-    } else {
-      base44.auth.me().then(u => {
-        if (u) alertPrefsRef.current = getAlertPrefs(companyId, u.id);
-      }).catch(() => {});
     }
     const load = async () => {
       try {
-        const ords = sbActive
-          ? await listOrdersWithItems(supabase, companyId, 100)
-          : await base44.entities.Order.filter({ company_id: companyId }, '-created_date', 100);
+        const ords = await listOrdersWithItems(supabase, companyId, 100);
         setOrders(ords);
         ords.forEach(o => seenOrderIdsRef.current.add(o.id));
         // FASE 5.5-B3: mapa de entregadores para a linha 🛵 do card.
@@ -213,30 +196,27 @@ export default function Pedidos() {
       else if (event.type === 'delete') setOrders(prev => prev.filter(o => o.id !== event.id));
     };
 
-    // FASE 5.4: realtime via postgres_changes (com detalhe no create); senão Base44.
+    // Realtime via postgres_changes (com detalhe no create).
     // Deps estáveis (companyId/sbActive/sbUserId): o objeto `company` muda a
     // cada render e NÃO pode ser dep (causava resubscribe em loop, que
     // derrubava o canal realtime).
     let unsub;
     let retryTimer = null;
     const doSubscribe = () => {
-      if (sbActive) {
-        return subscribeCompanyTable(supabase, 'orders', companyId, async (event) => {
-          if (event.type === 'create' && event.data?.id) {
-            try {
-              const detail = await sbGetOrderDetail(supabase, companyId, event.data.id);
-              handleRealtimeEvent({ type: 'create', data: detail || fromSupabaseOrder(event.data) });
-            } catch {
-              handleRealtimeEvent({ type: 'create', data: fromSupabaseOrder(event.data) });
-            }
-          } else if (event.type === 'update') {
-            handleRealtimeEvent({ type: 'update', data: fromSupabaseOrder(event.data) });
-          } else {
-            handleRealtimeEvent(event);
+      return subscribeCompanyTable(supabase, 'orders', companyId, async (event) => {
+        if (event.type === 'create' && event.data?.id) {
+          try {
+            const detail = await sbGetOrderDetail(supabase, companyId, event.data.id);
+            handleRealtimeEvent({ type: 'create', data: detail || fromSupabaseOrder(event.data) });
+          } catch {
+            handleRealtimeEvent({ type: 'create', data: fromSupabaseOrder(event.data) });
           }
-        });
-      }
-      return base44.entities.Order.subscribe(handleRealtimeEvent);
+        } else if (event.type === 'update') {
+          handleRealtimeEvent({ type: 'update', data: fromSupabaseOrder(event.data) });
+        } else {
+          handleRealtimeEvent(event);
+        }
+      });
     };
     try {
       unsub = doSubscribe();
@@ -301,9 +281,7 @@ export default function Pedidos() {
       if (updated) setOrders(prev => mergeUpdated(prev, { ...updated, id: draggableId }));
     } catch (err) {
       toast({ title: 'Erro ao atualizar pedido', variant: 'destructive' });
-      const ords = sbActive
-        ? await listOrdersWithItems(supabase, company.id, 100)
-        : await base44.entities.Order.filter({ company_id: company.id }, '-created_date', 100);
+      const ords = await listOrdersWithItems(supabase, company.id, 100);
       setOrders(ords);
     } finally {
       pendingStatusRef.current.delete(draggableId);

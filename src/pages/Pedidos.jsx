@@ -328,7 +328,15 @@ export default function Pedidos() {
     try {
       const updated = await changeOrderStatus(order.id, action.next);
       if (updated) {
-        setOrders(prev => mergeUpdated(prev, updated));
+        // FASE 1: recarrega o detalhe (items/history) para o Kanban não
+        // exibir timeline defasada — a RPC retorna a linha sem eles.
+        let detail = null;
+        try {
+          detail = await sbGetOrderDetail(supabase, companyIdRef.current, updated.id);
+        } catch {
+          detail = null;
+        }
+        setOrders(prev => mergeUpdated(prev, detail || updated));
         toast({ title: action.id === 'accept' ? 'Pedido confirmado!' : `Pedido: ${action.label?.replace(/^→ /, '') || STATUS_LABELS[action.next]}` });
       }
     } catch (err) {
@@ -365,7 +373,16 @@ export default function Pedidos() {
     setOrders(prev => prev.map(o => o.id === draggableId ? { ...o, status: newStatus } : o));
     try {
       const updated = await changeOrderStatus(draggableId, newStatus);
-      if (updated) setOrders(prev => mergeUpdated(prev, { ...updated, id: draggableId }));
+      // FASE 1: recarrega o detalhe (items/history); a RPC não os retorna.
+      if (updated) {
+        let detail = null;
+        try {
+          detail = await sbGetOrderDetail(supabase, companyIdRef.current, updated.id);
+        } catch {
+          detail = null;
+        }
+        setOrders(prev => mergeUpdated(prev, { ...(detail || updated), id: draggableId }));
+      }
     } catch (err) {
       toast({ title: 'Erro ao atualizar pedido', variant: 'destructive' });
       const ords = await listOrdersWithItems(supabase, company.id, 100);

@@ -183,7 +183,16 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setStatusAction(action.id);
     try {
       const updated = await changeOrderStatus(order.id, action.next);
-      onOrderUpdated(updated);
+      // FASE 1: a RPC retorna a linha sem items/history; recarrega o detalhe
+      // para o modal exibir o histórico atualizado (sem isso, o merge no
+      // Kanban preservaria o histórico antigo e a timeline ficaria defasada).
+      let detail = null;
+      try {
+        detail = await sbGetOrderDetail(supabase, order.company_id, order.id);
+      } catch {
+        detail = null;
+      }
+      onOrderUpdated(detail || updated);
       toast({ title: action.id === 'accept' ? 'Pedido confirmado!' : `Pedido: ${STATUS_LABELS[action.next] || action.next}` });
       // FASE 1: concluiu a interação -> Kanban atualiza (realtime + merge) e o
       // modal fecha sozinho. Em erro, o modal permanece aberto (sem rollback

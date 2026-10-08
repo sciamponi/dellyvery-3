@@ -11,8 +11,11 @@ const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', c
 export default function CartDrawer({ open, onClose }) {
   const { items, updateItemQuantity, removeItem, clearCart, getSubtotal, getTotalItems, company } = useCart();
   const navigate = useNavigate();
+  // FASE 2: com loja fechada o cliente vê o carrinho, mas não finaliza.
+  const storeClosed = company?.is_open === false;
 
   const handleCheckout = () => {
+    if (storeClosed) return;
     onClose();
     navigate(`/checkout/${company.slug}`);
   };
@@ -115,6 +118,11 @@ export default function CartDrawer({ open, onClose }) {
                 <span className="text-sm text-muted-foreground">Subtotal</span>
                 <span className="font-heading text-base font-bold">{fmtCurrency(getSubtotal())}</span>
               </div>
+              {storeClosed && (
+                <p className="w-full rounded-lg border border-red-200 bg-red-50 p-2.5 text-center text-sm text-red-700">
+                  🔴 Restaurante fechado — Estamos fechados no momento.
+                </p>
+              )}
               <Button
                 variant="outline"
                 className="w-full h-10"
@@ -125,9 +133,10 @@ export default function CartDrawer({ open, onClose }) {
               <Button
                 className="w-full h-11 font-semibold"
                 style={{ backgroundColor: company?.primary_color || '#DC2626' }}
+                disabled={storeClosed}
                 onClick={handleCheckout}
               >
-                Finalizar pedido
+                {storeClosed ? 'Fechado agora' : 'Finalizar pedido'}
               </Button>
               <button
                 type="button"

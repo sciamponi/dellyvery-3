@@ -5,6 +5,7 @@ import { Image } from '@/components/ui/image';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Minus, Plus, ShoppingCart, Package } from 'lucide-react';
+import { useCart } from '@/lib/CartContext';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -12,6 +13,10 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState('');
   const [selectedComplements, setSelectedComplements] = useState({});
+  // FASE 2: cardápio continua visível com loja fechada, mas não adiciona
+  // (sempre dentro do CartProvider em /cardapio/:slug, como o CartDrawer).
+  const { company: cartCompany } = useCart();
+  const storeClosed = cartCompany?.is_open === false;
 
   // Reset state when product changes
   React.useEffect(() => {
@@ -153,12 +158,18 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
           </div>
 
           {/* Quantity + Add button */}
+          {storeClosed && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              🔴 Restaurante fechado no momento — você pode ver o cardápio, mas não é possível adicionar itens agora.
+            </div>
+          )}
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
                 size="icon"
                 onClick={() => setQuantity(q => Math.max(1, q - 1))}
+                disabled={storeClosed}
               >
                 <Minus className="h-4 w-4" />
               </Button>
@@ -167,6 +178,7 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
                 variant="outline"
                 size="icon"
                 onClick={() => setQuantity(q => Math.min(99, q + 1))}
+                disabled={storeClosed}
               >
                 <Plus className="h-4 w-4" />
               </Button>
@@ -174,13 +186,14 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
             <Button
               className="flex-1"
               style={{ backgroundColor: primaryColor }}
+              disabled={storeClosed}
               onClick={() => {
                 onAddToCart(product, quantity, complementsArray, notes);
                 onClose();
               }}
             >
               <ShoppingCart className="h-4 w-4" />
-              Adicionar • {fmtCurrency(lineTotal)}
+              {storeClosed ? 'Fechado agora' : `Adicionar • ${fmtCurrency(lineTotal)}`}
             </Button>
           </div>
         </div>

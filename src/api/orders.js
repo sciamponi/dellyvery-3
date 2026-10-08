@@ -169,6 +169,7 @@ export async function listOrdersWithItems(client, companyId, limit = 100) {
 export async function createOrder(client, {
   companySlug, orderType = 'delivery', tableNumber = '', items = [],
   customer = {}, deliveryZoneId = null, paymentMethod = '', notes = '',
+  source = 'online',
 }) {
   const c = mustBeConfigured(client);
   if (!companySlug) throw new Error('Empresa não identificada');
@@ -196,9 +197,19 @@ export async function createOrder(client, {
     p_delivery_zone_id: deliveryZoneId || null,
     p_payment_method: paymentMethod || null,
     p_notes: notes || null,
+    // FASE 2: origem do pedido. 'balcao' (PDV interno) nunca é bloqueado
+    // por is_open no banco; 'online'/'whatsapp' são. Default = online.
+    p_source: source || 'online',
   });
   if (error) rpcError(error);
   return data; // { order_id, order_number, tracking_token }
+}
+
+// FASE 2: erro controlado da RPC quando a loja está fechada (online).
+// Usado para mensagens amigáveis (ex.: race condition no Checkout).
+export function isRestaurantClosedError(error) {
+  const msg = error?.message || String(error || '');
+  return /fechad/i.test(msg);
 }
 
 export async function changeOrderStatus(client, orderId, newStatus) {

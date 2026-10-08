@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listOrdersWithItems, fromSupabaseOrder, subscribeCompanyTable, getOrderDetail as sbGetOrderDetail, listNovoNotifications, markNotificationRead as sbMarkRead } from '@/api/orders';
-import { getCurrentCompany as sbGetCurrentCompany } from '@/api/company';
+import { getCurrentCompany as sbGetCurrentCompany, updateCompany as sbUpdateCompany } from '@/api/company';
 import { listProducts as sbListProducts } from '@/api/catalog';
 import { Button } from '@/components/ui/button';
 import { Image } from '@/components/ui/image';
@@ -20,6 +20,8 @@ import { getAlertPrefs } from '@/lib/alertPrefs';
 import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
 import { getQueueOrders, getDelayedOrders, getFinalizedByType, getCanceled, filterByDriver } from '@/lib/orderQueue';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import ConfirmDialog from '@/components/ConfirmDialog';
+import { useToast } from '@/components/ui/use-toast';
 import { listDrivers as sbListDrivers } from '@/api/team';
 
 const STATUS_CONFIG = {
@@ -93,8 +95,13 @@ export default function Dashboard() {
     } catch (err) { /* ignore */ }
   };
   // FASE 5.4: com sessão Supabase, pedidos/produtos via Supabase (RLS).
-  const { user: sbUser, currentCompany: sbCompany } = useSupabaseAuth();
+  const { user: sbUser, currentCompany: sbCompany, currentRole: sbRole } = useSupabaseAuth();
   const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
+  const { toast } = useToast();
+  // FASE 2: controle operacional aberto/fechado (companies.is_open).
+  const [confirmOpenClose, setConfirmOpenClose] = useState(false);
+  const [togglingOpen, setTogglingOpen] = useState(false);
+  const canToggleOpen = ['OWNER', 'ADMIN'].includes(sbRole);
 
   useEffect(() => {
     if (sbActive) companyIdRef.current = sbCompany.id;
@@ -331,10 +338,41 @@ export default function Dashboard() {
               <Banknote className="h-4 w-4 mr-2" /> PDV
             </Link>
           </Button>
-          <div className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium ${company.is_open ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+          <button
+            type="button"
+            onClick={() => canToggleOpen && setConfirmOpenClose(true)}
+            disabled={!canToggleOpen}
+            title={canToggleOpen ? (company.is_open ? 'Fechar restaurante' : 'Abrir restaurante') : 'Somente OWNER/ADMIN podem alterar'}
+            aria-label={company.is_open ? 'Restaurante aberto — clique para fechar' : 'Restaurante fechado — clique para abrir'}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${company.is_open ? 'bg-green-50 text-green-700 hover:bg-green-100' : 'bg-red-50 text-red-700 hover:bg-red-100'} ${canToggleOpen ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}
+          >
             <span className={`h-2 w-2 rounded-full ${company.is_open ? 'bg-green-500' : 'bg-red-500'}`} />
-            {company.is_open ? 'Aberto' : 'Fechado'}
-          </div>
+            {company.is_open ? '🟢 Aberto' : '🔴 Fechado'}
+          </button>
+          <ConfirmDialog
+            open={confirmOpenClose}
+            onOpenChange={setConfirmOpenClose}
+            title={company.is_open ? 'Fechar restaurante?' : 'Abrir restaurante?'}
+            description={company.is_open
+              ? 'Novos pedidos online deixarão de ser aceitos. O PDV interno continua funcionando.'
+              : 'O restaurante voltará a aceitar pedidos online.'}
+            confirmLabel={company.is_open ? 'Fechar restaurante' : 'Abrir restaurante'}
+            onConfirm={async () => {
+              if (togglingOpen) return;
+              setTogglingOpen(true);
+              try {
+                const next = !company.is_open;
+                await sbUpdateCompany(supabase, company.id, { is_open: next });
+                setCompany(prev => (prev ? { ...prev, is_open: next } : prev));
+                toast({ title: next ? 'Restaurante aberto!' : 'Restaurante fechado.' });
+                setConfirmOpenClose(false);
+              } catch (err) {
+                toast({ title: 'Erro ao alterar status', description: err?.message, variant: 'destructive' });
+              } finally {
+                setTogglingOpen(false);
+              }
+            }}
+          />
         </div>
       </div>
 

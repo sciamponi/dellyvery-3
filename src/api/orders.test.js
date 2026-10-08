@@ -14,6 +14,7 @@ import {
   subscribeCompanyTable,
   __activeChannelCount,
   assignDriver,
+  isRestaurantClosedError,
 } from './orders.js';
 
 // Mock fiel ao supabase-js v2: channel() devolve a MESMA instância por tópico
@@ -248,8 +249,7 @@ describe('orders — realtime idempotente (QA duplicação)', () => {
   });
 });
 
-describe('orders — assignDriver (5.5-B3)', () => {
-  const order = { id: 'o1', company_id: 'c1', status: 'saiu_entrega' };
+describe('orders — assignDriver (5.5-B3)', () => {  const order = { id: 'o1', company_id: 'c1', status: 'saiu_entrega' };
   const drv = { id: 'd1', company_id: 'c1', status: 'ativo', name: 'João' };
   function assignMock({ orderRow = order, drvRow = drv } = {}) {
     const calls = [];
@@ -312,5 +312,35 @@ describe('orders — assignDriver (5.5-B3)', () => {
   it('pedido de outra empresa não é encontrado', async () => {
     const client = assignMock({ orderRow: null });
     await assert.rejects(() => assignDriver(client, 'o1', 'c1', 'd1'), /sem permissão/);
+  });
+});
+
+describe('orders — FASE 2 aberto/fechado (source + erro de fechado)', () => {
+  const base = {
+    companySlug: 'loja',
+    orderType: 'retirada',
+    items: [{ product_id: 'p', quantity: 1, complements: [], notes: '' }],
+    customer: { name: 'Z', phone: '119' },
+  };
+
+  it('createOrder envia p_source online por padrão', async () => {
+    const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
+    await createOrder(client, base);
+    assert.equal(client.calls.rpc[0].args.p_source, 'online');
+  });
+
+  it('PDV envia p_source balcao (nunca bloqueado por is_open)', async () => {
+    const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
+    await createOrder(client, { ...base, source: 'balcao' });
+    assert.equal(client.calls.rpc[0].args.p_source, 'balcao');
+  });
+
+  it('isRestaurantClosedError detecta o erro controlado da RPC', async () => {
+    assert.equal(isRestaurantClosedError(new Error('Estamos fechados no momento e não estamos recebendo pedidos online.')), true);
+    assert.equal(isRestaurantClosedError({ message: 'Estabelecimento fechado no momento' }), true);
+    assert.equal(isRestaurantClosedError(new Error('Produto indisponível: X')), false);
+    assert.equal(isRestaurantClosedError(new Error('Seu carrinho está vazio')), false);
+    assert.equal(isRestaurantClosedError(null), false);
+    assert.equal(isRestaurantClosedError('RESTAURANTE FECHADO'), true);
   });
 });

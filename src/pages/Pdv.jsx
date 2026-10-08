@@ -316,6 +316,9 @@ export default function Pdv() {
           deliveryZoneId: deliveryZoneId || null,
           paymentMethod: paymentMethod || null,
           notes: '',
+          // FASE 2: PDV é atendimento presencial (balcão) — funciona mesmo
+          // com o restaurante fechado para pedidos online (is_open=false).
+          source: 'balcao',
         });
         number = created.order_number;
         // create_order não aceita desconto: aplica via edit em seguida.

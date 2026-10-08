@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test:supabase": "node --test src/api/supabaseAuth.test.js src/lib/frontendAuth.test.js src/api/catalog.test.js src/api/customersZones.test.js src/api/orders.test.js src/api/companyStorefront.test.js src/lib/deliveryRoute.test.js src/api/team.test.js src/api/storage.test.js src/lib/orderQueue.test.js src/lib/copyCooldown.test.js src/lib/holdToSelect.test.js src/lib/menuShare.test.js src/lib/autoAssign.test.js src/lib/finance.test.js src/data/updates.test.js src/api/plans.test.js src/lib/orderDay.test.js src/lib/tableComandas.test.js src/api/subscriptions.test.js",
+    "test:supabase": "node --test src/api/supabaseAuth.test.js src/lib/frontendAuth.test.js src/api/catalog.test.js src/api/customersZones.test.js src/api/orders.test.js src/api/orderStages.test.js src/api/companyStorefront.test.js src/lib/deliveryRoute.test.js src/api/team.test.js src/api/storage.test.js src/lib/orderQueue.test.js src/lib/copyCooldown.test.js src/lib/holdToSelect.test.js src/lib/menuShare.test.js src/lib/autoAssign.test.js src/lib/finance.test.js src/data/updates.test.js src/api/plans.test.js src/lib/orderDay.test.js src/lib/tableComandas.test.js src/api/subscriptions.test.js src/lib/orderResume.test.js",
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",

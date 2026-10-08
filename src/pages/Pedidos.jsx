@@ -13,7 +13,7 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { ShoppingBag, Clock, Smartphone, MessageSquare, Store, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ShoppingBag, Clock, Smartphone, MessageSquare, Store, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
 import OrderModal from '@/components/orders/OrderModal';
 import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
 import NewOrderAlert from '@/components/orders/NewOrderAlert';
@@ -22,17 +22,31 @@ import { playNewOrderAlert, requestNotificationPermission, showOrderNotification
 import { getAlertPrefs } from '@/lib/alertPrefs';
 import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
 import { changeOrderStatus, getAvailableActions, STATUS_LABELS } from '@/lib/orderStatusFlow';
+import {
+  LEGACY_STAGE_SEED,
+  listStages as sbListStages,
+  visibleStages,
+  stageForStatus,
+  resolveAdvanceTarget,
+  assertSingleStep,
+} from '@/api/orderStages';
+import StageManagerDialog from '@/components/orders/StageManagerDialog';
 import { shortAddress } from '@/lib/deliveryRoute';
 
-const COLUMNS = [
-  { id: 'novo', label: 'Novo', dot: 'bg-blue-500' },
-  { id: 'confirmado', label: 'Confirmado', dot: 'bg-yellow-500' },
-  { id: 'em_preparo', label: 'Em preparo', dot: 'bg-orange-500' },
-  { id: 'aguardando_retirada', label: 'Pronto', dot: 'bg-purple-500' },
-  { id: 'saiu_entrega', label: 'Saiu p/ entrega', dot: 'bg-indigo-500' },
-  { id: 'finalizado', label: 'Finalizado', dot: 'bg-green-500' },
-  { id: 'cancelado', label: 'Cancelado', dot: 'bg-red-500' },
-];
+// Colunas legadas (fallback quando as stages configuráveis ainda não
+// carregaram ou a migration ainda não foi aplicada). Espelham o seed.
+const LEGACY_FALLBACK_STAGES = LEGACY_STAGE_SEED.map((s) => ({
+  id: `legacy-${s.key}`,
+  company_id: null,
+  key: s.key,
+  mapsTo: s.mapsTo,
+  name: s.name,
+  color: s.color,
+  position: s.position,
+  isInitial: s.isInitial,
+  isFinal: s.isFinal,
+  active: true,
+}));
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -94,6 +108,16 @@ export default function Pedidos() {
   const [queueOpen, setQueueOpen] = useState(false);
   const [highlightId, setHighlightId] = useState(null);
   const [alertQueue, setAlertQueue] = useState([]);
+  // FASE 1: stages configuráveis por empresa (null = ainda carregando ou
+  // migration ausente -> Kanban usa o fallback legado, sem quebrar).
+  const [stages, setStages] = useState(null);
+  const [stageDialogOpen, setStageDialogOpen] = useState(false);
+  const displayStages = stages && stages.length > 0 ? visibleStages(stages) : LEGACY_FALLBACK_STAGES;
+  const stageById = React.useMemo(
+    () => Object.fromEntries(displayStages.map((s) => [s.id, s])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stages],
+  );
 
   const seenOrderIdsRef = useRef(new Set());
   const highlightTimerRef = useRef(null);
@@ -239,6 +263,34 @@ export default function Pedidos() {
     };
   }, [companyId, sbActive, sbUserId]);
 
+  // FASE 1: carrega stages configuráveis + realtime (colunas atualizam ao
+  // editar no gerenciador). Falha aqui nunca quebra o Kanban: fallback legado.
+  useEffect(() => {
+    if (!companyId || !sbActive) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const list = await sbListStages(supabase, companyId);
+        if (!cancelled && list && list.length > 0) setStages(list);
+      } catch {
+        if (!cancelled) setStages(null);
+      }
+    };
+    load();
+    let unsub = null;
+    try {
+      unsub = subscribeCompanyTable(supabase, 'restaurant_order_stages', companyId, () => {
+        load();
+      });
+    } catch {
+      unsub = null;
+    }
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, [companyId, sbActive]);
+
   // Abre pedido vindo do sino (?pedido=<id>) uma única vez por parâmetro.
   useEffect(() => {
     const pedidoId = searchParams.get('pedido');
@@ -252,6 +304,23 @@ export default function Pedidos() {
   if (loading || (dataLoading && !company)) return <Spinner />;
   if (!company) return null;
 
+  // Ação primária do card: com stages, o rótulo segue a próxima ETAPA
+  // (uma transição legada por vez); sem stages, fluxo legado.
+  const getCardPrimary = (order) => {
+    if (!order || ['finalizado', 'cancelado'].includes(order.status)) return null;
+    if (stages && stages.length > 0) {
+      const target = resolveAdvanceTarget(displayStages, order);
+      if (!target) return null;
+      return {
+        id: order.status === 'novo' ? 'accept' : 'advance',
+        label: order.status === 'novo' ? 'Aceitar' : `→ ${target.targetStage.name}`,
+        next: target.targetStatus,
+      };
+    }
+    const legacy = getAvailableActions(order);
+    return legacy.find((a) => a.id === 'accept' || a.id === 'advance') || null;
+  };
+
   // Ação direta no card (reutiliza fluxo central + guarda anti-duplo do drag)
   const handleCardAction = async (order, action) => {
     if (pendingStatusRef.current.has(order.id)) return;
@@ -260,7 +329,7 @@ export default function Pedidos() {
       const updated = await changeOrderStatus(order.id, action.next);
       if (updated) {
         setOrders(prev => mergeUpdated(prev, updated));
-        toast({ title: action.id === 'accept' ? 'Pedido confirmado!' : `Pedido: ${STATUS_LABELS[action.next]}` });
+        toast({ title: action.id === 'accept' ? 'Pedido confirmado!' : `Pedido: ${action.label?.replace(/^→ /, '') || STATUS_LABELS[action.next]}` });
       }
     } catch (err) {
       toast({ title: 'Erro ao atualizar pedido', description: err?.message, variant: 'destructive' });
@@ -269,12 +338,30 @@ export default function Pedidos() {
     }
   };
 
-  const onDragEnd = async (result) => {    const { destination, source, draggableId } = result;
+  const onDragEnd = async (result) => {
+    const { destination, source, draggableId } = result;
     if (!destination || destination.droppableId === source.droppableId) return;
     // Guarda contra duplo disparo (drop repetido antes da resposta)
     if (pendingStatusRef.current.has(draggableId)) return;
+    const dragged = orders.find((o) => o.id === draggableId);
+    const targetStage = stageById[destination.droppableId];
+    if (!dragged || !targetStage) return;
+    const toStatus = targetStage.mapsTo;
+    // FASE 1: drag valida UMA etapa por vez (volta só uma casa, sem pular).
+    // Cancelar via arraste mantém o caminho legado (sem motivo, como antes).
+    try {
+      const check = assertSingleStep(displayStages, dragged.status, toStatus, dragged.order_type);
+      if (check.noop) return;
+    } catch (err) {
+      toast({ title: 'Movimento inválido', description: err?.message, variant: 'destructive' });
+      try {
+        const ords = await listOrdersWithItems(supabase, company.id, 100);
+        setOrders(ords);
+      } catch { /* mantém estado atual */ }
+      return;
+    }
     pendingStatusRef.current.add(draggableId);
-    const newStatus = destination.droppableId;
+    const newStatus = toStatus;
     setOrders(prev => prev.map(o => o.id === draggableId ? { ...o, status: newStatus } : o));
     try {
       const updated = await changeOrderStatus(draggableId, newStatus);
@@ -304,23 +391,28 @@ export default function Pedidos() {
         </div>
       ) : (
         <>
-        <div className="hidden md:flex justify-end gap-2 mb-2 shrink-0">
-          <Button variant="outline" size="icon" onClick={() => scrollKanban(-1)} aria-label="Rolar Kanban para a esquerda">
-            <ChevronLeft className="h-4 w-4" />
+        <div className="flex justify-end gap-2 mb-2 shrink-0">
+          <Button variant="outline" onClick={() => setStageDialogOpen(true)} aria-label="Gerenciar etapas do Kanban">
+            <SlidersHorizontal className="h-4 w-4" /> Etapas
           </Button>
-          <Button variant="outline" size="icon" onClick={() => scrollKanban(1)} aria-label="Rolar Kanban para a direita">
-            <ChevronRight className="h-4 w-4" />
-          </Button>
+          <span className="hidden md:flex gap-2">
+            <Button variant="outline" size="icon" onClick={() => scrollKanban(-1)} aria-label="Rolar Kanban para a esquerda">
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => scrollKanban(1)} aria-label="Rolar Kanban para a direita">
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </span>
         </div>
         <DragDropContext onDragEnd={onDragEnd}>
           <div ref={kanbanRef} className="flex gap-3 sm:gap-4 overflow-x-auto kanban-scroll pb-4 -mx-1 px-1 lg:flex-1 lg:min-h-0 lg:overflow-y-hidden lg:pb-2">
-            {COLUMNS.map(col => {
-              const colOrders = orders.filter(o => o.status === col.id);
+            {displayStages.map(col => {
+              const colOrders = orders.filter(o => stageForStatus(displayStages, o.status)?.id === col.id);
               return (
                 <Droppable key={col.id} droppableId={col.id}>
                   {(provided) => (
                     <div ref={provided.innerRef} {...provided.droppableProps} className="w-64 sm:w-72 shrink-0 min-w-0 max-h-[60dvh] lg:max-h-full overflow-y-auto lg:h-full rounded-xl">
-                      {col.id === 'novo' ? (
+                      {col.mapsTo === 'novo' ? (
                         <button
                           type="button"
                           onClick={() => setQueueOpen(true)}
@@ -329,16 +421,16 @@ export default function Pedidos() {
                           className="sticky top-0 z-10 w-full bg-background/95 backdrop-blur-sm flex items-center justify-between mb-3 px-1 pt-1 pb-2 cursor-pointer rounded-md hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring text-left"
                         >
                           <div className="flex items-center gap-2">
-                            <span className={`h-2.5 w-2.5 rounded-full ${col.dot}`} />
-                            <span className="font-heading font-semibold text-sm text-foreground underline decoration-dotted underline-offset-4">{col.label}</span>
+                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: col.color }} />
+                            <span className="font-heading font-semibold text-sm text-foreground underline decoration-dotted underline-offset-4">{col.name}</span>
                           </div>
                           <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{colOrders.length}</span>
                         </button>
                       ) : (
                         <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm flex items-center justify-between mb-3 px-1 pt-1 pb-2">
                           <div className="flex items-center gap-2">
-                            <span className={`h-2.5 w-2.5 rounded-full ${col.dot}`} />
-                            <span className="font-heading font-semibold text-sm text-foreground">{col.label}</span>
+                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: col.color }} />
+                            <span className="font-heading font-semibold text-sm text-foreground">{col.name}</span>
                           </div>
                           <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{colOrders.length}</span>
                         </div>
@@ -348,10 +440,9 @@ export default function Pedidos() {
                           const src = SOURCE_CONFIG[order.source] || SOURCE_CONFIG.online;
                           const wt = waitTime(order.created_date);
                           const wtNum = parseInt(wt) || 0;
-                          const isDelayed = wtNum > 30 && !['finalizado', 'cancelado'].includes(col.id);
-                          const cardActions = getAvailableActions(order);
-                          const cardPrimary = cardActions.find(a => a.id === 'accept' || a.id === 'advance');
-                          const cardCancel = cardActions.find(a => a.id === 'cancel');
+                          const isDelayed = wtNum > 30 && !['finalizado', 'cancelado'].includes(col.mapsTo);
+                          const cardPrimary = getCardPrimary(order);
+                          const cardCancel = !['finalizado', 'cancelado'].includes(order.status);
                           return (
                             <Draggable key={order.id} draggableId={order.id} index={index}>
                               {(prov, snapshot) => (
@@ -384,7 +475,7 @@ export default function Pedidos() {
                                       <Clock className="h-3 w-3" /> {wt}
                                     </span>
                                   </div>
-                                  <div className="rounded-md bg-muted/60 px-2 py-0.5 text-[11px] font-semibold text-foreground truncate mb-1.5">{col.label}</div>
+                                  <div className="rounded-md bg-muted/60 px-2 py-0.5 text-[11px] font-semibold text-foreground truncate mb-1.5">{col.name}</div>
                                   <p className="font-medium text-sm text-foreground truncate">{order.customer_name}</p>
                                   {order.customer_phone && <p className="text-xs text-muted-foreground mt-0.5 truncate">{order.customer_phone}</p>}
                                   {order.driver_id && driversById[order.driver_id] && (
@@ -418,22 +509,22 @@ export default function Pedidos() {
                                     <span className="font-heading font-bold text-sm text-foreground truncate min-w-0">{fmtCurrency(order.total)}</span>
                                     {(cardPrimary || cardCancel) && (
                                       <span className="flex shrink-0 items-center justify-end gap-1.5">
-                                        {cardCancel && (
-                                          <button
-                                            type="button"
-                                            onClick={(e) => { e.stopPropagation(); setCancelOrderData(order); }}
-                                            className="h-8 px-2.5 rounded-lg text-xs font-medium text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors"
-                                          >
-                                            Cancelar
-                                          </button>
-                                        )}
+                                          {cardCancel && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => { e.stopPropagation(); setCancelOrderData(order); }}
+                                              className="h-8 px-2.5 rounded-lg text-xs font-medium text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors"
+                                            >
+                                              Cancelar
+                                            </button>
+                                          )}
                                         {cardPrimary && (
                                           <button
                                             type="button"
                                             onClick={(e) => { e.stopPropagation(); handleCardAction(order, cardPrimary); }}
                                             className="h-8 px-2.5 rounded-lg text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors whitespace-nowrap"
                                           >
-                                            {cardPrimary.id === 'accept' ? 'Aceitar' : `→ ${STATUS_LABELS[cardPrimary.next] || 'Avançar'}`}
+                                            {cardPrimary.label}
                                           </button>
                                         )}
                                       </span>
@@ -476,6 +567,8 @@ export default function Pedidos() {
           order={selectedOrder}
           isOpen={!!selectedOrder}
           company={company}
+          stages={stages}
+          stageName={stageForStatus(displayStages, selectedOrder.status)?.name || ''}
           driver={selectedOrder?.driver_id ? driversById[selectedOrder.driver_id] : null}
           onClose={() => setSelectedOrder(null)}
           onOrderUpdated={(updated) => {
@@ -505,6 +598,15 @@ export default function Pedidos() {
           setOrders(prev => mergeUpdated(prev, updated));
         }}
       />
+      {stageDialogOpen && companyId && (
+        <StageManagerDialog
+          open={stageDialogOpen}
+          onClose={() => setStageDialogOpen(false)}
+          companyId={companyId}
+          stages={stages && stages.length > 0 ? stages : LEGACY_FALLBACK_STAGES}
+          onChanged={(fresh) => setStages(fresh && fresh.length > 0 ? fresh : null)}
+        />
+      )}
     </div>
   );
 }

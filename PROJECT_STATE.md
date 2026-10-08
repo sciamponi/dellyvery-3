@@ -192,6 +192,15 @@ npm run lint -- --quiet
 - **Frontend OrderTracking.jsx**: thumb h-12 w-12 rounded-lg object-cover via Image + fallback Package; polling/totais/checkout/tracking inalterados.
 - **Validação:** RPC antes/depois via token real (#8/#9/#10); pedido misto (com/sem imagem); reload; token inválido segue 400; unit 98/98 (+teste contrato tracking); build OK; lint 0 erros nos arquivos do escopo. Sem RLS/policy nova, sem Storage, sem commit/push, sem db push.
 
+## 26. FASE 1 — Kanban configurável por empresa (2026-10-08, branch feat/supabase-foundation)
+
+- **Migration (só arquivo, sem db push — Docker indisponível no ambiente):** `supabase/migrations/20261008000000_dellyvery3_order_stages.sql` — tabela `restaurant_order_stages` (company_id, stage_key unique/company, maps_to order_status, name, color hex, sort_order, is_initial, is_final, active, timestamps) + triggers (updated_at, company_id/stage_key imutáveis, mapeamento legado travado, single initial/final) + seed das 7 etapas atuais p/ todas as companies + RLS (leitura membro, escrita OWNER/ADMIN/MANAGER) + realtime.
+- **Compatibilidade:** `orders.status` continua fonte da verdade; `create/manage/get-by-token`, notifications `UNIQUE(order_id,status)`, finance, queue, checkout, tracking e PDV/Dashboard NÃO alterados. Stage custom mapeia p/ status legado (`maps_to`); delivery pula `aguardando_retirada` como no legado.
+- **Frontend:** `src/api/orderStages.js` (+`orderStages.test.js`, 21 asserts) — CRUD com guardas (última etapa, coluna irmã + pedidos), reorder validado, fluxo puro 1-etapa (advance/regress, assertSingleStep, auto-close rule); `Pedidos.jsx` colunas dinâmicas + botão Etapas + drag 1-etapa + rollback; `StageManagerDialog.jsx` (criar/editar/cor/ordem/ativa/inicial/final/excluir); `OrderModal.jsx` botão VOLTAR explícito + auto-fecha após AVANÇAR (erro mantém aberto).
+- **Validação:** `test:supabase` 196/196; `build` OK (chunk >500kB pré-existente); `lint` só os 7 `unused-imports` pré-existentes em outros arquivos.
+- **Fora do escopo (worktree, não commitado aqui):** `Menu/Checkout/orderResume` (retomada de pedido, outro workstream).
+- **Pendente:** aplicar migration no Supabase local/remoto (`db push`) e E2E com banco real; QA manual do modal/drag.
+
 ## 25. PDV + Ondas de independência Base44 (2026-09-28/29, branch feat/supabase-foundation)
 
 - **PDV** (`1df9390`, `133da02`, `40c0404`): página `/pdv` (mesa/retirada/entrega), comandas por mesa derivadas de pedidos ativos (sem entidade Mesa), merge via edit+cancel, `OrderModal` reutilizado, painel fixo com scroll interno, Atualizações + anúncio visto-uma-vez.

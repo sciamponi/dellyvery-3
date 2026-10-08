@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Image } from '@/components/ui/image';
-import { Bike, Store, Table2, Phone, MapPin, Receipt, Clock, XCircle, Pencil, X, Check, ArrowRight, ArrowLeft, Package, Plus, Search, ShoppingBag, UtensilsCrossed } from 'lucide-react';
+import { Bike, Store, Table2, Phone, MapPin, Receipt, Clock, XCircle, Pencil, X, Check, ArrowRight, ArrowLeft, Undo2, Package, Plus, Search, ShoppingBag, UtensilsCrossed } from 'lucide-react';
 import RouteModal from '@/components/orders/RouteModal';
 import { formatAddress, resolveAdvanceFlow } from '@/lib/deliveryRoute';
 import { listDrivers } from '@/api/team';
@@ -17,7 +17,8 @@ import { editOrder as sbEditOrder, getOrderDetail as sbGetOrderDetail, listOrder
 import { listProducts as sbListProducts } from '@/api/catalog';
 import { getCompanySettings as sbGetSettings } from '@/api/company';
 import { useToast } from '@/components/ui/use-toast';
-import { changeOrderStatus, getAvailableActions, STATUS_LABELS } from '@/lib/orderStatusFlow';
+import { changeOrderStatus, getAvailableActions, getNextStatus, STATUS_LABELS } from '@/lib/orderStatusFlow';
+import { resolveAdvanceTarget, resolveRegressTarget, shouldAutoCloseOnAction } from '@/api/orderStages';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -38,7 +39,7 @@ function collapseConsecutiveStatuses(history) {
   return history.filter((h, i) => i === 0 || h?.status !== history[i - 1]?.status);
 }
 
-export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onCancel, onSelectOrder, company, driver, onRequestPayment }) {
+export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onCancel, onSelectOrder, company, driver, onRequestPayment, stages = null, stageName = '' }) {
   const { toast } = useToast();
   // FASE 5.4: edição via adapter Supabase quando há sessão; leituras
   // Leituras auxiliares (fotos/histórico) via adapters Supabase.
@@ -144,9 +145,37 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
 
   if (!order) return null;
 
-  const actions = getAvailableActions(order);
-  const primaryAction = actions.find(a => a.id === 'accept' || a.id === 'advance');
-  const cancelAction = actions.find(a => a.id === 'cancel');
+  // FASE 1: com stages configuráveis, avançar/voltar navega UMA etapa por vez
+  // (traduzida para o status legado); sem stages, fluxo legado intacto.
+  const hasStages = Array.isArray(stages) && stages.length > 0;
+  const advanceTarget = hasStages ? resolveAdvanceTarget(stages, order) : null;
+  const regressTarget = hasStages ? resolveRegressTarget(stages, order) : null;
+  const legacyActions = getAvailableActions(order);
+  let actions;
+  let primaryAction;
+  let regressAction = null;
+  let cancelAction;
+  if (hasStages) {
+    actions = [];
+    if (order.status === 'novo' && advanceTarget) {
+      actions.push({ id: 'accept', label: 'Aceitar pedido', next: advanceTarget.targetStatus });
+    } else if (advanceTarget) {
+      actions.push({ id: 'advance', label: `Avançar para ${advanceTarget.targetStage.name}`, next: advanceTarget.targetStatus });
+    }
+    if (regressTarget) {
+      regressAction = { id: 'regress', label: `Voltar para ${regressTarget.targetStage.name}`, next: regressTarget.targetStatus };
+    }
+    cancelAction = (order.status === 'finalizado' || order.status === 'cancelado') ? null : { id: 'cancel' };
+    primaryAction = actions[0] || null;
+  } else {
+    actions = legacyActions;
+    primaryAction = actions.find(a => a.id === 'accept' || a.id === 'advance');
+    // Caminho legado também conhece o próximo status (sem regresso explícito).
+    if (!hasStages && primaryAction && !primaryAction.next) {
+      primaryAction = { ...primaryAction, next: getNextStatus(order) };
+    }
+    cancelAction = actions.find(a => a.id === 'cancel');
+  }
 
   const runStatusAction = async (action) => {
     if (statusBusyRef.current) return;
@@ -155,7 +184,11 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     try {
       const updated = await changeOrderStatus(order.id, action.next);
       onOrderUpdated(updated);
-      toast({ title: action.id === 'accept' ? 'Pedido confirmado!' : `Pedido: ${STATUS_LABELS[action.next]}` });
+      toast({ title: action.id === 'accept' ? 'Pedido confirmado!' : `Pedido: ${STATUS_LABELS[action.next] || action.next}` });
+      // FASE 1: concluiu a interação -> Kanban atualiza (realtime + merge) e o
+      // modal fecha sozinho. Em erro, o modal permanece aberto (sem rollback
+      // necessário: nada otimista foi aplicado aqui).
+      if (shouldAutoCloseOnAction(action.id)) onClose();
     } catch (err) {
       toast({ title: 'Erro ao atualizar pedido', description: err?.message, variant: 'destructive' });
     } finally {
@@ -316,7 +349,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
               <span className="font-heading text-3xl font-bold">#{order.order_number}</span>
             </span>
             <span className={`text-sm px-3 py-1.5 rounded-full font-semibold whitespace-nowrap ${STATUS_PILL[order.status] || STATUS_PILL.novo}`}>
-              {STATUS_LABELS[order.status] || order.status}
+              {stageName || STATUS_LABELS[order.status] || order.status}
             </span>
           </DialogTitle>
         </DialogHeader>
@@ -658,6 +691,16 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                   </div>
                 )}
                 <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+                  {regressAction && (
+                    <Button
+                      variant="outline"
+                      className="w-full sm:w-auto sm:min-w-32 min-h-11"
+                      onClick={() => runStatusAction(regressAction)}
+                      disabled={busy}
+                    >
+                      <Undo2 className="h-4 w-4" /> {statusAction === 'regress' ? 'Voltando...' : regressAction.label}
+                    </Button>
+                  )}
                   {cancelAction && (
                     <Button variant="destructive" className="w-full sm:w-auto sm:min-w-32 min-h-11" onClick={onCancel} disabled={busy}>
                       <XCircle className="h-4 w-4" /> Cancelar

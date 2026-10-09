@@ -216,11 +216,14 @@ export async function setStageActive(client, companyId, stageId, active) {
   const stage = current.find((s) => s.id === stageId);
   if (!stage) throw new Error('Etapa não encontrada ou sem permissão');
   // Proteção: desativar a última coluna VISÍVEL de um status com pedidos
-  // deixaria esses pedidos sem coluna. Com pedidos, exige coluna irmã.
+  // OPERACIONAIS deixaria esses pedidos sem coluna no fluxo. Com pedidos,
+  // exige coluna irmã. Etapas terminais (finalizado/cancelado) guardam só
+  // histórico: podem ser ocultadas mesmo com pedidos, sem mover/alterar nada.
   const visibleSibling = current.some(
     (s) => s.id !== stageId && s.mapsTo === stage.mapsTo && s.active,
   );
-  if (!visibleSibling && (await hasOrdersInStatus(c, cid, stage.mapsTo))) {
+  const isTerminal = TERMINAL_MAPS_TO.includes(stage.mapsTo);
+  if (!visibleSibling && !isTerminal && (await hasOrdersInStatus(c, cid, stage.mapsTo))) {
     throw new Error(
       `Existe pedido em "${stage.name}". Crie/mantenha outra etapa visível para este status antes de desativar.`,
     );

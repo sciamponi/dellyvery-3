@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dellyvery — Soluções digitais para pedidos e gestão</title>
+<meta name="description" content="Conheça o Dellyvery, solução digital da Automatiza Solução para pedidos, cardápio e gestão de negócios.">
+<meta property="og:title" content="Dellyvery — Soluções digitais para pedidos e gestão">
+<meta property="og:description" content="Conheça o Dellyvery, solução digital da Automatiza Solução para pedidos, cardápio e gestão de negócios.">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="pt_BR">
+<meta name="theme-color" content="#0c0a09">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0c0a09; --bg2:#141110; --panel:#1c1816; --line:rgba(255,255,255,.09);
+  --red:#DC2626; --red2:#991b1b; --amber:#fbbf24; --amber2:#f59e0b;
+  --cream:#faf7f2; --muted:#b8ada4; --muted2:#8a7f76;
+  --radius:20px; --tv-shadow:0 36px 70px -18px rgba(0,0,0,.8),0 18px 40px rgba(0,0,0,.5);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--cream);font-family:'Inter',system-ui,sans-serif;overflow-x:hidden;line-height:1.6;overscroll-behavior-y:none;-webkit-tap-highlight-color:transparent}
+button,a{-webkit-tap-highlight-color:transparent}
+.tv-screen{touch-action:pan-y}
+h1,h2,h3,.brand-name,.tv-title,.neon,.price{font-family:'Montserrat',sans-serif}
+img{max-width:100%;display:block}
+a{color:inherit}
+.wrap{width:min(1080px,92vw);margin:0 auto}
+section{position:relative}
+
+/* ============ BURGER SCENE / BRICK ============ */
+.scene{
+  position:relative;min-height:auto;display:flex;flex-direction:column;justify-content:center;
+  padding:66px 0 56px;overflow:hidden;isolation:isolate;
+  background:
+    radial-gradient(1200px 500px at 50% -5%, rgba(220,38,38,.22), transparent 60%),
+    radial-gradient(900px 420px at 12% 20%, rgba(251,191,36,.14), transparent 60%),
+    radial-gradient(900px 500px at 88% 30%, rgba(251,191,36,.10), transparent 60%),
+    linear-gradient(180deg,#1a1310 0%,#120e0c 55%,#0c0a09 100%);
+}
+.scene::before{ /* tijolos */
+  content:"";position:absolute;inset:0;z-index:-2;opacity:.9;
+  background:
+    linear-gradient(rgba(0,0,0,.42),rgba(0,0,0,.55)),
+    repeating-linear-gradient(0deg, transparent 0 34px, rgba(0,0,0,.55) 34px 38px),
+    repeating-linear-gradient(90deg, #4a2c22 0 86px, #3a231c 86px 88px);
+  /* offset fileiras */
+  mask:linear-gradient(#000,#000);
+}
+.scene::after{ /* textura + vinheta */
+  content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(1000px 520px at 50% 42%, transparent 30%, rgba(0,0,0,.55) 78%, rgba(0,0,0,.85) 100%),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.018) 0 2px, transparent 2px 38px);
+}
+.brick-offset{position:absolute;inset:0;z-index:-2;opacity:.35;
+  background:repeating-linear-gradient(90deg, transparent 0 86px, rgba(0,0,0,.6) 86px 88px);
+  background-position:43px 19px;background-size:auto 76px;
+}
+.topbar{position:absolute;top:0;left:0;right:0;z-index:20;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px min(4vw,32px);
+  background:linear-gradient(180deg,rgba(0,0,0,.55),transparent);
+  font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#e9ddd0}
+.topbar span:last-child{color:var(--amber)}
+.neon-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:22px}
+.neon{
+  font-weight:800;letter-spacing:.22em;font-size:12px;text-transform:uppercase;
+  padding:9px 18px;border-radius:999px;color:#ffd9a8;
+  border:1px solid rgba(251,191,36,.55);
+  background:rgba(60,20,10,.45);box-shadow:0 0 18px rgba(251,191,36,.35),inset 0 0 14px rgba(251,191,36,.22);
+  text-shadow:0 0 12px rgba(251,191,36,.9);
+}
+.neon.red{color:#ffc9c9;border-color:rgba(220,38,38,.7);box-shadow:0 0 20px rgba(220,38,38,.5),inset 0 0 14px rgba(220,38,38,.3);text-shadow:0 0 12px rgba(220,38,38,.9)}
+.hero-kicker{text-align:center;color:var(--amber);font-weight:700;letter-spacing:.22em;font-size:11px;text-transform:uppercase;margin-bottom:10px}
+.hero-title{text-align:center;font-size:clamp(24px,3.4vw,38px);font-weight:900;line-height:1.12;max-width:700px;margin:0 auto;text-wrap:balance}
+.hero-title em{font-style:normal;background:linear-gradient(90deg,#fff,#fbbf24);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero-sub{text-align:center;color:#d8c9bb;max-width:560px;margin:10px auto 22px;font-size:clamp(13px,1.6vw,15px)}
+
+/* ============ TV ============ */
+.tv-zone{position:relative;width:min(820px,82vw);margin:0 auto}
+.tv-glow{position:absolute;inset:-6% -5% -10%;z-index:0;pointer-events:none;filter:blur(12px);
+  background:radial-gradient(58% 52% at 50% 45%, rgba(220,38,38,.32), rgba(251,191,36,.10) 55%, transparent 72%);}
+.tv-mount{width:96px;height:20px;margin:0 auto;background:linear-gradient(180deg,#2a2a2a,#0a0a0a);border-radius:0 0 8px 8px;box-shadow:0 8px 18px rgba(0,0,0,.7);position:relative;z-index:2}
+.tv-mount::before{content:"";position:absolute;top:-26px;left:50%;transform:translateX(-50%);width:12px;height:28px;background:#0a0a0a;border-radius:6px}
+.tv-frame{
+  position:relative;z-index:3;background:#050505;border-radius:18px;padding:10px;
+  border:1px solid #262626;box-shadow:var(--tv-shadow);
+  animation:tvIn 1.1s cubic-bezier(.2,.8,.2,1) both;
+}
+@keyframes tvIn{from{opacity:0;transform:translateY(28px) scale(.985);filter:brightness(.4)}to{opacity:1;transform:none;filter:brightness(1)}}
+.tv-screen{position:relative;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#0a0705;isolation:isolate}
+.tv-screen::after{ /* reflexo vidro */
+  content:"";position:absolute;inset:0;z-index:5;pointer-events:none;
+  background:linear-gradient(115deg, rgba(255,255,255,.14) 0%, rgba(255,255,255,.05) 18%, transparent 32%, transparent 70%, rgba(255,255,255,.04) 100%);
+}
+.tv-scan{position:absolute;inset:0;z-index:4;pointer-events:none;opacity:.5;
+  background:repeating-linear-gradient(0deg, rgba(255,255,255,.03) 0 1px, transparent 1px 3px);}
+.tv-hud{position:absolute;top:12px;left:14px;right:14px;z-index:6;display:flex;align-items:center;justify-content:space-between;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.85)}
+.live{display:inline-flex;align-items:center;gap:8px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.18);padding:6px 12px;border-radius:999px;backdrop-filter:blur(6px)}
+.live i{width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e;animation:blink 1.6s infinite}
+@keyframes blink{50%{opacity:.4}}
+.tv-hud .ch{background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.18);padding:6px 12px;border-radius:999px}
+
+/* slides */
+.slides{position:absolute;inset:0}
+.slide{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+  padding:clamp(16px,3vw,36px);opacity:0;transform:scale(1.02);transition:opacity .7s ease,transform .7s ease;
+  background:radial-gradient(700px 340px at 50% 10%, rgba(220,38,38,.28), transparent 60%),linear-gradient(180deg,#1e1210,#0d0806);}
+.slide.active{opacity:1;transform:none;z-index:2}
+.slide .pill{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--amber);border:1px solid rgba(251,191,36,.4);padding:5px 12px;border-radius:999px;margin-bottom:10px;background:rgba(0,0,0,.45)}
+.tv-title{font-size:clamp(19px,2.9vw,34px);font-weight:900;line-height:1.12;max-width:600px;text-wrap:balance;text-shadow:0 2px 18px rgba(0,0,0,.6)}
+.tv-title .hl{color:var(--amber)} .tv-title .rd{color:#ff6b6b}
+.tv-desc{color:#f0e2d0;margin-top:8px;max-width:480px;font-size:clamp(12px,1.5vw,14px)}
+.tv-cta{margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;font-family:'Montserrat';font-weight:800;letter-spacing:.07em;
+  text-decoration:none;border-radius:13px;padding:14px 24px;font-size:13px;transition:.25s;border:1px solid transparent;cursor:pointer;min-height:48px}
+.btn-red{background:linear-gradient(180deg,#ef2d2d,#b91c1c);color:#fff;box-shadow:0 12px 30px rgba(220,38,38,.45)}
+.btn-red:hover{transform:translateY(-2px);box-shadow:0 18px 40px rgba(220,38,38,.6)}
+.btn-ghost{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.2);color:#fff;backdrop-filter:blur(8px)}
+.btn-ghost:hover{background:rgba(255,255,255,.14)}
+.btn-amber{background:linear-gradient(180deg,#fbbf24,#d97706);color:#1a1005;box-shadow:0 12px 30px rgba(251,191,36,.35)}
+.btn-amber:hover{transform:translateY(-2px)}
+.btn-outline-w{background:transparent;border-color:rgba(255,255,255,.35);color:#fff}
+
+/* Logo oficial Dellyvery — asset local fornecido pelo usuário (logo-dellyvery.png).
+   Não redesenhar, distorcer ou substituir. Proporção original preservada. */
+.logo-official{height:clamp(64px,9vw,104px);width:auto;max-width:78%;object-fit:contain;filter:drop-shadow(0 10px 24px rgba(0,0,0,.6))}
+.logo-official.sm{height:clamp(52px,7vw,76px)}
+.brand-tag{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:#f3c98b;margin-top:6px}
+/* Mantido como fallback documentado (não usado nos slides): */
+.brand-lockup-oficial-css{display:none}
+
+/* ============ ANÚNCIOS VISUAIS 16:9 ============ */
+.ad{position:absolute;inset:0;display:grid;grid-template-columns:1.02fr .98fr;align-items:stretch;text-align:left;
+  opacity:0;transform:scale(1.02);transition:opacity .7s ease,transform .7s ease}
+.ad.active{opacity:1;transform:none;z-index:2}
+.ad-copy{display:flex;flex-direction:column;justify-content:center;padding:clamp(30px,5vw,52px) clamp(14px,3vw,30px) clamp(30px,5vw,52px) clamp(34px,5vw,54px)}
+.ad-copy .pill{align-self:flex-start;font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--amber);
+  border:1px solid rgba(251,191,36,.4);padding:5px 12px;border-radius:999px;margin-bottom:10px;background:rgba(0,0,0,.45)}
+.ad-title{font-family:'Montserrat';font-weight:900;font-size:clamp(17px,2.6vw,30px);line-height:1.14;text-wrap:balance;text-shadow:0 2px 18px rgba(0,0,0,.65)}
+.ad-title .hl{color:var(--amber)} .ad-title .rd{color:#ff6b6b}
+.ad-sub{color:#f0e2d0;margin-top:8px;font-size:clamp(11px,1.4vw,13px);max-width:340px}
+.ad-cta{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap}
+.ad-cta .btn{padding:12px 20px;min-height:46px}
+.ad-media{position:relative;overflow:hidden;background:linear-gradient(135deg,#2a1410,#120b08)}
+.ad-media img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.ad-media::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(20,10,8,.85) 0%,rgba(20,10,8,.25) 40%,transparent 65%),linear-gradient(0deg,rgba(0,0,0,.45),transparent 45%)}
+.demo-tag{position:absolute;left:10px;bottom:10px;z-index:3;font-size:9px;letter-spacing:.14em;text-transform:uppercase;
+  color:#ffe1ad;background:rgba(0,0,0,.6);border:1px solid rgba(251,191,36,.4);padding:4px 9px;border-radius:999px}
+/* mockup celular */
+.phone{position:absolute;z-index:2;right:8%;top:50%;transform:translateY(-50%) rotate(3deg);width:34%;max-width:150px;
+  background:#0e0e10;border:1px solid #333;border-radius:22px;padding:8px;box-shadow:0 24px 50px rgba(0,0,0,.65)}
+.phone .notch{width:44%;height:5px;border-radius:99px;background:#333;margin:0 auto 8px}
+.phone .pline{display:flex;gap:8px;align-items:center;background:#1b1b1f;border:1px solid #2c2c33;border-radius:10px;padding:7px;margin-bottom:7px}
+.phone .pthumb{flex:0 0 34px;height:34px;border-radius:8px;object-fit:cover}
+.phone .pt1{height:8px;border-radius:4px;background:#3a3a44;width:70%;margin-bottom:4px}
+.phone .pt2{height:8px;border-radius:4px;background:var(--red);width:38%;font-size:0}
+.phone .pprice{margin-left:auto;font-family:'Montserrat';font-weight:800;font-size:11px;color:var(--amber)}
+/* kanban + painel */
+.kanban{position:absolute;z-index:2;inset:12% 7%;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.kcol{background:rgba(10,10,12,.82);border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:8px;backdrop-filter:blur(4px)}
+.kcol h4{font-family:'Montserrat';font-size:9px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px}
+.kcol h4.c1{color:#4ade80}.kcol h4.c2{color:var(--amber)}.kcol h4.c3{color:#7dd3fc}
+.kcard{background:#1d1d22;border:1px solid #2e2e36;border-radius:8px;padding:6px 7px;margin-bottom:6px;font-size:10px;color:#e8e2d8}
+.kcard b{display:block;font-size:10px}
+.kcard span{color:#9a938b;font-size:9px}
+.kdot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
+.dash{position:absolute;z-index:2;inset:14% 8%;background:rgba(12,12,15,.88);border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:12px}
+.dash h4{font-family:'Montserrat';font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);margin-bottom:8px}
+.dstat{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px}
+.dstat div{background:#1b1b21;border:1px solid #2d2d36;border-radius:9px;padding:7px;text-align:center}
+.dstat b{display:block;font-family:'Montserrat';font-size:13px;color:#fff}
+.dstat span{font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#9a938b}
+.dbar{height:7px;border-radius:99px;background:#26262e;overflow:hidden;margin-top:5px}
+.dbar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--red),var(--amber))}
+
+/* tv controls */
+.tv-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:14px;flex-wrap:wrap}
+.dots{display:flex;gap:8px}
+.dot{width:34px;height:6px;border-radius:999px;background:rgba(255,255,255,.18);border:0;cursor:pointer;position:relative;overflow:hidden}
+.dot.active{background:rgba(255,255,255,.25)}
+.dot.active::after{content:"";position:absolute;inset:0;background:var(--amber);transform-origin:left;animation:fill 4s linear forwards}
+@keyframes fill{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.tv-progress{flex:1;height:2px;background:rgba(255,255,255,.12);border-radius:999px;overflow:hidden;min-width:120px}
+.tv-progress span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--red),var(--amber))}
+.by-auto{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:12px;color:#cbbcae;font-size:13px;letter-spacing:.06em}
+.by-auto img{height:30px;width:auto;background:#fff;border-radius:8px;padding:4px 8px}
+
+/* deco shelf */
+.shelf{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:22px}
+.fig{width:150px;background:rgba(20,14,12,.72);border:1px solid var(--line);border-radius:16px;padding:12px;text-align:center;backdrop-filter:blur(8px)}
+.fig .e{font-size:38px;filter:drop-shadow(0 6px 12px rgba(0,0,0,.6))}
+.fig b{display:block;font-family:'Montserrat';font-size:11px;letter-spacing:.12em;text-transform:uppercase;margin-top:6px;color:#f0dfc9}
+.fig small{color:var(--muted);font-size:11px}
+.counter-floor{text-align:center;color:#8a7f76;font-size:12px;letter-spacing:.22em;text-transform:uppercase;margin-top:16px}
+
+/* ============ SECTIONS ============ */
+.section{padding:52px 0}
+.eyebrow{color:var(--amber);font-weight:700;letter-spacing:.22em;font-size:11px;text-transform:uppercase;text-align:center}
+.h2{text-align:center;font-size:clamp(21px,3vw,34px);font-weight:900;line-height:1.15;margin:8px auto 10px;max-width:680px;text-wrap:balance}
+.lead{text-align:center;color:var(--muted);max-width:600px;margin:0 auto 26px;font-size:clamp(13px,1.6vw,15px)}
+.grid{display:grid;gap:16px}
+.grid.f8{grid-template-columns:repeat(4,1fr)}
+.card{background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02));border:1px solid var(--line);
+  border-radius:var(--radius);padding:24px;transition:.28s;position:relative;overflow:hidden}
+.card::before{content:"";position:absolute;inset:0 0 auto;height:1px;background:linear-gradient(90deg,transparent,rgba(251,191,36,.5),transparent);opacity:0;transition:.28s}
+.card:hover{transform:translateY(-6px);border-color:rgba(251,191,36,.35);box-shadow:0 24px 50px rgba(0,0,0,.5)}
+.card:hover::before{opacity:1}
+.card .ic{font-size:30px}
+.card h3{font-size:16px;margin:10px 0 6px}
+.card p{color:var(--muted);font-size:14px}
+/* 6 cards comerciais */
+.grid.f6{grid-template-columns:repeat(3,1fr);gap:14px}
+.feat{display:flex;gap:14px;align-items:flex-start;padding:20px}
+.fic{flex:0 0 44px;width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-size:21px;
+  background:linear-gradient(180deg,rgba(220,38,38,.25),rgba(220,38,38,.08));border:1px solid rgba(220,38,38,.4)}
+.feat h3{font-size:15px;margin:2px 0 4px}
+.feat p{font-size:13px}
+/* rodapé claro — logo escuro oficial, cores originais preservadas */
+.footer-light{background:var(--cream);color:#1c1a17;text-align:center;padding:40px 0 26px}
+.footer-light img{height:auto;width:min(280px,64vw);object-fit:contain;margin:0 auto 14px;display:block}
+.footer-light .fi{font-family:'Montserrat';font-weight:800;font-size:15px;color:#0c0a09}
+.footer-light .fi2{font-size:13px;color:#5b554d;margin-top:4px}
+.footer-light a{color:#b91c1c;font-weight:700}
+.legal{background:#0c0a09;color:var(--muted2);font-size:12px;text-align:center;padding:16px 10px 22px}
+.program-list{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:8px}
+.program-list button{text-align:left;background:#171312;border:1px solid var(--line);color:#fff;border-radius:14px;padding:14px;cursor:pointer;font-size:13px;transition:.25s}
+.program-list button.active{border-color:var(--amber);background:#221a12;box-shadow:0 0 0 1px var(--amber) inset}
+.program-list button small{display:block;color:var(--muted);margin-top:4px}
+
+/* proposta */
+.proposta{background:linear-gradient(180deg,#0c0a09,#171110 50%,#0c0a09)}
+.price-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:8px}
+.price-card{background:linear-gradient(180deg,#211a17,#141010);border:1px solid rgba(251,191,36,.22);border-radius:22px;padding:28px 24px;position:relative;overflow:hidden}
+.price-card.featured{border-color:var(--red);box-shadow:0 30px 80px rgba(220,38,38,.25)}
+.price-card .tag{position:absolute;top:14px;right:14px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;background:rgba(251,191,36,.14);border:1px solid rgba(251,191,36,.4);color:var(--amber);padding:5px 10px;border-radius:999px}
+.price-card h3{letter-spacing:.16em;font-size:12px;color:var(--amber);text-transform:uppercase;padding-right:110px}
+.price-card .pdesc{color:var(--muted);font-size:13px;margin-top:4px}
+.price{font-size:clamp(32px,4.4vw,46px);font-weight:900;margin:8px 0 2px}
+.price small{font-size:14px;color:var(--muted);font-weight:600}
+.check{list-style:none;margin:18px 0;display:grid;gap:10px;color:#e6d8c6;font-size:14px}
+.check li{display:flex;gap:10px;align-items:flex-start}
+.check li::before{content:"✓";flex:0 0 24px;height:24px;display:grid;place-items:center;border-radius:50%;background:rgba(34,197,94,.15);color:#4ade80;font-weight:800;font-size:13px}
+.notice{margin-top:14px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:14px;padding:14px 16px;font-size:13px;color:#f3d9a8}
+
+/* investimento */
+.invest{background:radial-gradient(700px 320px at 50% 0%, rgba(251,191,36,.18), transparent 65%),#100d0b;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.invest-box{max-width:640px;margin:0 auto;text-align:center;background:linear-gradient(180deg,#241a12,#130e0a);border:1px solid rgba(251,191,36,.4);border-radius:24px;padding:34px 24px;box-shadow:0 40px 100px rgba(0,0,0,.6)}
+.rows{display:grid;gap:8px;margin:18px 0;text-align:left}
+.row{display:flex;justify-content:space-between;align-items:center;gap:12px;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px}
+.total{font-family:'Montserrat';font-weight:900;font-size:clamp(42px,9vw,68px);line-height:1;color:#fff;text-shadow:0 0 40px rgba(251,191,36,.55)}
+.total-sub{color:var(--amber);letter-spacing:.22em;font-size:11px;font-weight:800;text-transform:uppercase;margin-top:8px}
+
+/* prazo / resp */
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.info-card{border-radius:22px;padding:28px 24px;border:1px solid var(--line);background:#161211}
+.info-card.gold{border-color:rgba(251,191,36,.35);background:linear-gradient(180deg,#221910,#131010)}
+.big{font-family:'Montserrat';font-weight:900;font-size:clamp(28px,4.4vw,44px);color:var(--amber)}
+
+/* automatiza */
+.auto{background:linear-gradient(180deg,#0c0a09,#1a1210)}
+.auto-box{display:grid;grid-template-columns:1.1fr .9fr;gap:24px;align-items:center;background:#151110;border:1px solid var(--line);border-radius:24px;padding:30px 26px}
+.auto-box img.logo-auto{width:min(280px,72%);height:auto;aspect-ratio:auto;background:#fff;border-radius:14px;padding:12px 16px;object-fit:contain}
+
+/* final */
+.final-scene{padding:70px 0 28px;background:
+  radial-gradient(900px 400px at 50% 0%, rgba(220,38,38,.25), transparent 60%),
+  linear-gradient(180deg,#0c0a09,#1c1210 60%,#0c0a09);}
+.mini-tv{width:min(680px,94vw);margin:0 auto;background:#050505;border:1px solid #2a2a2a;border-radius:18px;padding:10px;box-shadow:var(--tv-shadow)}
+.mini-screen{aspect-ratio:auto;min-height:300px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px 20px;
+  background:radial-gradient(600px 300px at 50% 20%, rgba(251,191,36,.18), transparent 60%),linear-gradient(180deg,#1e1310,#0c0806)}
+.cta-row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:22px}
+
+/* reveal */
+.reveal{opacity:0;transform:translateY(22px);transition:.7s ease}
+.reveal.on{opacity:1;transform:none}
+#particles{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:.7}
+
+/* total compacto dentro da proposta */
+.total-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:16px;
+  background:linear-gradient(180deg,#241a12,#130e0a);border:1px solid rgba(251,191,36,.4);border-radius:16px;padding:16px 18px}
+.total-bar .t-left{font-size:13px;color:var(--muted)}
+.total-bar .t-left b{display:block;font-family:'Montserrat';font-size:22px;color:#fff}
+.total-bar .t-left span{color:var(--amber);font-weight:700}
+
+/* ============ MODAL PAGAMENTO ============ */
+.modal-ov{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;padding:18px;
+  background:rgba(0,0,0,.72);backdrop-filter:blur(6px)}
+.modal-ov.open{display:flex}
+.modal{background:linear-gradient(180deg,#1e1613,#100c0a);border:1px solid rgba(251,191,36,.35);border-radius:20px;
+  width:min(520px,100%);max-height:90vh;overflow:auto;padding:26px 22px;position:relative;box-shadow:0 40px 100px rgba(0,0,0,.7)}
+.modal h3{font-size:20px;margin:4px 0 2px}
+.modal .m-sub{color:var(--muted);font-size:13px;margin-bottom:14px}
+.modal .m-plan{display:flex;justify-content:space-between;align-items:center;background:rgba(251,191,36,.08);
+  border:1px solid rgba(251,191,36,.3);border-radius:12px;padding:10px 14px;font-size:14px;margin-bottom:14px}
+.modal .m-plan b{color:var(--amber);font-family:'Montserrat'}
+.modal label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#d8c9bb;margin:12px 0 6px;font-weight:700}
+.modal input,.modal select,.modal textarea{width:100%;background:#0f0c0a;border:1px solid rgba(255,255,255,.14);border-radius:11px;
+  color:#fff;padding:12px 13px;font-size:14px;font-family:'Inter',sans-serif;outline:none}
+.modal input:focus,.modal select:focus,.modal textarea:focus{border-color:var(--amber);box-shadow:0 0 0 2px rgba(251,191,36,.2)}
+.modal select option{background:#171312}
+.modal .m-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.modal .m-close{position:absolute;top:12px;right:12px;width:34px;height:34px;border-radius:50%;border:1px solid rgba(255,255,255,.2);
+  background:rgba(255,255,255,.06);color:#fff;font-size:16px;cursor:pointer}
+.modal .m-ok{display:none;text-align:center;padding:18px 6px}
+.modal .m-ok .big-ok{font-size:48px}
+.modal .m-err{color:#ff9a9a;font-size:13px;margin-top:8px;display:none}
+/* opções de pagamento */
+.pay-opts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
+.pay-opt{border:1px solid rgba(255,255,255,.14);background:#0f0c0a;border-radius:12px;padding:11px 10px;cursor:pointer;text-align:left;color:#fff;transition:.2s}
+.pay-opt b{display:block;font-family:'Montserrat';font-size:14px}
+.pay-opt small{color:var(--muted);font-size:11px}
+.pay-opt .pv{color:var(--amber);font-weight:800;font-size:14px}
+.pay-opt.active{border-color:var(--amber);background:rgba(251,191,36,.1);box-shadow:0 0 0 1px var(--amber) inset}
+.pay-opt .badge{display:inline-block;font-size:9px;letter-spacing:.1em;text-transform:uppercase;background:#22c55e;color:#04120a;font-weight:800;padding:2px 7px;border-radius:99px;margin-bottom:4px}
+/* etapa Pix */
+.pix-box{text-align:center}
+.qr-wrap{width:210px;height:210px;margin:10px auto;background:#fff;border-radius:14px;padding:10px;display:grid;place-items:center;overflow:hidden}
+.qr-wrap img,.qr-wrap canvas,.qr-wrap table{max-width:100%}
+.qr-img{width:100%;height:100%;object-fit:contain;aspect-ratio:1/1;display:block}
+.pix-val{font-family:'Montserrat';font-weight:900;font-size:26px;color:#fff}
+.pix-val small{display:block;font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.08em}
+.pix-code{width:100%;background:#0f0c0a;border:1px solid rgba(255,255,255,.14);border-radius:11px;color:#cbbcae;
+  font-size:11px;padding:10px;margin-top:10px;word-break:break-all;max-height:74px;overflow:auto;text-align:left}
+.pix-warn{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.35);color:#f3d9a8;font-size:12px;border-radius:10px;padding:8px 10px;margin-top:10px}
+@media(max-width:560px){
+  .modal .m-grid{grid-template-columns:1fr}
+  .total-bar{flex-direction:column;align-items:stretch;text-align:center}
+  .total-bar .btn{width:100%;max-width:none}
+}
+
+@media(max-width:1024px){
+  .tv-zone{width:min(720px,86vw)}
+}
+@media(max-width:960px){
+  .section{padding:44px 0}
+  .grid.f8{grid-template-columns:repeat(2,1fr);gap:12px}
+  .grid.f6{grid-template-columns:repeat(2,1fr)}
+  .price-grid,.duo,.auto-box{grid-template-columns:1fr}
+  .program-list{grid-template-columns:1fr 1fr}
+  .fig{width:calc(33% - 8px);min-width:104px;padding:10px}
+  .card{padding:18px}
+}
+@media(max-width:768px){
+  .tv-zone{width:min(640px,92vw)}
+  .neon{font-size:10px;padding:7px 13px;letter-spacing:.16em}
+  .topbar{font-size:10px}
+}
+@media(max-width:560px){
+  .section{padding:28px 0}
+  .scene{padding:54px 0 26px}
+  .hero-sub{margin:8px auto 14px}
+  .neon-row{gap:6px;margin-bottom:12px}
+  .neon{white-space:nowrap}
+  .grid.f8{grid-template-columns:1fr 1fr;gap:8px}
+  .grid.f8 .card{padding:12px 10px}
+  .grid.f8 .card .ic{font-size:22px}
+  .grid.f8 .card h3{font-size:13px}
+  .grid.f8 .card p{display:none}
+  .grid.f6{grid-template-columns:1fr 1fr;gap:8px}
+  .feat{padding:12px;gap:8px}
+  .fic{flex-basis:34px;width:34px;height:34px;font-size:17px;border-radius:10px}
+  .feat h3{font-size:13px}
+  .feat p{font-size:12px}
+  /* TV empilhada e legível */
+  .tv-screen{aspect-ratio:auto;min-height:500px}
+  .ad{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .ad-copy{padding:46px 16px 12px;justify-content:flex-start}
+  .ad-copy .pill{margin-bottom:8px}
+  .ad-title{font-size:19px;line-height:1.2}
+  .ad-sub{font-size:12px}
+  .ad-cta{margin-top:10px}
+  .ad-cta .btn{padding:10px 14px;min-height:40px;font-size:11px;width:auto;max-width:none}
+  .ad-media{min-height:230px}
+  .logo-official.sm{height:48px}
+  .kanban{inset:10px 8px;gap:6px}
+  .kcol{padding:6px;border-radius:10px}
+  .kcol h4{font-size:8px}
+  .kcard{font-size:9px;padding:5px 6px}
+  .kcard b{font-size:9px}
+  .kcard span{font-size:8px}
+  .dash{inset:12px 8px;padding:10px}
+  .dstat{gap:6px}
+  .phone{width:38%;max-width:130px;right:6%}
+  .program-list{grid-template-columns:1fr}
+  .tv-frame{padding:6px;border-radius:14px}
+  .tv-bar{margin-top:10px}
+  .by-auto{font-size:12px;margin-top:8px}
+  .by-auto img{height:26px}
+  .price-grid{gap:10px}
+  .price-card{padding:18px 14px;border-radius:18px}
+  .price-card h3{padding-right:0}
+  .price-card .tag{position:static;display:inline-block;margin-bottom:8px}
+  .price{font-size:30px;margin:4px 0 2px}
+  .check{margin:12px 0;gap:7px;font-size:13px}
+  .check li::before{flex-basis:20px;height:20px;font-size:11px}
+  .notice{padding:10px 12px;font-size:12px;margin-top:10px}
+  .invest-box{padding:26px 18px}
+  .row{font-size:13px}
+  .duo{gap:10px}
+  .info-card{padding:18px 14px;border-radius:18px}
+  .auto-box{padding:20px 14px;gap:14px}
+  .shelf{gap:6px;margin-top:14px}
+  .fig{width:calc(50% - 4px);padding:10px 6px;border-radius:14px}
+  .fig .e{font-size:26px}
+  .fig b{font-size:10px;margin-top:4px}
+  .fig small{font-size:10px}
+  .fig:nth-child(5){width:100%}
+  .counter-floor{font-size:10px;letter-spacing:.12em;margin-top:10px}
+  .btn{width:100%;max-width:360px;min-height:46px;padding:13px 18px;font-size:13px;border-radius:12px;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+  .tv-cta .btn{width:auto;max-width:none;padding:12px 20px}
+  .cta-row{margin-top:14px;gap:8px}
+  .total-bar{flex-direction:column;align-items:stretch;text-align:center;padding:14px;gap:10px}
+  .total-bar .btn{width:100%;max-width:none}
+  .total-bar .t-left b{font-size:20px}
+  .mini-screen{min-height:0;padding:20px 14px}
+  .final-scene{padding:36px 0 20px}
+  /* modal como bottom-sheet */
+  .modal-ov{padding:0;align-items:flex-end}
+  .modal{width:100%;max-height:92vh;max-height:92dvh;border-radius:20px 20px 0 0;padding:18px 14px 22px;border-bottom:0}
+  .modal label{margin:8px 0 5px}
+  .modal input,.modal select,.modal textarea{padding:11px;font-size:16px}
+  .pay-opts{gap:6px}
+  .pay-opt{padding:10px 8px}
+  .qr-wrap{width:180px;height:180px}
+  .pix-val{font-size:23px}
+}
+@media(max-width:430px){
+  .scene{padding:50px 0 24px}
+  .wrap{width:min(1080px,94vw)}
+  .topbar{font-size:9px;padding:10px 12px;gap:8px}
+  .topbar span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .neon{font-size:9px;padding:6px 11px;letter-spacing:.12em}
+  .hero-kicker{font-size:10px}
+  .tv-zone{width:94vw}
+  .tv-screen{min-height:470px}
+  .tv-hud{font-size:8px;top:8px;left:10px;right:10px;letter-spacing:.12em}
+  .live,.tv-hud .ch{padding:5px 9px}
+  .ad-copy{padding:44px 14px 10px}
+  .tv-title{font-size:18px}
+  .tv-desc{font-size:12px}
+  .dots{gap:6px}
+  .dot{width:26px}
+  .hero-title{font-size:23px}
+  .price-card .check li{font-size:12.5px}
+  .duo .big{font-size:30px}
+}
+@media(max-width:360px){
+  .grid.f8{grid-template-columns:1fr 1fr}
+  .price{font-size:28px}
+  .total{font-size:42px}
+  .tv-screen{min-height:450px}
+  .ad-media{min-height:200px}
+  .fig .e{font-size:23px}
+}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+  .reveal{opacity:1;transform:none}
+}
+</style>
+</head>
+<body>
+
+<!-- HERO / CENA -->
+<header class="scene" id="inicio">
+  <div class="brick-offset"></div>
+  <canvas id="particles"></canvas>
+  <div class="topbar"><span>Automatiza Solução apresenta</span><span>Mídia indoor • ao vivo</span></div>
+
+  <div class="wrap" style="position:relative;z-index:2">
+    <div class="neon-row" aria-hidden="true">
+      <span class="neon">🍔 Burger House</span>
+      <span class="neon red">● No ar — Dellyvery</span>
+      <span class="neon">Delivery • Tech</span>
+    </div>
+    <p class="hero-kicker">Mídia indoor • proposta Dellyvery</p>
+    <h1 class="hero-title">Seu negócio <em>mais digital.</em></h1>
+    <p class="hero-sub">Cardápio, pedidos e gestão num só lugar.</p>
+
+    <!-- TV PROTAGONISTA / SLIDER -->
+    <div class="tv-zone" role="region" aria-label="TV apresentando o Dellyvery">
+      <div class="tv-glow"></div>
+      <div class="tv-mount" aria-hidden="true"></div>
+      <div class="tv-frame">
+        <div class="tv-screen" id="tvScreen">
+          <div class="tv-hud"><span class="live"><i></i>Dellyvery • indoor</span><span class="ch">CANAL 01 • 16:9</span></div>
+          <div class="slides" id="slides">
+            <!-- 01 Apresentação -->
+            <div class="ad active">
+              <div class="ad-copy">
+                <span class="pill">01 / 06 • Apresentação</span>
+                <img class="logo-official sm" src="logo-dellyvery.png" alt="Logo oficial Dellyvery" loading="eager">
+                <h2 class="ad-title" style="margin-top:10px">Mais organização para <span class="hl">seus pedidos.</span></h2>
+                <div class="ad-cta"><a class="btn btn-red" href="#funcoes">Ver funções</a></div>
+              </div>
+              <div class="ad-media">
+                <img src="https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=800&q=80" alt="Hambúrguer artesanal" loading="eager">
+                <div class="dash" style="inset:auto 8% 10% 8%;padding:9px">
+                  <h4>Pedidos hoje • demonstração</h4>
+                  <div class="dstat"><div><b>32</b><span>pedidos</span></div><div><b>R$ 41</b><span>ticket</span></div><div><b>4.9★</b><span>avaliação</span></div></div>
+                </div>
+              </div>
+            </div>
+            <!-- 02 Cardápio digital -->
+            <div class="ad">
+              <div class="ad-copy">
+                <span class="pill">02 / 06 • Cardápio</span>
+                <h2 class="ad-title">Seu cardápio <span class="hl">online.</span></h2>
+                <p class="ad-sub">Lanches, nomes e preços — valores ilustrativos de demonstração.</p>
+              </div>
+              <div class="ad-media">
+                <img src="https://images.unsplash.com/photo-1550547660-d9450f859349?auto=format&fit=crop&w=800&q=80" alt="Hambúrgueres artesanais" loading="lazy">
+                <div class="phone" aria-hidden="true">
+                  <div class="notch"></div>
+                  <div class="pline"><img class="pthumb" src="https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=100&q=60" alt=""><div><div class="pt1"></div><div class="pt2">.</div></div><span class="pprice">R$ 32</span></div>
+                  <div class="pline"><img class="pthumb" src="https://images.unsplash.com/photo-1550547660-d9450f859349?auto=format&fit=crop&w=100&q=60" alt=""><div><div class="pt1"></div><div class="pt2">.</div></div><span class="pprice">R$ 28</span></div>
+                  <div class="pline"><img class="pthumb" src="https://images.unsplash.com/photo-1571091718767-18b5b1457add?auto=format&fit=crop&w=100&q=60" alt=""><div><div class="pt1"></div><div class="pt2">.</div></div><span class="pprice">R$ 35</span></div>
+                </div>
+                <span class="demo-tag">Demonstração conceitual</span>
+              </div>
+            </div>
+            <!-- 03 Pedidos -->
+            <div class="ad">
+              <div class="ad-copy">
+                <span class="pill">03 / 06 • Pedidos</span>
+                <h2 class="ad-title">Pedidos organizados <span class="hl">num só lugar.</span></h2>
+                <p class="ad-sub">Interface demonstrativa — dados fictícios.</p>
+              </div>
+              <div class="ad-media" style="background:linear-gradient(135deg,#171014,#0c0806)">
+                <div class="kanban" aria-hidden="true">
+                  <div class="kcol"><h4 class="c1"><span class="kdot" style="background:#4ade80"></span>Recebido</h4><div class="kcard"><b>#1042 • Mesa 7</b><span>2x Smash • 1x Suco</span></div><div class="kcard"><b>#1043 • Delivery</b><span>1x Duplo • Fritas</span></div></div>
+                  <div class="kcol"><h4 class="c2"><span class="kdot" style="background:var(--amber)"></span>Preparo</h4><div class="kcard"><b>#1039 • Mesa 3</b><span>1x Bacon • Refris</span></div><div class="kcard"><b>#1040 • Balcão</b><span>2x Clássico</span></div></div>
+                  <div class="kcol"><h4 class="c3"><span class="kdot" style="background:#7dd3fc"></span>Concluído</h4><div class="kcard"><b>#1036 • Delivery</b><span>Entregue ✓</span></div><div class="kcard"><b>#1037 • Mesa 5</b><span>Finalizado ✓</span></div></div>
+                </div>
+                <span class="demo-tag">Demonstração conceitual</span>
+              </div>
+            </div>
+            <!-- 04 Gestão -->
+            <div class="ad">
+              <div class="ad-copy">
+                <span class="pill">04 / 06 • Gestão</span>
+                <h2 class="ad-title">Mais controle para <span class="hl">sua operação.</span></h2>
+                <p class="ad-sub">Produtos, categorias e pedidos — painel demonstrativo.</p>
+              </div>
+              <div class="ad-media" style="background:linear-gradient(135deg,#141318,#0c0a09)">
+                <div class="dash" aria-hidden="true">
+                  <h4>Painel • demonstração</h4>
+                  <div class="dstat"><div><b>48</b><span>produtos</span></div><div><b>6</b><span>categorias</span></div><div><b>32</b><span>pedidos</span></div></div>
+                  <div style="font-size:10px;color:#c9c2b8">Smash da casa<div class="dbar"><i style="width:82%"></i></div></div>
+                  <div style="font-size:10px;color:#c9c2b8;margin-top:6px">Duplo bacon<div class="dbar"><i style="width:64%"></i></div></div>
+                </div>
+                <span class="demo-tag">Demonstração conceitual</span>
+              </div>
+            </div>
+            <!-- 05 Experiência do cliente -->
+            <div class="ad">
+              <div class="ad-copy">
+                <span class="pill">05 / 06 • Cliente</span>
+                <h2 class="ad-title">Seu cliente pede. <span class="hl">Você organiza.</span></h2>
+                <p class="ad-sub">Do celular ao balcão, tudo conectado.</p>
+              </div>
+              <div class="ad-media">
+                <img src="https://images.unsplash.com/photo-1571091718767-18b5b1457add?auto=format&fit=crop&w=800&q=80" alt="Hambúrguer com batata frita e bebida" loading="lazy">
+                <div class="phone" aria-hidden="true">
+                  <div class="notch"></div>
+                  <div class="pline"><img class="pthumb" src="https://images.unsplash.com/photo-1571091718767-18b5b1457add?auto=format&fit=crop&w=100&q=60" alt=""><div><div class="pt1"></div><div class="pt2">.</div></div><span class="pprice">Pedir</span></div>
+                  <div class="pline"><div><div class="pt1"></div><div class="pt2">.</div></div><span class="pprice">R$ 41</span></div>
+                </div>
+              </div>
+            </div>
+            <!-- 06 Oferta -->
+            <div class="ad">
+              <div class="ad-copy" style="align-items:flex-start">
+                <span class="pill">06 / 06 • Oferta</span>
+                <img class="logo-official sm" src="logo-dellyvery.png" alt="Logo oficial Dellyvery" loading="lazy">
+                <p class="brand-tag">Soluções digitais para pedidos e gestão</p>
+                <h2 class="ad-title" style="margin-top:8px">Conheça o <span class="hl">plano anual.</span></h2>
+                <div class="ad-cta"><a class="btn btn-amber" href="#proposta">Ver proposta</a></div>
+              </div>
+              <div class="ad-media">
+                <img src="https://images.unsplash.com/photo-1550547660-d9450f859349?auto=format&fit=crop&w=800&q=80" alt="Hambúrguer artesanal em tábua de madeira" loading="lazy">
+              </div>
+            </div>
+          </div>
+          <div class="tv-scan"></div>
+        </div>
+      </div>
+      <div class="tv-bar">
+        <div class="dots" id="dots" role="tablist" aria-label="Trocar anúncio"></div>
+        <div class="tv-progress"><span id="barFill"></span></div>
+      </div>
+      <div class="by-auto"><span>Uma solução da</span><img src="https://automatizasolucao.com.br/assets/logo-full-DIcwvWUv.png" alt="Logo oficial da Automatiza Solução" loading="eager"></div>
+    </div>
+
+    <!-- funções do sistema — logo após a TV -->
+    <div id="funcoes" class="shelf" aria-label="Funções do sistema Dellyvery" style="scroll-margin-top:20px">
+      <div class="fig"><div class="e">📱</div><b>Cardápio Digital</b><small>visual, no celular</small></div>
+      <div class="fig"><div class="e">🧾</div><b>Pedidos Online</b><small>kanban em tempo real</small></div>
+      <div class="fig"><div class="e">📊</div><b>Gestão Completa</b><small>produtos e vendas</small></div>
+      <div class="fig"><div class="e">⚡</div><b>Balcão + Delivery</b><small>fluxo rápido</small></div>
+      <div class="fig"><div class="e">💬</div><b>Suporte + Updates</b><small>12 meses inclusos</small></div>
+    </div>
+    <p class="counter-floor">Cardápio, pedidos e gestão — num só lugar</p>
+    <div class="cta-row"><a class="btn btn-amber" href="#proposta">Ver planos</a></div>
+  </div>
+</header>
+
+<!-- PROPOSTA (pedido único) -->
+<section class="section proposta" id="proposta">
+  <div class="wrap">
+    <p class="eyebrow reveal">Proposta comercial</p>
+    <h2 class="h2 reveal">Pedido completo — 1º ano</h2>
+    <p class="lead reveal">Ativação + 12 meses. Pedido único, sem vender só a ativação.</p>
+    <div class="price-grid" style="grid-template-columns:1fr;max-width:560px;margin:0 auto">
+      <div class="price-card featured reveal">
+        <span class="tag">Pedido único</span>
+        <h3 style="padding-right:0">Dellyvery completo</h3>
+        <div class="price">R$ 2.467 <small>1º ano</small></div>
+        <p class="pdesc">R$ 497 ativação + R$ 1.970 anual. Pix com 5% off: <b style="color:var(--amber)">R$ 2.343,65</b>.</p>
+        <ul class="check">
+          <li>Cardápio digital + pedidos online</li>
+          <li>Produtos, clientes e painel</li>
+          <li>Ativação + orientação + suporte 12m</li>
+        </ul>
+        <div class="cta-row" style="justify-content:stretch;flex-direction:column">
+          <button class="btn btn-amber" data-open-modal data-pay="pix" style="width:100%;max-width:none">Escolher este plano</button>
+        </div>
+      </div>
+    </div>
+    <div class="total-bar reveal">
+      <div class="t-left">Entrega em até 15 dias<b>R$ 2.467 <span style="font-size:13px;font-weight:600">• Pix R$ 2.343,65</span></b></div>
+      <button class="btn btn-amber" data-open-modal data-pay="pix">Contratar agora</button>
+    </div>
+    <div class="notice">Cadastro de produtos, preços e fotos fica com você — com orientação incluída.</div>
+  </div>
+</section>
+
+<!-- PRAZO + RESPONSABILIDADE -->
+<section class="section" id="prazo">
+  <div class="wrap duo">
+    <div class="info-card gold reveal">
+      <p class="eyebrow" style="text-align:left">Entrega</p>
+      <div class="big">Até 15 dias</div>
+      <p style="color:#e6d3b3;margin-top:10px;font-size:14px">Disponibilização em até 15 dias após a confirmação da contratação e o recebimento das informações necessárias.</p>
+    </div>
+    <div class="info-card reveal">
+      <p class="eyebrow" style="text-align:left">Sua autonomia</p>
+      <h3 style="font-size:20px;margin:6px 0 8px">Você no controle do cardápio</h3>
+      <p style="color:var(--muted);font-size:14px">Cadastro e manutenção de produtos, preços, imagens e categorias pela cliente, com orientação incluída.</p>
+    </div>
+  </div>
+</section>
+
+<!-- AUTOMATIZA -->
+<section class="section auto" id="automatiza">
+  <div class="wrap">
+    <div class="auto-box reveal">
+      <div>
+        <p class="eyebrow" style="text-align:left">Uma solução da</p>
+        <img class="logo-auto" src="https://automatizasolucao.com.br/assets/logo-full-DIcwvWUv.png" alt="Logo oficial da Automatiza Solução">
+        <h2 class="h2" style="text-align:left;margin-left:0">Tecnologia para transformar negócios.</h2>
+        <p style="color:var(--muted);font-size:14px">O Dellyvery é uma solução da Automatiza Solução para digitalizar e simplificar a gestão de negócios.</p>
+        <div class="cta-row" style="justify-content:flex-start;margin-top:20px">
+          <a class="btn btn-ghost" href="https://automatizasolucao.com.br/" target="_blank" rel="noopener">Conhecer a Automatiza Solução</a>
+        </div>
+      </div>
+      <div class="card" style="text-align:center">
+        <div style="font-size:52px">📺</div>
+        <h3>Mídia indoor + SaaS</h3>
+        <p>Da TV da hamburgueria ao celular do cliente: a mesma tecnologia apresentando e vendendo por você.</p>
+        <p style="margin-top:12px;font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--amber)">Atibaia — SP • (11) 93231-4551</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA FINAL -->
+<section class="final-scene" id="contato">
+  <div class="wrap" style="text-align:center">
+    <p class="eyebrow reveal">Pronto para começar?</p>
+    <div class="mini-tv reveal" style="margin-top:18px">
+      <div class="mini-screen">
+        <img class="logo-official sm" src="logo-dellyvery.png" alt="Logo oficial Dellyvery" loading="lazy">
+        <h2 class="h2" style="margin-top:10px">Ative seu Dellyvery em até 15 dias</h2>
+        <p style="color:#d8c9bb">Pix: <strong style="color:var(--amber)">R$ 2.343,65</strong> • Cartão: <strong>R$ 2.467</strong></p>
+        <div class="cta-row">
+          <button class="btn btn-red" data-open-modal data-pay="pix">Contratar agora</button>
+        </div>
+      </div>
+    </div>
+    <p style="margin-top:16px;color:var(--muted2);font-size:13px">Demonstração: <a href="https://dellyvery.localapp.online/home/" target="_blank" rel="noopener" style="color:var(--amber)">dellyvery.localapp.online</a></p>
+  </div>
+</section>
+
+<!-- MODAL PAGAMENTO -->
+<div class="modal-ov" id="payModal" aria-hidden="true" role="dialog" aria-label="Contratar Dellyvery">
+  <div class="modal">
+    <button class="m-close" id="modalClose" aria-label="Fechar">✕</button>
+    <div id="modalFormWrap">
+      <p class="eyebrow" style="text-align:left">Checkout rápido</p>
+      <h3>Pedido completo 🚀</h3>
+      <p class="m-sub">R$ 497,00 ativação + R$ 1.970,00 anual = <b style="color:#fff">R$ 2.467,00</b>. No Pix: <b style="color:var(--amber)">R$ 2.343,65</b>.</p>
+      <div class="m-plan"><span>Dellyvery — 1º ano</span><b id="mPlanPrice">R$ 2.343,65 no Pix</b></div>
+      <form id="payForm" novalidate>
+        <label>Pagamento *</label>
+        <div class="pay-opts">
+          <button type="button" class="pay-opt active" data-paybtn="pix"><span class="badge">-5%</span><b>Pix</b><span class="pv">R$ 2.343,65</span><br><small>QR oficial</small></button>
+          <button type="button" class="pay-opt" data-paybtn="cartao"><b>Cartão</b><span class="pv">R$ 2.467,00</span><br><small>via Asaas</small></button>
+        </div>
+        <label for="fName">Seu nome *</label>
+        <input id="fName" name="nome" type="text" placeholder="Ex: Joyce" autocomplete="name" required>
+        <div class="m-grid">
+          <div><label for="fZap">WhatsApp *</label><input id="fZap" name="zap" type="tel" placeholder="(11) 99999-9999" autocomplete="tel" required></div>
+          <div><label for="fEmail">E-mail</label><input id="fEmail" name="email" type="email" placeholder="voce@loja.com" autocomplete="email"></div>
+        </div>
+        <label for="fBiz">Nome do negócio *</label>
+        <input id="fBiz" name="negocio" type="text" placeholder="Ex: Burger House" required>
+        <div class="m-err" id="mErr">Preencha nome, WhatsApp e negócio.</div>
+        <div class="cta-row" style="margin-top:14px"><button type="submit" class="btn btn-amber" id="paySubmit" style="width:100%;max-width:none">Continuar — Pagar com Pix</button></div>
+        <p style="font-size:12px;color:var(--muted2);text-align:center;margin-top:8px">Pix exibe o QR oficial. Cartão abre o checkout Asaas.</p>
+      </form>
+    </div>
+    <div class="pix-box" id="pixView" style="display:none">
+      <p class="eyebrow" style="text-align:left">Pagamento Pix</p>
+      <h3>Escaneie e pague 📱</h3>
+      <p class="m-sub" id="pixSub">Dellyvery completo — Joyce</p>
+      <div class="pix-val">R$ 2.343,65<small>Pix com 5% de desconto</small></div>
+      <div class="qr-wrap" id="qrBox"><img class="qr-img" src="qr-pix-dellyvery.jpg" alt="QR Code Pix oficial Dellyvery — R$ 2.343,65" loading="lazy" onerror="this.style.display='none'"></div>
+      <p style="font-size:12px;color:var(--amber);font-weight:700;margin-top:8px">Confira o valor antes de confirmar o pagamento.</p>
+      <!-- Código Pix copia e cola: exibir somente com o código real. Não inventar. -->
+      <div id="pixCopyWrap" style="display:none">
+        <label style="text-align:left">Pix copia e cola</label>
+        <div class="pix-code" id="pixCode"></div>
+        <div class="cta-row" style="flex-direction:column;align-items:stretch">
+          <button class="btn btn-amber" id="copyPixBtn" style="width:100%;max-width:none">Copiar código Pix</button>
+        </div>
+      </div>
+      <div class="cta-row" style="flex-direction:column;align-items:stretch">
+        <a class="btn btn-amber" id="recargaPayBtn" href="https://recargapay.com.br/pagar/vWxZjGQ" target="_blank" rel="noopener" style="width:100%;max-width:none">Pagar pelo RecargaPay</a>
+        <a class="btn btn-ghost" id="pixZapBtn" href="#" target="_blank" rel="noopener" style="width:100%;max-width:none">Solicitar ajuda pelo WhatsApp</a>
+        <a class="btn btn-outline-w" id="pixPaidBtn" href="#" target="_blank" rel="noopener" style="width:100%;max-width:none">Já paguei — enviar comprovante</a>
+        <button class="btn btn-outline-w" id="pixBack" style="width:100%;max-width:none">Voltar</button>
+      </div>
+      <p class="m-sub" style="margin-top:10px">A liberação ocorre após verificarmos o recebimento.</p>
+    </div>
+    <div class="m-ok" id="modalOk">
+      <div class="big-ok">✅</div>
+      <h3>Pedido gerado!</h3>
+      <p class="m-sub" id="okText">Finalize o pagamento. A liberação ocorre após verificarmos o recebimento.</p>
+      <div class="cta-row" style="flex-direction:column;align-items:stretch">
+        <a class="btn btn-amber" id="okPayBtn" href="#" target="_blank" rel="noopener" style="width:100%;max-width:none">Abrir pagamento</a>
+        <a class="btn btn-ghost" id="okZapBtn" href="#" target="_blank" rel="noopener" style="width:100%;max-width:none">Enviar comprovante no WhatsApp</a>
+        <button class="btn btn-outline-w" id="modalBack" style="width:100%;max-width:none">Voltar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer class="footer-light">
+  <div class="wrap">
+    <img src="logo-automatiza-claro.svg" alt="Logo oficial da Automatiza Solução" loading="lazy">
+    <p class="fi">Dellyvery — Soluções digitais para pedidos e gestão.</p>
+    <p class="fi2">Uma solução da Automatiza Solução • <a href="https://automatizasolucao.com.br/" target="_blank" rel="noopener">automatizasolucao.com.br</a></p>
+  </div>
+</footer>
+<div class="legal">© 2026 Automatiza Solução • Completo: R$ 2.467 no cartão • R$ 2.343,65 no Pix (-5%)</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+// Slider TV 6 anúncios / 4s
+(function(){
+  var slides = Array.prototype.slice.call(document.querySelectorAll('#slides .ad'));
+  var dotsBox = document.getElementById('dots');
+  var bar = document.getElementById('barFill');
+  var i = 0, timer = null, DURATION = 4000;
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  slides.forEach(function(_,idx){
+    var d=document.createElement('button');
+    d.className='dot'+(idx===0?' active':'');
+    d.setAttribute('aria-label','Ir para anúncio '+(idx+1));
+    d.addEventListener('click',function(){go(idx);restart();});
+    dotsBox.appendChild(d);
+  });
+  var dots = Array.prototype.slice.call(dotsBox.children);
+
+  function go(n){
+    i=(n+slides.length)%slides.length;
+    slides.forEach(function(s,k){s.classList.toggle('active',k===i);});
+    dots.forEach(function(d,k){
+      d.classList.remove('active'); void d.offsetWidth;
+      if(k===i)d.classList.add('active');
+    });
+    if(bar){bar.style.transition='none';bar.style.width='0%';void bar.offsetWidth;
+      if(!reduced){bar.style.transition='width '+DURATION+'ms linear';bar.style.width='100%';}
+      else bar.style.width='100%';
+    }
+  }
+  function restart(){clearInterval(timer); if(!reduced) timer=setInterval(function(){go(i+1);},DURATION);}
+  go(0); restart();
+  // swipe no celular + pausa ao tocar
+  try{
+    var scr=document.getElementById('tvScreen'), sx=0, dx=0, touching=false;
+    scr.addEventListener('touchstart',function(e){touching=true;sx=e.touches[0].clientX;dx=0;clearInterval(timer);},{passive:true});
+    scr.addEventListener('touchmove',function(e){if(touching)dx=e.touches[0].clientX-sx;},{passive:true});
+    scr.addEventListener('touchend',function(){touching=false;if(Math.abs(dx)>40)go(i+(dx<0?1:-1));restart();});
+  }catch(e){}
+})();
+
+// Config pagamento — QR Pix oficial (imagem original, sem gerar QR novo):
+// Arquivo: qr-pix-dellyvery.jpg (salvar o JPEG oficial nesta pasta).
+// Código Pix copia e cola real: preencher somente com o código oficial.
+// Enquanto vazio, o botão "Copiar código Pix" fica oculto e nada é inventado.
+var PIX_COPIA_E_COLA = "00020126580014br.gov.bcb.pix01366c30fbe0-c714-41ac-95c3-702773ac946a52040000530398654072343.655802BR592554.876.082 SAMUEL LEITE C6007Atibaia6211050726f78796304B4BC";
+var RECARGAPAY_PIX_URL = "https://recargapay.com.br/pagar/vWxZjGQ";
+var ASAAS_CARD_URL = "COLE_AQUI_LINK_ASAAS_CARTAO";
+(function(){
+  var ov=document.getElementById('payModal');
+  var closeBtn=document.getElementById('modalClose');
+  var form=document.getElementById('payForm');
+  var err=document.getElementById('mErr');
+  var ok=document.getElementById('modalOk');
+  var formWrap=document.getElementById('modalFormWrap');
+  var pixView=document.getElementById('pixView');
+  var back=document.getElementById('modalBack');
+  var pixBack=document.getElementById('pixBack');
+  var priceEl=document.getElementById('mPlanPrice');
+  var submitBtn=document.getElementById('paySubmit');
+  var okPay=document.getElementById('okPayBtn');
+  var okZap=document.getElementById('okZapBtn');
+  var okText=document.getElementById('okText');
+  var pixSub=document.getElementById('pixSub');
+  var pixZapBtn=document.getElementById('pixZapBtn');
+  var pixPaidBtn=document.getElementById('pixPaidBtn');
+  var pixCopyWrap=document.getElementById('pixCopyWrap');
+  var pixCodeEl=document.getElementById('pixCode');
+  var copyBtn=document.getElementById('copyPixBtn');
+  var qrBox=document.getElementById('qrBox');
+  var payBtns=Array.prototype.slice.call(document.querySelectorAll('[data-paybtn]'));
+  var pay='pix', lastRequestUrl='', lastPaidUrl='';
+  var PRICES={pix:'R$ 2.343,65',cartao:'R$ 2.467,00'};
+  function hasRealCopy(){return PIX_COPIA_E_COLA && PIX_COPIA_E_COLA.indexOf('COLE_AQUI')!==0 && PIX_COPIA_E_COLA.length>20;}
+  // Desenha o QR a partir do código oficial informado (mesmo payload, nada inventado).
+  // Se qr-pix-dellyvery.jpg existir, ele fica como fundo até a lib desenhar por cima.
+  function renderOfficialQR(){
+    if(!hasRealCopy()||!qrBox)return;
+    try{
+      if(typeof QRCode!=='undefined'){qrBox.innerHTML='';new QRCode(qrBox,{text:PIX_COPIA_E_COLA,width:190,height:190,correctLevel:QRCode.CorrectLevel.M});return;}
+    }catch(e){}
+    try{
+      if(!qrBox.querySelector('img.qr-fallback')){var img=document.createElement('img');img.className='qr-img qr-fallback';img.alt='QR Code Pix oficial Dellyvery — R$ 2.343,65';img.style.width='190px';img.src='https://api.qrserver.com/v1/create-qr-code/?size=190x190&data='+encodeURIComponent(PIX_COPIA_E_COLA);qrBox.appendChild(img);}
+    }catch(e){}
+  }
+  function setPay(v){
+    pay=(v==='cartao')?'cartao':'pix';
+    payBtns.forEach(function(b){b.classList.toggle('active',b.getAttribute('data-paybtn')===pay);});
+    priceEl.textContent = pay==='pix' ? 'R$ 2.343,65 no Pix' : 'R$ 2.467,00 no Cartão';
+    submitBtn.textContent = pay==='pix' ? 'Continuar — Pagar com Pix' : 'Continuar — Pagar com Cartão';
+  }
+  payBtns.forEach(function(b){b.addEventListener('click',function(){setPay(b.getAttribute('data-paybtn'));});});
+  function open(v){setPay(v||'pix');ok.style.display='none';pixView.style.display='none';formWrap.style.display='block';ov.classList.add('open');ov.setAttribute('aria-hidden','false');document.body.style.overflow='hidden';}
+  function hide(){ov.classList.remove('open');ov.setAttribute('aria-hidden','true');document.body.style.overflow='';}
+  document.querySelectorAll('[data-open-modal]').forEach(function(b){b.addEventListener('click',function(){open(b.getAttribute('data-pay'));});});
+  closeBtn.addEventListener('click',hide);
+  back.addEventListener('click',hide);
+  pixBack.addEventListener('click',function(){pixView.style.display='none';formWrap.style.display='block';});
+  ov.addEventListener('click',function(e){if(e.target===ov)hide();});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});
+  if(copyBtn)copyBtn.addEventListener('click',function(){
+    var code=PIX_COPIA_E_COLA;
+    function done(){copyBtn.textContent='Copiado! ✅';setTimeout(function(){copyBtn.textContent='Copiar código Pix';},1800);}
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(code).then(done).catch(done);}else{var t=document.createElement('textarea');t.value=code;document.body.appendChild(t);t.select();try{document.execCommand('copy');}catch(e){}document.body.removeChild(t);done();}
+  });
+  form.addEventListener('submit',function(e){
+    e.preventDefault();
+    var nome=document.getElementById('fName').value.trim();
+    var zap=document.getElementById('fZap').value.trim();
+    var biz=document.getElementById('fBiz').value.trim();
+    var email=document.getElementById('fEmail').value.trim();
+    if(!nome||!zap||!biz){err.style.display='block';return;}
+    err.style.display='none';
+    var helpMsg='Olá! Sou '+encodeURIComponent(nome)+' ('+encodeURIComponent(biz)+')%0A'+
+      'Quero o Dellyvery Completo no Pix '+encodeURIComponent('(R$ 2.343,65)')+'%0A'+
+      'Preciso de ajuda com o pagamento.%0A'+
+      'Meu WhatsApp: '+encodeURIComponent(zap);
+    var paidMsg='Olá! Sou '+encodeURIComponent(nome)+' ('+encodeURIComponent(biz)+')%0A'+
+      'Paguei o Dellyvery Completo '+encodeURIComponent('(R$ 2.343,65 no Pix)')+'%0A'+
+      'Segue o comprovante para verificação:';
+    lastRequestUrl='https://wa.me/5511932314551?text='+helpMsg;
+    lastPaidUrl='https://wa.me/5511932314551?text='+paidMsg;
+    if(pay==='cartao'){
+      var hasCard=ASAAS_CARD_URL&&ASAAS_CARD_URL.indexOf('COLE_AQUI')!==0&&ASAAS_CARD_URL.indexOf('http')===0;
+      var cardMsg='Olá! Sou '+encodeURIComponent(nome)+' ('+encodeURIComponent(biz)+')%0AQuero o Dellyvery no Cartão '+encodeURIComponent('(R$ 2.467,00)');
+      var cardZap='https://wa.me/5511932314551?text='+cardMsg;
+      if(hasCard){window.open(ASAAS_CARD_URL,'_blank');okText.textContent='Abrimos o checkout do cartão. Finalize lá e envie o comprovante — a liberação ocorre após verificarmos o recebimento.';okPay.href=ASAAS_CARD_URL;okPay.style.display='';}
+      else{okText.textContent='Link do cartão ainda não configurado — chame no WhatsApp para concluir.';okPay.style.display='none';}
+      okZap.href=cardZap;
+      formWrap.style.display='none';pixView.style.display='none';ok.style.display='block';
+      return;
+    }
+    // Pix: QR oficial + RecargaPay. QR desenhado do código oficial acima.
+    pixSub.textContent='Dellyvery completo — '+nome+' ('+biz+')';
+    if(hasRealCopy()){pixCopyWrap.style.display='block';pixCodeEl.textContent=PIX_COPIA_E_COLA;renderOfficialQR();}
+    else{pixCopyWrap.style.display='none';}
+    pixZapBtn.href=lastRequestUrl;
+    pixPaidBtn.href=lastPaidUrl;
+    formWrap.style.display='none';ok.style.display='none';pixView.style.display='block';
+  });
+  pixZapBtn.addEventListener('click',function(){okText.textContent='Você pediu ajuda. Conclua no QR ou no RecargaPay e envie o comprovante — a liberação ocorre após verificarmos o recebimento.';okPay.style.display='none';okZap.href=lastPaidUrl;});
+  pixPaidBtn.addEventListener('click',function(){formWrap.style.display='none';pixView.style.display='none';okText.textContent='Comprovante a caminho. A liberação ocorre após verificarmos o recebimento.';okPay.style.display='none';okZap.href=lastPaidUrl;ok.style.display='block';});
+})();
+
+// Reveal on scroll
+(function(){
+  var els=document.querySelectorAll('.reveal');
+  if(!('IntersectionObserver' in window)){els.forEach(function(e){e.classList.add('on');});return;}
+  var o=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('on');o.unobserve(e.target);}});},{threshold:.12});
+  els.forEach(function(e){o.observe(e);});
+})();
+
+// Parallax sutil no hero
+(function(){
+  var scene=document.querySelector('.scene');
+  var reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduced||!scene)return;
+  var ticking=false;
+  window.addEventListener('scroll',function(){
+    if(ticking)return; ticking=true;
+    requestAnimationFrame(function(){
+      var y=window.scrollY;
+      if(y<window.innerHeight) scene.style.backgroundPosition='50% '+(y*0.08)+'px';
+      ticking=false;
+    });
+  },{passive:true});
+})();
+
+// Partículas / luzes
+(function(){
+  var c=document.getElementById('particles'); if(!c)return;
+  if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){c.remove();return;}
+  var x=c.getContext('2d'),P=[],W,H;
+  function rs(){W=c.width=c.offsetWidth;H=c.height=c.offsetHeight;}
+  rs(); window.addEventListener('resize',rs);
+  for(var k=0;k<36;k++)P.push({x:Math.random(),y:Math.random(),r:Math.random()*2.2+.6,s:Math.random()*.0009+.0002,o:Math.random()*.5+.15});
+  (function loop(){
+    x.clearRect(0,0,W,H);
+    P.forEach(function(p){
+      p.y-=p.s; if(p.y<0)p.y=1;
+      x.beginPath();x.arc(p.x*W,p.y*H,p.r,0,7);
+      x.fillStyle='rgba(251,191,36,'+p.o+')';x.fill();
+    });
+    requestAnimationFrame(loop);
+  })();
+})();
+</script>
+</body>
+</html>

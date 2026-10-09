@@ -318,6 +318,43 @@ describe('orderStages — escrita via adapter (RLS no banco)', () => {
     assert.equal((await setStageActive(empty, 'c1', 'st-em_preparo', false)).active, false);
   });
 
+  it('setStageActive: terminal com histórico desativa; operacional com pedido trava', async () => {
+    // A. Cancelado/Finalizado com pedidos históricos → PODE desativar (sem irmã)
+    const hist = createStagesMock({ ordersInStatus: { cancelado: true, finalizado: true } });
+    assert.equal((await setStageActive(hist, 'c1', 'st-cancelado', false)).active, false);
+    assert.equal((await setStageActive(hist, 'c1', 'st-finalizado', false)).active, false);
+
+    // B. Etapa operacional com pedido ativo e sem irmã → CONTINUA bloqueada
+    const blocked = createStagesMock({ ordersInStatus: { em_preparo: true } });
+    await assert.rejects(() => setStageActive(blocked, 'c1', 'st-em_preparo', false), /outra etapa visível/);
+
+    // C. Desativar não escreve em orders (só na tabela de stages)
+    assert.ok(hist.calls.update.length > 0);
+    assert.ok(hist.calls.update.every((u) => u.table === 'restaurant_order_stages'));
+    assert.equal(hist.calls.delete.length, 0);
+    assert.equal(hist.calls.insert.length, 0);
+
+    // D. Reativar restaura a coluna natural do status
+    const back = await setStageActive(hist, 'c1', 'st-cancelado', true);
+    assert.equal(back.active, true);
+    const reloaded = await listStages(hist, 'c1');
+    assert.equal(stageForStatus(reloaded, 'cancelado').key, 'cancelado');
+  });
+
+  it('E. financeiro conta finalizados/cancelados independente das stages', async () => {
+    const { summarizeOrders } = await import('../lib/finance.js');
+    const s = summarizeOrders([
+      { status: 'finalizado', total: 100, order_type: 'delivery', payment_method: 'Pix' },
+      { status: 'cancelado', total: 50, order_type: 'mesa' },
+      { status: 'novo', total: 30, order_type: 'delivery' },
+    ]);
+    assert.equal(s.revenue, 100);
+    assert.equal(s.paidCount, 1);
+    assert.equal(s.canceledCount, 1);
+    assert.equal(s.byStatus.finalizado.count, 1);
+    assert.equal(s.byStatus.cancelado.count, 1);
+  });
+
   it('reorderStages: divergência trava; válido regrava posições', async () => {
     const client = createStagesMock();
     const ids = seedRows().map((r) => r.id);

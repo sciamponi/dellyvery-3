@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
-import { listPlans, createPlan, updatePlan, deletePlan, isPlatformAdmin } from '@/api/plans';
+import { listPlans, createPlan, updatePlan, deletePlan, isPlatformAdmin, validatePlanData } from '@/api/plans';
 import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
@@ -65,23 +65,25 @@ export default function MasterPlanos() {
 
   const openNew = () => {
     setEditPlan(null);
-    setForm({ name: '', price: 0, billing_cycle: 'monthly', limits_users: 1, limits_orders: -1, limits_products: -1, limits_customers: -1, limits_whatsapp: 0, limits_ia: false, limits_storage_mb: 100, is_popular: false, sort_order: 0, active: true, featuresText: '' });
+    setForm({ name: '', price: 0, billing_cycle: 'monthly', limits_users: 1, limits_orders: -1, limits_products: -1, limits_customers: -1, limits_whatsapp: 0, limits_ia: false, limits_storage_mb: 100, is_popular: false, sort_order: 0, active: true, featuresText: '', description: '', annual_price: '', setup_fee: 0, trial_days: 7, sales_text: '', benefitsText: '' });
     setDialog(true);
   };
 
   const openEdit = (p) => {
     setEditPlan(p);
-    setForm({ ...p, featuresText: (p.features || []).join('\n') });
+    setForm({ ...p, featuresText: (p.features || []).join('\n'), benefitsText: (p.benefits || []).join('\n') });
     setDialog(true);
   };
 
   const handleSave = async () => {
-    if (!form.name?.trim()) { toast({ title: 'Nome é obrigatório', variant: 'destructive' }); return; }
+    const validationError = validatePlanData({ ...form, features: [], benefits: [] });
+    if (validationError) { toast({ title: validationError, variant: 'destructive' }); return; }
     setSaving(true);
     try {
       const features = (form.featuresText || '').split('\n').map(f => f.trim()).filter(Boolean);
-      const payload = { ...form, features, price: Number(form.price) || 0, limits_users: Number(form.limits_users) || 1, limits_orders: Number(form.limits_orders) ?? -1, limits_products: Number(form.limits_products) ?? -1, limits_customers: Number(form.limits_customers) ?? -1, limits_whatsapp: Number(form.limits_whatsapp) || 0, limits_storage_mb: Number(form.limits_storage_mb) || 100, sort_order: Number(form.sort_order) || 0 };
-      delete payload.featuresText; delete payload.id; delete payload.created_date; delete payload.updated_date; delete payload.created_by_id;
+      const benefits = (form.benefitsText || '').split('\n').map(f => f.trim()).filter(Boolean);
+      const payload = { ...form, features, benefits, price: Number(form.price) || 0, annual_price: form.annual_price === '' || form.annual_price == null ? null : Number(form.annual_price), setup_fee: Number(form.setup_fee) || 0, trial_days: Math.max(0, Math.floor(Number(form.trial_days) || 0)), limits_users: Number(form.limits_users) || 1, limits_orders: Number(form.limits_orders) ?? -1, limits_products: Number(form.limits_products) ?? -1, limits_customers: Number(form.limits_customers) ?? -1, limits_whatsapp: Number(form.limits_whatsapp) || 0, limits_storage_mb: Number(form.limits_storage_mb) || 100, sort_order: Number(form.sort_order) || 0 };
+      delete payload.featuresText; delete payload.benefitsText; delete payload.id; delete payload.created_date; delete payload.updated_date; delete payload.created_by_id;
       if (editPlan) await updatePlan(supabase, editPlan.id, payload);
       else await createPlan(supabase, payload);
       toast({ title: editPlan ? 'Plano atualizado!' : 'Plano criado!' });
@@ -127,6 +129,10 @@ export default function MasterPlanos() {
                   {p.is_popular && <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />}
                 </h3>
                 <p className="mt-1"><span className="font-heading text-xl font-bold">{fmtCurrency(p.price)}</span><span className="text-sm text-muted-foreground">/mês</span></p>
+                {p.annual_price != null && (
+                  <p className="text-xs text-muted-foreground mt-0.5">{fmtCurrency(p.annual_price)}/ano{p.setup_fee > 0 ? ` • setup ${fmtCurrency(p.setup_fee)}` : ''}{p.trial_days > 0 ? ` • ${p.trial_days} dias grátis` : ''}</p>
+                )}
+                {p.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{p.description}</p>}
               </div>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="icon" onClick={() => openEdit(p)}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
@@ -159,6 +165,14 @@ export default function MasterPlanos() {
               <div className="space-y-2"><Label>Nome *</Label><Input value={form.name || ''} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} /></div>
               <div className="space-y-2"><Label>Preço (R$)</Label><Input type="number" min="0" step="0.01" value={form.price || 0} onChange={e => setForm(p => ({ ...p, price: e.target.value }))} /></div>
             </div>
+            <div className="space-y-2"><Label>Descrição</Label><Textarea value={form.description || ''} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder="Resumo comercial do plano" rows={2} /></div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-2"><Label>Preço anual (R$, opcional)</Label><Input type="number" min="0" step="0.01" value={form.annual_price ?? ''} onChange={e => setForm(p => ({ ...p, annual_price: e.target.value }))} placeholder="Vazio = sem anual" /></div>
+              <div className="space-y-2"><Label>Taxa de implantação (R$)</Label><Input type="number" min="0" step="0.01" value={form.setup_fee ?? 0} onChange={e => setForm(p => ({ ...p, setup_fee: e.target.value }))} /></div>
+              <div className="space-y-2"><Label>Dias de teste grátis</Label><Input type="number" min="0" step="1" value={form.trial_days ?? 7} onChange={e => setForm(p => ({ ...p, trial_days: e.target.value }))} /></div>
+            </div>
+            <div className="space-y-2"><Label>Texto comercial</Label><Textarea value={form.sales_text || ''} onChange={e => setForm(p => ({ ...p, sales_text: e.target.value }))} placeholder="Argumento de venda exibido na proposta" rows={2} /></div>
+            <div className="space-y-2"><Label>Benefícios (um por linha)</Label><Textarea value={form.benefitsText || ''} onChange={e => setForm(p => ({ ...p, benefitsText: e.target.value }))} placeholder="Suporte prioritário&#10;Treinamento incluso&#10;..." rows={3} /></div>
             <div className="grid gap-4 sm:grid-cols-4">
               <div className="space-y-2"><Label>Usuários</Label><Input type="number" value={form.limits_users ?? 1} onChange={e => setForm(p => ({ ...p, limits_users: e.target.value }))} /></div>
               <div className="space-y-2"><Label>Pedidos</Label><Input type="number" value={form.limits_orders ?? -1} onChange={e => setForm(p => ({ ...p, limits_orders: e.target.value }))} /></div>

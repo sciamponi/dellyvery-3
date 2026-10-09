@@ -3,6 +3,8 @@ import { useParams, Link } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { getStorefrontBySlug } from '@/api/storefront';
 import { useCart } from '@/lib/CartContext';
+import { getOrderByToken } from '@/api/orders';
+import { loadResume, clearResume, isActiveOrderStatus } from '@/lib/orderResume';
 import { Button } from '@/components/ui/button';
 import { Image } from '@/components/ui/image';
 import { ShoppingCart, Phone, MapPin, Clock, ArrowLeft, Package, Plus } from 'lucide-react';
@@ -22,6 +24,7 @@ export default function Menu() {
   const [notFound, setNotFound] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [cartOpen, setCartOpen] = useState(false);
+  const [resumedOrder, setResumedOrder] = useState(null);
 
   // Cardápio público Supabase-only via RPC pública (sem SELECT anon direto).
   useEffect(() => {
@@ -38,6 +41,20 @@ export default function Menu() {
         setCategories(storefront.categories || []);
         setProducts(storefront.products || []);
         setActiveCategory('all');
+        // Retomada: pedido anterior desta loja ainda ativo? (1 consulta, sem polling)
+        try {
+          const saved = loadResume(slug);
+          if (saved?.token) {
+            const prev = await getOrderByToken(supabase, saved.token);
+            if (prev && isActiveOrderStatus(prev.status)) {
+              setResumedOrder({ token: saved.token, order_number: prev.order_number });
+            } else {
+              clearResume(slug);
+            }
+          }
+        } catch {
+          clearResume(slug);
+        }
       } catch (err) {
         if (err?.code === 'NOT_FOUND') setNotFound(true);
         else console.error(err);
@@ -93,6 +110,20 @@ export default function Menu() {
           {company.slogan && <p className="text-white/90 mt-1">{company.slogan}</p>}
         </div>
       </div>
+
+      {resumedOrder && (
+        <div className="mx-auto max-w-4xl px-4 pt-4">
+          <div className="flex items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 p-4">
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-foreground">🧾 Você tem um pedido em andamento</p>
+              <p className="text-sm text-muted-foreground">Pedido #{resumedOrder.order_number}</p>
+            </div>
+            <Button asChild size="sm" className="shrink-0">
+              <Link to={`/acompanhar/${resumedOrder.token}`}>Acompanhar pedido →</Link>
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Info bar */}
       <div className="border-b border-border bg-card sticky top-0 z-10">

@@ -4,6 +4,7 @@ import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { createOrder as sbCreateOrder } from '@/api/orders';
 import { getStorefrontBySlug } from '@/api/storefront';
 import { useCart } from '@/lib/CartContext';
+import { saveResume } from '@/lib/orderResume';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -148,6 +149,8 @@ export default function Checkout() {
         paymentMethod,
         notes
       });
+      // Retomada: guarda o token por loja (falha de storage nunca bloqueia).
+      saveResume(slug, created.tracking_token);
       clearCart();
       navigate(`/acompanhar/${created.tracking_token}`);
     } catch (err) {

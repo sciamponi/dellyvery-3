@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/api/supabaseClient";
-import { getSession, updatePassword } from "@/api/supabaseAuth";
+import { getSession, updatePassword, onAuthStateChange } from "@/api/supabaseAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,16 +19,38 @@ export default function ResetPassword() {
 
   useEffect(() => {
     let alive = true;
-    // O link pode levar um instante para estabelecer a sessão.
-    const timer = setTimeout(async () => {
+    // A sessão de recuperação chega pela URL (detectSessionInUrl) de forma
+    // assíncrona: checagem única por timer perdia a sessão em máquinas lentas
+    // e travava em "link inválido". Assina mudanças de auth + rechecagens;
+    // "sem sessão" só é declarado na checagem final (tela de loading até lá).
+    const check = async (isFinal = false) => {
       try {
         const sess = await getSession(supabase);
-        if (alive) setHasSession(!!sess);
+        if (!alive) return;
+        if (sess) setHasSession(true);
+        else if (isFinal) setHasSession(false);
       } catch {
-        if (alive) setHasSession(false);
+        if (alive && isFinal) setHasSession(false);
       }
-    }, 800);
-    return () => { alive = false; clearTimeout(timer); };
+    };
+    let sub = null;
+    try {
+      const { data } = onAuthStateChange(supabase, (session) => {
+        if (alive && session) setHasSession(true);
+      });
+      sub = data;
+    } catch {
+      sub = null;
+    }
+    check();
+    const t1 = setTimeout(() => check(), 1500);
+    const t2 = setTimeout(() => check(true), 4000);
+    return () => {
+      alive = false;
+      clearTimeout(t1);
+      clearTimeout(t2);
+      sub?.subscription?.unsubscribe();
+    };
   }, []);
 
   const handleSubmit = async (e) => {

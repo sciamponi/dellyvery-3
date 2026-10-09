@@ -11,8 +11,10 @@ import Register from '@/pages/Register';
 import ForgotPassword from '@/pages/ForgotPassword';
 import ResetPassword from '@/pages/ResetPassword';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import MasterRoute from '@/components/MasterRoute';
 import { CartProvider } from '@/lib/CartContext';
 import Landing from './pages/Landing';
+import Planos from './pages/Planos';
 import CreateRestaurant from './pages/CreateRestaurant';
 import Dashboard from './pages/Dashboard';
 import Menu from './pages/Menu';
@@ -44,6 +46,7 @@ function App() {
           <Routes>
             {/* Public routes — render immediately, zero auth dependency */}
             <Route path="/" element={<Landing />} />
+            <Route path="/planos" element={<Planos />} />
             <Route path="/login" element={<Login />} />
             <Route path="/criar-restaurante" element={<CreateRestaurant />} />
             <Route path="/register" element={<Register />} />
@@ -69,6 +72,12 @@ function App() {
                 <Route path="/assinatura" element={<Assinatura />} />
                 <Route path="/financeiro" element={<Financeiro />} />
                 <Route path="/atualizacoes" element={<Atualizacoes />} />
+              </Route>
+            </Route>
+
+            {/* Área administrativa — gate próprio (sessão + PLATFORM_ADMIN) */}
+            <Route element={<MasterRoute />}>
+              <Route element={<AppLayout />}>
                 <Route path="/master/planos" element={<MasterPlanos />} />
               </Route>
             </Route>

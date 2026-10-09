@@ -51,6 +51,13 @@ export function fromSupabasePlan(row) {
     is_popular: !!limits.popular,
     sort_order: row.sort_order ?? 0,
     active: row.active ?? true,
+    // FASE A: campos comerciais (migration 20261008000005).
+    description: row.description || '',
+    annual_price: row.annual_price != null ? Number(row.annual_price) : null,
+    setup_fee: row.setup_fee != null ? Number(row.setup_fee) : 0,
+    trial_days: row.trial_days != null ? Number(row.trial_days) : 7,
+    sales_text: row.sales_text || '',
+    benefits: Array.isArray(row.benefits) ? row.benefits : [],
   };
 }
 
@@ -72,7 +79,40 @@ export function toSupabasePlan(data) {
   if (hasLimits) out.limits = limits;
   if (data.sort_order !== undefined) out.sort_order = Number(data.sort_order) || 0;
   if (data.active !== undefined) out.active = data.active ?? true;
+  // FASE A: campos comerciais.
+  if (data.description !== undefined) out.description = data.description || null;
+  if (data.annual_price !== undefined) out.annual_price = (data.annual_price === null || data.annual_price === '') ? null : Number(data.annual_price);
+  if (data.setup_fee !== undefined) out.setup_fee = Number(data.setup_fee) || 0;
+  if (data.trial_days !== undefined) out.trial_days = Math.max(0, Math.floor(Number(data.trial_days) || 0));
+  if (data.sales_text !== undefined) out.sales_text = data.sales_text || null;
+  if (data.benefits !== undefined) out.benefits = Array.isArray(data.benefits) ? data.benefits : [];
   return out;
+}
+
+// FASE A: validação comercial antes da rede. Limites: -1 = ilimitado,
+// demais devem ser inteiros >= 0. Retorna mensagem de erro ou null.
+// partial=true (update): só valida os campos presentes.
+export function validatePlanData(data, { partial = false } = {}) {
+  if (!partial && !data?.name?.trim()) return 'Nome é obrigatório';
+  for (const [key, label] of [['price', 'Preço mensal'], ['annual_price', 'Preço anual'], ['setup_fee', 'Taxa de implantação']]) {
+    const v = data[key];
+    if (v !== undefined && v !== null && v !== '' && !(Number(v) >= 0)) {
+      return `${label} deve ser maior ou igual a zero`;
+    }
+  }
+  const trial = data.trial_days;
+  if (trial !== undefined && trial !== null && trial !== '' && !(Number.isInteger(Number(trial)) && Number(trial) >= 0)) {
+    return 'Dias de teste devem ser um número inteiro maior ou igual a zero';
+  }
+  for (const [key, label] of [['limits_users', 'Usuários'], ['limits_orders', 'Pedidos'], ['limits_products', 'Produtos'], ['limits_customers', 'Clientes'], ['limits_whatsapp', 'WhatsApp'], ['limits_storage_mb', 'Armazenamento (MB)']]) {
+    const v = data[key];
+    if (v === undefined || v === null || v === '') continue;
+    const n = Number(v);
+    if (!Number.isInteger(n) || !(n === -1 || n >= 0)) {
+      return `${label}: use -1 para ilimitado ou um número inteiro maior ou igual a zero`;
+    }
+  }
+  return null;
 }
 
 export async function listPlans(client, { onlyActive = true } = {}) {
@@ -86,7 +126,8 @@ export async function listPlans(client, { onlyActive = true } = {}) {
 
 export async function createPlan(client, data) {
   const c = mustBeConfigured(client);
-  if (!data?.name?.trim()) throw new Error('Nome é obrigatório');
+  const validationError = validatePlanData(data || {});
+  if (validationError) throw new Error(validationError);
   const { data: row, error } = await c.from('plans').insert(toSupabasePlan(data)).select().single();
   if (error) rpcError(error);
   return fromSupabasePlan(row);
@@ -95,6 +136,8 @@ export async function createPlan(client, data) {
 export async function updatePlan(client, id, data) {
   const c = mustBeConfigured(client);
   if (!id) throw new Error('Plano não identificado');
+  const validationError = validatePlanData(data || {}, { partial: true });
+  if (validationError) throw new Error(validationError);
   const { data: row, error } = await c.from('plans').update(toSupabasePlan(data)).eq('id', id).select().single();
   if (error) rpcError(error);
   return fromSupabasePlan(row);

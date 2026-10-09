@@ -31,6 +31,16 @@ a{color:inherit}
 .wrap{width:min(1080px,92vw);margin:0 auto}
 section{position:relative}
 
+/* ============ CABEÇALHO FIXO ============ */
+.site-header{position:fixed;top:0;left:0;right:0;z-index:90;height:60px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(12,10,9,.82);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line)}
+.site-header a{display:inline-flex;align-items:center}
+.site-header img{height:32px;width:auto;max-width:70vw;object-fit:contain}
+body{padding-top:60px}
+#inicio,#funcoes,#proposta{scroll-margin-top:76px}
+
 /* ============ BURGER SCENE / BRICK ============ */
 .scene{
   position:relative;min-height:auto;display:flex;flex-direction:column;justify-content:center;
@@ -126,7 +136,7 @@ section{position:relative}
 .btn-amber:hover{transform:translateY(-2px)}
 .btn-outline-w{background:transparent;border-color:rgba(255,255,255,.35);color:#fff}
 
-/* Logo oficial Dellyvery — asset local fornecido pelo usuário (logo-dellyvery.png).
+/* Logo oficial Dellyvery — asset local fornecido pelo usuário (logo-dellyvery-oficial.png).
    Não redesenhar, distorcer ou substituir. Proporção original preservada. */
 .logo-official{height:clamp(64px,9vw,104px);width:auto;max-width:78%;object-fit:contain;filter:drop-shadow(0 10px 24px rgba(0,0,0,.6))}
 .logo-official.sm{height:clamp(52px,7vw,76px)}
@@ -222,7 +232,7 @@ section{position:relative}
 .feat p{font-size:13px}
 /* rodapé claro — logo escuro oficial, cores originais preservadas */
 .footer-light{background:var(--cream);color:#1c1a17;text-align:center;padding:40px 0 26px}
-.footer-light img{height:auto;width:min(280px,64vw);object-fit:contain;margin:0 auto 14px;display:block}
+.footer-light img{height:auto;width:100%;max-width:250px;object-fit:contain;margin:0 auto 14px;display:block}
 .footer-light .fi{font-family:'Montserrat';font-weight:800;font-size:15px;color:#0c0a09}
 .footer-light .fi2{font-size:13px;color:#5b554d;margin-top:4px}
 .footer-light a{color:#b91c1c;font-weight:700}
@@ -245,7 +255,7 @@ section{position:relative}
 .check{list-style:none;margin:18px 0;display:grid;gap:10px;color:#e6d8c6;font-size:14px}
 .check li{display:flex;gap:10px;align-items:flex-start}
 .check li::before{content:"✓";flex:0 0 24px;height:24px;display:grid;place-items:center;border-radius:50%;background:rgba(34,197,94,.15);color:#4ade80;font-weight:800;font-size:13px}
-.notice{margin-top:14px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:14px;padding:14px 16px;font-size:13px;color:#f3d9a8}
+.notice{margin-top:8px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:12px;padding:8px 12px;font-size:13px;color:#f3d9a8}
 
 /* investimento */
 .invest{background:radial-gradient(700px 320px at 50% 0%, rgba(251,191,36,.18), transparent 65%),#100d0b;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
@@ -280,12 +290,38 @@ section{position:relative}
 .reveal.on{opacity:1;transform:none}
 #particles{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:.7}
 
-/* total compacto dentro da proposta */
-.total-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:16px;
-  background:linear-gradient(180deg,#241a12,#130e0a);border:1px solid rgba(251,191,36,.4);border-radius:16px;padding:16px 18px}
-.total-bar .t-left{font-size:13px;color:var(--muted)}
-.total-bar .t-left b{display:block;font-family:'Montserrat';font-size:22px;color:#fff}
-.total-bar .t-left span{color:var(--amber);font-weight:700}
+/* cards alinhados sob o plano (mesma largura do card principal) */
+.duo-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:560px;margin:14px auto 0}
+.mini-card{border-radius:18px;padding:20px 18px;border:1px solid var(--line);background:#161211}
+.mini-card.gold{border-color:rgba(251,191,36,.35);background:linear-gradient(180deg,#221910,#131010)}
+.mini-card p{color:var(--muted);font-size:13px;margin-top:8px}
+.mini-card.gold p{color:#e6d3b3}
+.mini-big{font-family:'Montserrat';font-weight:900;font-size:24px;color:var(--amber);line-height:1.15;margin-top:6px}
+@media(max-width:560px){
+  .duo-cards{grid-template-columns:1fr;gap:10px}
+  .mini-card{padding:16px 14px}
+  .mini-big{font-size:21px}
+}
+/* demonstrações com imagem */
+.demo-sec{background:linear-gradient(180deg,#0c0a09,#151010 50%,#0c0a09)}
+.demo-grid{display:grid;grid-template-columns:.95fr 1.05fr;gap:22px;align-items:center;max-width:960px;margin:0 auto}
+.demo-grid.rev{grid-template-columns:1.05fr .95fr}
+.demo-img{border-radius:20px;overflow:hidden;border:1px solid var(--line);box-shadow:0 24px 60px rgba(0,0,0,.55)}
+.demo-img img{width:100%;height:auto;object-fit:cover;display:block}
+.demo-copy h2{font-size:clamp(20px,2.6vw,30px);font-weight:900;line-height:1.15;margin:8px 0 10px;text-wrap:balance}
+.demo-copy p{color:var(--muted);font-size:14px}
+.demo-list{list-style:none;margin:14px 0 0;display:grid;gap:8px;color:#e6d8c6;font-size:13.5px}
+.demo-list li{display:flex;gap:10px;align-items:flex-start}
+.demo-list li::before{content:"✓";flex:0 0 22px;height:22px;display:grid;place-items:center;border-radius:50%;background:rgba(34,197,94,.15);color:#4ade80;font-weight:800;font-size:12px}
+.kpi-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.kpi{flex:1 1 100px;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:12px;padding:10px 12px;text-align:center}
+.kpi b{display:block;font-family:'Montserrat';font-size:19px;color:var(--amber)}
+.kpi span{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.demo-note{font-size:11px;color:var(--muted2);margin-top:10px;letter-spacing:.04em}
+@media(max-width:960px){
+  .demo-grid,.demo-grid.rev{grid-template-columns:1fr;gap:14px}
+  .demo-img{max-width:520px;margin:0 auto;width:100%}
+}
 
 /* ============ MODAL PAGAMENTO ============ */
 .modal-ov{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;padding:18px;
@@ -329,8 +365,6 @@ section{position:relative}
 .pix-warn{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.35);color:#f3d9a8;font-size:12px;border-radius:10px;padding:8px 10px;margin-top:10px}
 @media(max-width:560px){
   .modal .m-grid{grid-template-columns:1fr}
-  .total-bar{flex-direction:column;align-items:stretch;text-align:center}
-  .total-bar .btn{width:100%;max-width:none}
 }
 
 @media(max-width:1024px){
@@ -398,7 +432,7 @@ section{position:relative}
   .price{font-size:30px;margin:4px 0 2px}
   .check{margin:12px 0;gap:7px;font-size:13px}
   .check li::before{flex-basis:20px;height:20px;font-size:11px}
-  .notice{padding:10px 12px;font-size:12px;margin-top:10px}
+  .notice{padding:6px 10px;font-size:12px;margin-top:6px}
   .invest-box{padding:26px 18px}
   .row{font-size:13px}
   .duo{gap:10px}
@@ -414,9 +448,6 @@ section{position:relative}
   .btn{width:100%;max-width:360px;min-height:46px;padding:13px 18px;font-size:13px;border-radius:12px;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
   .tv-cta .btn{width:auto;max-width:none;padding:12px 20px}
   .cta-row{margin-top:14px;gap:8px}
-  .total-bar{flex-direction:column;align-items:stretch;text-align:center;padding:14px;gap:10px}
-  .total-bar .btn{width:100%;max-width:none}
-  .total-bar .t-left b{font-size:20px}
   .mini-screen{min-height:0;padding:20px 14px}
   .final-scene{padding:36px 0 20px}
   /* modal como bottom-sheet */
@@ -428,6 +459,10 @@ section{position:relative}
   .pay-opt{padding:10px 8px}
   .qr-wrap{width:180px;height:180px}
   .pix-val{font-size:23px}
+  .site-header{height:56px}
+  .site-header img{height:28px}
+  body{padding-top:56px}
+  #inicio,#funcoes,#proposta{scroll-margin-top:68px}
 }
 @media(max-width:430px){
   .scene{padding:50px 0 24px}
@@ -465,6 +500,11 @@ section{position:relative}
 </head>
 <body>
 
+<!-- CABEÇALHO FIXO -->
+<header class="site-header">
+  <a href="#inicio" aria-label="Dellyvery — voltar ao início"><img src="logo-dellyvery-oficial.png" alt="Logo oficial Dellyvery" loading="eager"></a>
+</header>
+
 <!-- HERO / CENA -->
 <header class="scene" id="inicio">
   <div class="brick-offset"></div>
@@ -478,8 +518,8 @@ section{position:relative}
       <span class="neon">Delivery • Tech</span>
     </div>
     <p class="hero-kicker">Mídia indoor • proposta Dellyvery</p>
-    <h1 class="hero-title">Seu negócio <em>mais digital.</em></h1>
-    <p class="hero-sub">Cardápio, pedidos e gestão num só lugar.</p>
+    <h1 class="hero-title">Ative seu <em>Dellyvery.</em></h1>
+    <p class="hero-sub">Cardápio digital e pedidos em um só lugar. Ativação em até 7 dias.</p>
 
     <!-- TV PROTAGONISTA / SLIDER -->
     <div class="tv-zone" role="region" aria-label="TV apresentando o Dellyvery">
@@ -493,7 +533,7 @@ section{position:relative}
             <div class="ad active">
               <div class="ad-copy">
                 <span class="pill">01 / 06 • Apresentação</span>
-                <img class="logo-official sm" src="logo-dellyvery.png" alt="Logo oficial Dellyvery" loading="eager">
+                <img class="logo-official sm" src="logo-dellyvery-oficial.png" alt="Logo oficial Dellyvery" loading="eager">
                 <h2 class="ad-title" style="margin-top:10px">Mais organização para <span class="hl">seus pedidos.</span></h2>
                 <div class="ad-cta"><a class="btn btn-red" href="#funcoes">Ver funções</a></div>
               </div>
@@ -576,13 +616,14 @@ section{position:relative}
             <div class="ad">
               <div class="ad-copy" style="align-items:flex-start">
                 <span class="pill">06 / 06 • Oferta</span>
-                <img class="logo-official sm" src="logo-dellyvery.png" alt="Logo oficial Dellyvery" loading="lazy">
-                <p class="brand-tag">Soluções digitais para pedidos e gestão</p>
-                <h2 class="ad-title" style="margin-top:8px">Conheça o <span class="hl">plano anual.</span></h2>
-                <div class="ad-cta"><a class="btn btn-amber" href="#proposta">Ver proposta</a></div>
+                <img class="logo-official sm" src="logo-dellyvery-oficial.png" alt="Logo oficial Dellyvery" loading="lazy">
+                <h2 class="ad-title" style="margin-top:8px">Ative seu <span class="hl">Dellyvery.</span></h2>
+                <p class="ad-sub">Cardápio digital e pedidos em um só lugar.</p>
+                <div class="ad-cta"><a class="btn btn-amber" href="#proposta">Ver plano</a></div>
               </div>
               <div class="ad-media">
-                <img src="https://images.unsplash.com/photo-1550547660-d9450f859349?auto=format&fit=crop&w=800&q=80" alt="Hambúrguer artesanal em tábua de madeira" loading="lazy">
+                <img src="demo-kanban.jpg" alt="Painel Dellyvery com kanban de pedidos — demonstração ilustrativa" loading="lazy">
+                <span class="demo-tag">Números ilustrativos</span>
               </div>
             </div>
           </div>
@@ -593,11 +634,11 @@ section{position:relative}
         <div class="dots" id="dots" role="tablist" aria-label="Trocar anúncio"></div>
         <div class="tv-progress"><span id="barFill"></span></div>
       </div>
-      <div class="by-auto"><span>Uma solução da</span><img src="https://automatizasolucao.com.br/assets/logo-full-DIcwvWUv.png" alt="Logo oficial da Automatiza Solução" loading="eager"></div>
+      <div class="by-auto"><span>Uma solução da</span><img src="logo-automatiza-escuro.png" alt="Logo oficial da Automatiza Solução" loading="eager"></div>
     </div>
 
     <!-- funções do sistema — logo após a TV -->
-    <div id="funcoes" class="shelf" aria-label="Funções do sistema Dellyvery" style="scroll-margin-top:20px">
+    <div id="funcoes" class="shelf" aria-label="Funções do sistema Dellyvery" style="scroll-margin-top:76px">
       <div class="fig"><div class="e">📱</div><b>Cardápio Digital</b><small>visual, no celular</small></div>
       <div class="fig"><div class="e">🧾</div><b>Pedidos Online</b><small>kanban em tempo real</small></div>
       <div class="fig"><div class="e">📊</div><b>Gestão Completa</b><small>produtos e vendas</small></div>
@@ -605,22 +646,37 @@ section{position:relative}
       <div class="fig"><div class="e">💬</div><b>Suporte + Updates</b><small>12 meses inclusos</small></div>
     </div>
     <p class="counter-floor">Cardápio, pedidos e gestão — num só lugar</p>
-    <div class="cta-row"><a class="btn btn-amber" href="#proposta">Ver planos</a></div>
   </div>
 </header>
 
-<!-- PROPOSTA (pedido único) -->
+<!-- DEMO CARDÁPIO DIGITAL -->
+<section class="section demo-sec" id="demo-cardapio">
+  <div class="wrap demo-grid">
+    <div class="demo-img reveal"><img src="demo-cardapio.jpg" alt="Cardápio digital Dellyvery com categorias, fotos e preços — demonstração ilustrativa" loading="lazy"></div>
+    <div class="demo-copy reveal">
+      <p class="eyebrow" style="text-align:left">Demonstração</p>
+      <h2>Um cardápio que vende <span style="color:var(--amber)">por você.</span></h2>
+      <p>Categorias com fotos reais, nomes, preços e botão de pedido — do celular do cliente direto para a sua cozinha.</p>
+      <ul class="demo-list">
+        <li>Fotos, nomes, preços e categorias</li>
+        <li>Botão de pedido no celular</li>
+        <li>Entrega, retirada ou mesa</li>
+      </ul>
+      <p class="demo-note">Imagens e valores ilustrativos de demonstração.</p>
+    </div>
+  </div>
+</section>
+
+<!-- PROPOSTA -->
 <section class="section proposta" id="proposta">
   <div class="wrap">
     <p class="eyebrow reveal">Proposta comercial</p>
     <h2 class="h2 reveal">Pedido completo — 1º ano</h2>
-    <p class="lead reveal">Ativação + 12 meses. Pedido único, sem vender só a ativação.</p>
     <div class="price-grid" style="grid-template-columns:1fr;max-width:560px;margin:0 auto">
       <div class="price-card featured reveal">
-        <span class="tag">Pedido único</span>
         <h3 style="padding-right:0">Dellyvery completo</h3>
         <div class="price">R$ 2.467 <small>1º ano</small></div>
-        <p class="pdesc">R$ 497 ativação + R$ 1.970 anual. Pix com 5% off: <b style="color:var(--amber)">R$ 2.343,65</b>.</p>
+        <p class="pdesc">R$ 497 ativação + R$ 1.970 anual.<br>Pix com 5% off: <b style="color:var(--amber)">R$ 2.343,65</b>.</p>
         <ul class="check">
           <li>Cardápio digital + pedidos online</li>
           <li>Produtos, clientes e painel</li>
@@ -631,27 +687,37 @@ section{position:relative}
         </div>
       </div>
     </div>
-    <div class="total-bar reveal">
-      <div class="t-left">Entrega em até 15 dias<b>R$ 2.467 <span style="font-size:13px;font-weight:600">• Pix R$ 2.343,65</span></b></div>
-      <button class="btn btn-amber" data-open-modal data-pay="pix">Contratar agora</button>
+    <div class="duo-cards reveal">
+      <div class="mini-card gold">
+        <p class="eyebrow" style="text-align:left">Ativação</p>
+        <div class="mini-big">Em até 7 dias</div>
+        <p>Disponibilização após a confirmação da contratação e o recebimento das informações necessárias.</p>
+      </div>
+      <div class="mini-card">
+        <p class="eyebrow" style="text-align:left">Sua autonomia</p>
+        <div class="mini-big" style="font-size:19px">Você no controle</div>
+        <p>Cadastro e manutenção de produtos, preços, imagens e categorias pela cliente, com orientação incluída.</p>
+      </div>
     </div>
     <div class="notice">Cadastro de produtos, preços e fotos fica com você — com orientação incluída.</div>
   </div>
 </section>
 
-<!-- PRAZO + RESPONSABILIDADE -->
-<section class="section" id="prazo">
-  <div class="wrap duo">
-    <div class="info-card gold reveal">
-      <p class="eyebrow" style="text-align:left">Entrega</p>
-      <div class="big">Até 15 dias</div>
-      <p style="color:#e6d3b3;margin-top:10px;font-size:14px">Disponibilização em até 15 dias após a confirmação da contratação e o recebimento das informações necessárias.</p>
+<!-- PLANO ANUAL / PAINEL -->
+<section class="section demo-sec" id="plano-anual">
+  <div class="wrap demo-grid rev">
+    <div class="demo-copy reveal">
+      <p class="eyebrow" style="text-align:left">Conheça o plano anual</p>
+      <h2>Pedidos, produtos e <span style="color:var(--amber)">gestão num painel.</span></h2>
+      <p>Kanban em tempo real, produtos organizados e indicadores da operação — tudo incluído nos 12 meses.</p>
+      <div class="kpi-row">
+        <div class="kpi"><b>32</b><span>pedidos/dia</span></div>
+        <div class="kpi"><b>R$ 41</b><span>ticket médio</span></div>
+        <div class="kpi"><b>4.9★</b><span>satisfação</span></div>
+      </div>
+      <p class="demo-note">Números meramente ilustrativos — não representam resultados reais de clientes.</p>
     </div>
-    <div class="info-card reveal">
-      <p class="eyebrow" style="text-align:left">Sua autonomia</p>
-      <h3 style="font-size:20px;margin:6px 0 8px">Você no controle do cardápio</h3>
-      <p style="color:var(--muted);font-size:14px">Cadastro e manutenção de produtos, preços, imagens e categorias pela cliente, com orientação incluída.</p>
-    </div>
+    <div class="demo-img reveal"><img src="demo-kanban.jpg" alt="Painel Dellyvery com kanban de pedidos — demonstração ilustrativa" loading="lazy"></div>
   </div>
 </section>
 
@@ -661,7 +727,7 @@ section{position:relative}
     <div class="auto-box reveal">
       <div>
         <p class="eyebrow" style="text-align:left">Uma solução da</p>
-        <img class="logo-auto" src="https://automatizasolucao.com.br/assets/logo-full-DIcwvWUv.png" alt="Logo oficial da Automatiza Solução">
+        <img class="logo-auto" src="logo-automatiza-escuro.png" alt="Logo oficial da Automatiza Solução">
         <h2 class="h2" style="text-align:left;margin-left:0">Tecnologia para transformar negócios.</h2>
         <p style="color:var(--muted);font-size:14px">O Dellyvery é uma solução da Automatiza Solução para digitalizar e simplificar a gestão de negócios.</p>
         <div class="cta-row" style="justify-content:flex-start;margin-top:20px">
@@ -684,9 +750,9 @@ section{position:relative}
     <p class="eyebrow reveal">Pronto para começar?</p>
     <div class="mini-tv reveal" style="margin-top:18px">
       <div class="mini-screen">
-        <img class="logo-official sm" src="logo-dellyvery.png" alt="Logo oficial Dellyvery" loading="lazy">
-        <h2 class="h2" style="margin-top:10px">Ative seu Dellyvery em até 15 dias</h2>
-        <p style="color:#d8c9bb">Pix: <strong style="color:var(--amber)">R$ 2.343,65</strong> • Cartão: <strong>R$ 2.467</strong></p>
+        <img class="logo-official sm" src="logo-dellyvery-oficial.png" alt="Logo oficial Dellyvery" loading="lazy">
+        <h2 class="h2" style="margin-top:10px">Ative seu Dellyvery</h2>
+        <p style="color:#d8c9bb">Cardápio digital e pedidos em um só lugar • Ativação em até 7 dias</p>
         <div class="cta-row">
           <button class="btn btn-red" data-open-modal data-pay="pix">Contratar agora</button>
         </div>
@@ -762,7 +828,7 @@ section{position:relative}
 
 <footer class="footer-light">
   <div class="wrap">
-    <img src="logo-automatiza-claro.svg" alt="Logo oficial da Automatiza Solução" loading="lazy">
+    <img src="logo-automatiza-escuro.png" alt="Logo oficial da Automatiza Solução" loading="lazy">
     <p class="fi">Dellyvery — Soluções digitais para pedidos e gestão.</p>
     <p class="fi2">Uma solução da Automatiza Solução • <a href="https://automatizasolucao.com.br/" target="_blank" rel="noopener">automatizasolucao.com.br</a></p>
   </div>

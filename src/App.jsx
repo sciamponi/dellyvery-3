@@ -24,6 +24,7 @@ import AppLayout from './components/AppLayout';
 import GestaoProdutos from './pages/GestaoProdutos';
 import Pedidos from './pages/Pedidos';
 import Pdv from './pages/Pdv';
+import Impressao from './pages/Impressao';
 import Configuracoes from './pages/Configuracoes';
 import Clientes from './pages/Clientes';
 import Equipe from './pages/Equipe';
@@ -32,6 +33,10 @@ import Assinatura from './pages/Assinatura';
 import Financeiro from './pages/Financeiro';
 import Atualizacoes from './pages/Atualizacoes';
 import MasterPlanos from './pages/MasterPlanos';
+import MasterInteressados from './pages/MasterInteressados';
+import MasterDashboard from './pages/MasterDashboard';
+import Cadastro from './pages/Cadastro';
+import Privacidade from './pages/Privacidade';
 
 function App() {
   // FASE 5.1: SupabaseAuthProvider coexiste com o AuthProvider/Base44 legado.
@@ -57,6 +62,8 @@ function App() {
               <Route path="/checkout/:slug" element={<Checkout />} />
             </Route>
             <Route path="/acompanhar/:token" element={<OrderTracking />} />
+            <Route path="/cadastro" element={<Cadastro />} />
+            <Route path="/privacidade" element={<Privacidade />} />
 
             {/* Protected routes — ProtectedRoute is the SOLE auth gate */}
             <Route element={<ProtectedRoute />}>
@@ -65,6 +72,7 @@ function App() {
                 <Route path="/gestao-produtos" element={<GestaoProdutos />} />
                 <Route path="/pedidos" element={<Pedidos />} />
                 <Route path="/pdv" element={<Pdv />} />
+                <Route path="/impressao/:orderId" element={<Impressao />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
                 <Route path="/clientes" element={<Clientes />} />
                 <Route path="/equipe" element={<Equipe />} />
@@ -78,7 +86,9 @@ function App() {
             {/* Área administrativa — gate próprio (sessão + PLATFORM_ADMIN) */}
             <Route element={<MasterRoute />}>
               <Route element={<AppLayout />}>
+                <Route path="/master" element={<MasterDashboard />} />
                 <Route path="/master/planos" element={<MasterPlanos />} />
+                <Route path="/master/interessados" element={<MasterInteressados />} />
               </Route>
             </Route>
 

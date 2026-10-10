@@ -3,12 +3,21 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dellyvery — Soluções digitais para pedidos e gestão</title>
-<meta name="description" content="Conheça o Dellyvery, solução digital da Automatiza Solução para pedidos, cardápio e gestão de negócios.">
-<meta property="og:title" content="Dellyvery — Soluções digitais para pedidos e gestão">
-<meta property="og:description" content="Conheça o Dellyvery, solução digital da Automatiza Solução para pedidos, cardápio e gestão de negócios.">
+<title>Ative seu Dellyvery — Cardápio digital e pedidos online</title>
+<meta name="description" content="Ative seu Dellyvery: cardápio digital e pedidos em um só lugar. Conheça a solução digital da Automatiza Solução para pedidos, cardápio e gestão de negócios.">
+<meta property="og:title" content="Ative seu Dellyvery — Cardápio digital e pedidos online">
+<meta property="og:description" content="Cardápio digital e pedidos em um só lugar. Ativação em até 7 dias.">
 <meta property="og:type" content="website">
 <meta property="og:locale" content="pt_BR">
+<meta property="og:url" content="https://dellyvery.localapp.online/planos/">
+<meta property="og:image" content="https://dellyvery.localapp.online/planos/og-dellyvery.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="676">
+<meta property="og:image:alt" content="Ative seu Dellyvery — Cardápio digital e pedidos em um só lugar">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Ative seu Dellyvery — Cardápio digital e pedidos online">
+<meta name="twitter:description" content="Cardápio digital e pedidos em um só lugar. Ativação em até 7 dias.">
+<meta name="twitter:image" content="https://dellyvery.localapp.online/planos/og-dellyvery.jpg">
 <meta name="theme-color" content="#0c0a09">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -32,14 +41,14 @@ a{color:inherit}
 section{position:relative}
 
 /* ============ CABEÇALHO FIXO ============ */
-.site-header{position:fixed;top:0;left:0;right:0;z-index:90;height:60px;
+.site-header{position:fixed;top:0;left:0;right:0;z-index:90;height:68px;
   display:flex;align-items:center;justify-content:center;
   background:rgba(12,10,9,.82);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   border-bottom:1px solid var(--line)}
 .site-header a{display:inline-flex;align-items:center}
-.site-header img{height:32px;width:auto;max-width:70vw;object-fit:contain}
-body{padding-top:60px}
-#inicio,#funcoes,#proposta{scroll-margin-top:76px}
+.site-header img{height:42px;width:auto;max-width:70vw;object-fit:contain}
+body{padding-top:68px}
+#inicio,#funcoes,#proposta{scroll-margin-top:84px}
 
 /* ============ BURGER SCENE / BRICK ============ */
 .scene{
@@ -138,8 +147,8 @@ body{padding-top:60px}
 
 /* Logo oficial Dellyvery — asset local fornecido pelo usuário (logo-dellyvery-oficial.png).
    Não redesenhar, distorcer ou substituir. Proporção original preservada. */
-.logo-official{height:clamp(64px,9vw,104px);width:auto;max-width:78%;object-fit:contain;filter:drop-shadow(0 10px 24px rgba(0,0,0,.6))}
-.logo-official.sm{height:clamp(52px,7vw,76px)}
+.logo-official{height:clamp(80px,11vw,128px);width:auto;max-width:78%;object-fit:contain;filter:drop-shadow(0 10px 24px rgba(0,0,0,.6))}
+.logo-official.sm{height:clamp(64px,9vw,96px)}
 .brand-tag{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:#f3c98b;margin-top:6px}
 /* Mantido como fallback documentado (não usado nos slides): */
 .brand-lockup-oficial-css{display:none}
@@ -323,48 +332,8 @@ body{padding-top:60px}
   .demo-img{max-width:520px;margin:0 auto;width:100%}
 }
 
-/* ============ MODAL PAGAMENTO ============ */
-.modal-ov{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;padding:18px;
-  background:rgba(0,0,0,.72);backdrop-filter:blur(6px)}
-.modal-ov.open{display:flex}
-.modal{background:linear-gradient(180deg,#1e1613,#100c0a);border:1px solid rgba(251,191,36,.35);border-radius:20px;
-  width:min(520px,100%);max-height:90vh;overflow:auto;padding:26px 22px;position:relative;box-shadow:0 40px 100px rgba(0,0,0,.7)}
-.modal h3{font-size:20px;margin:4px 0 2px}
-.modal .m-sub{color:var(--muted);font-size:13px;margin-bottom:14px}
-.modal .m-plan{display:flex;justify-content:space-between;align-items:center;background:rgba(251,191,36,.08);
-  border:1px solid rgba(251,191,36,.3);border-radius:12px;padding:10px 14px;font-size:14px;margin-bottom:14px}
-.modal .m-plan b{color:var(--amber);font-family:'Montserrat'}
-.modal label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#d8c9bb;margin:12px 0 6px;font-weight:700}
-.modal input,.modal select,.modal textarea{width:100%;background:#0f0c0a;border:1px solid rgba(255,255,255,.14);border-radius:11px;
-  color:#fff;padding:12px 13px;font-size:14px;font-family:'Inter',sans-serif;outline:none}
-.modal input:focus,.modal select:focus,.modal textarea:focus{border-color:var(--amber);box-shadow:0 0 0 2px rgba(251,191,36,.2)}
-.modal select option{background:#171312}
-.modal .m-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.modal .m-close{position:absolute;top:12px;right:12px;width:34px;height:34px;border-radius:50%;border:1px solid rgba(255,255,255,.2);
-  background:rgba(255,255,255,.06);color:#fff;font-size:16px;cursor:pointer}
-.modal .m-ok{display:none;text-align:center;padding:18px 6px}
-.modal .m-ok .big-ok{font-size:48px}
-.modal .m-err{color:#ff9a9a;font-size:13px;margin-top:8px;display:none}
-/* opções de pagamento */
-.pay-opts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
-.pay-opt{border:1px solid rgba(255,255,255,.14);background:#0f0c0a;border-radius:12px;padding:11px 10px;cursor:pointer;text-align:left;color:#fff;transition:.2s}
-.pay-opt b{display:block;font-family:'Montserrat';font-size:14px}
-.pay-opt small{color:var(--muted);font-size:11px}
-.pay-opt .pv{color:var(--amber);font-weight:800;font-size:14px}
-.pay-opt.active{border-color:var(--amber);background:rgba(251,191,36,.1);box-shadow:0 0 0 1px var(--amber) inset}
-.pay-opt .badge{display:inline-block;font-size:9px;letter-spacing:.1em;text-transform:uppercase;background:#22c55e;color:#04120a;font-weight:800;padding:2px 7px;border-radius:99px;margin-bottom:4px}
-/* etapa Pix */
-.pix-box{text-align:center}
-.qr-wrap{width:210px;height:210px;margin:10px auto;background:#fff;border-radius:14px;padding:10px;display:grid;place-items:center;overflow:hidden}
-.qr-wrap img,.qr-wrap canvas,.qr-wrap table{max-width:100%}
-.qr-img{width:100%;height:100%;object-fit:contain;aspect-ratio:1/1;display:block}
-.pix-val{font-family:'Montserrat';font-weight:900;font-size:26px;color:#fff}
-.pix-val small{display:block;font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.08em}
-.pix-code{width:100%;background:#0f0c0a;border:1px solid rgba(255,255,255,.14);border-radius:11px;color:#cbbcae;
-  font-size:11px;padding:10px;margin-top:10px;word-break:break-all;max-height:74px;overflow:auto;text-align:left}
-.pix-warn{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.35);color:#f3d9a8;font-size:12px;border-radius:10px;padding:8px 10px;margin-top:10px}
 @media(max-width:560px){
-  .modal .m-grid{grid-template-columns:1fr}
+  .demo-grid,.demo-grid.rev{grid-template-columns:1fr}
 }
 
 @media(max-width:1024px){
@@ -410,7 +379,7 @@ body{padding-top:60px}
   .ad-cta{margin-top:10px}
   .ad-cta .btn{padding:10px 14px;min-height:40px;font-size:11px;width:auto;max-width:none}
   .ad-media{min-height:230px}
-  .logo-official.sm{height:48px}
+  .logo-official.sm{height:60px}
   .kanban{inset:10px 8px;gap:6px}
   .kcol{padding:6px;border-radius:10px}
   .kcol h4{font-size:8px}
@@ -450,19 +419,10 @@ body{padding-top:60px}
   .cta-row{margin-top:14px;gap:8px}
   .mini-screen{min-height:0;padding:20px 14px}
   .final-scene{padding:36px 0 20px}
-  /* modal como bottom-sheet */
-  .modal-ov{padding:0;align-items:flex-end}
-  .modal{width:100%;max-height:92vh;max-height:92dvh;border-radius:20px 20px 0 0;padding:18px 14px 22px;border-bottom:0}
-  .modal label{margin:8px 0 5px}
-  .modal input,.modal select,.modal textarea{padding:11px;font-size:16px}
-  .pay-opts{gap:6px}
-  .pay-opt{padding:10px 8px}
-  .qr-wrap{width:180px;height:180px}
-  .pix-val{font-size:23px}
-  .site-header{height:56px}
-  .site-header img{height:28px}
-  body{padding-top:56px}
-  #inicio,#funcoes,#proposta{scroll-margin-top:68px}
+  .site-header{height:60px}
+  .site-header img{height:34px}
+  body{padding-top:60px}
+  #inicio,#funcoes,#proposta{scroll-margin-top:72px}
 }
 @media(max-width:430px){
   .scene{padding:50px 0 24px}
@@ -683,7 +643,7 @@ body{padding-top:60px}
           <li>Ativação + orientação + suporte 12m</li>
         </ul>
         <div class="cta-row" style="justify-content:stretch;flex-direction:column">
-          <button class="btn btn-amber" data-open-modal data-pay="pix" style="width:100%;max-width:none">Escolher este plano</button>
+          <a class="btn btn-amber" href="/cadastro?plano=dellyvery-completo" target="_top" style="width:100%;max-width:none">Solicitar proposta</a>
         </div>
       </div>
     </div>
@@ -754,7 +714,7 @@ body{padding-top:60px}
         <h2 class="h2" style="margin-top:10px">Ative seu Dellyvery</h2>
         <p style="color:#d8c9bb">Cardápio digital e pedidos em um só lugar • Ativação em até 7 dias</p>
         <div class="cta-row">
-          <button class="btn btn-red" data-open-modal data-pay="pix">Contratar agora</button>
+          <a class="btn btn-red" href="/cadastro?plano=dellyvery-completo" target="_top">Solicitar proposta</a>
         </div>
       </div>
     </div>
@@ -762,69 +722,9 @@ body{padding-top:60px}
   </div>
 </section>
 
-<!-- MODAL PAGAMENTO -->
-<div class="modal-ov" id="payModal" aria-hidden="true" role="dialog" aria-label="Contratar Dellyvery">
-  <div class="modal">
-    <button class="m-close" id="modalClose" aria-label="Fechar">✕</button>
-    <div id="modalFormWrap">
-      <p class="eyebrow" style="text-align:left">Checkout rápido</p>
-      <h3>Pedido completo 🚀</h3>
-      <p class="m-sub">R$ 497,00 ativação + R$ 1.970,00 anual = <b style="color:#fff">R$ 2.467,00</b>. No Pix: <b style="color:var(--amber)">R$ 2.343,65</b>.</p>
-      <div class="m-plan"><span>Dellyvery — 1º ano</span><b id="mPlanPrice">R$ 2.343,65 no Pix</b></div>
-      <form id="payForm" novalidate>
-        <label>Pagamento *</label>
-        <div class="pay-opts">
-          <button type="button" class="pay-opt active" data-paybtn="pix"><span class="badge">-5%</span><b>Pix</b><span class="pv">R$ 2.343,65</span><br><small>QR oficial</small></button>
-          <button type="button" class="pay-opt" data-paybtn="cartao"><b>Cartão</b><span class="pv">R$ 2.467,00</span><br><small>via Asaas</small></button>
-        </div>
-        <label for="fName">Seu nome *</label>
-        <input id="fName" name="nome" type="text" placeholder="Ex: Joyce" autocomplete="name" required>
-        <div class="m-grid">
-          <div><label for="fZap">WhatsApp *</label><input id="fZap" name="zap" type="tel" placeholder="(11) 99999-9999" autocomplete="tel" required></div>
-          <div><label for="fEmail">E-mail</label><input id="fEmail" name="email" type="email" placeholder="voce@loja.com" autocomplete="email"></div>
-        </div>
-        <label for="fBiz">Nome do negócio *</label>
-        <input id="fBiz" name="negocio" type="text" placeholder="Ex: Burger House" required>
-        <div class="m-err" id="mErr">Preencha nome, WhatsApp e negócio.</div>
-        <div class="cta-row" style="margin-top:14px"><button type="submit" class="btn btn-amber" id="paySubmit" style="width:100%;max-width:none">Continuar — Pagar com Pix</button></div>
-        <p style="font-size:12px;color:var(--muted2);text-align:center;margin-top:8px">Pix exibe o QR oficial. Cartão abre o checkout Asaas.</p>
-      </form>
-    </div>
-    <div class="pix-box" id="pixView" style="display:none">
-      <p class="eyebrow" style="text-align:left">Pagamento Pix</p>
-      <h3>Escaneie e pague 📱</h3>
-      <p class="m-sub" id="pixSub">Dellyvery completo — Joyce</p>
-      <div class="pix-val">R$ 2.343,65<small>Pix com 5% de desconto</small></div>
-      <div class="qr-wrap" id="qrBox"><img class="qr-img" src="qr-pix-dellyvery.jpg" alt="QR Code Pix oficial Dellyvery — R$ 2.343,65" loading="lazy" onerror="this.style.display='none'"></div>
-      <p style="font-size:12px;color:var(--amber);font-weight:700;margin-top:8px">Confira o valor antes de confirmar o pagamento.</p>
-      <!-- Código Pix copia e cola: exibir somente com o código real. Não inventar. -->
-      <div id="pixCopyWrap" style="display:none">
-        <label style="text-align:left">Pix copia e cola</label>
-        <div class="pix-code" id="pixCode"></div>
-        <div class="cta-row" style="flex-direction:column;align-items:stretch">
-          <button class="btn btn-amber" id="copyPixBtn" style="width:100%;max-width:none">Copiar código Pix</button>
-        </div>
-      </div>
-      <div class="cta-row" style="flex-direction:column;align-items:stretch">
-        <a class="btn btn-amber" id="recargaPayBtn" href="https://recargapay.com.br/pagar/vWxZjGQ" target="_blank" rel="noopener" style="width:100%;max-width:none">Pagar pelo RecargaPay</a>
-        <a class="btn btn-ghost" id="pixZapBtn" href="#" target="_blank" rel="noopener" style="width:100%;max-width:none">Solicitar ajuda pelo WhatsApp</a>
-        <a class="btn btn-outline-w" id="pixPaidBtn" href="#" target="_blank" rel="noopener" style="width:100%;max-width:none">Já paguei — enviar comprovante</a>
-        <button class="btn btn-outline-w" id="pixBack" style="width:100%;max-width:none">Voltar</button>
-      </div>
-      <p class="m-sub" style="margin-top:10px">A liberação ocorre após verificarmos o recebimento.</p>
-    </div>
-    <div class="m-ok" id="modalOk">
-      <div class="big-ok">✅</div>
-      <h3>Pedido gerado!</h3>
-      <p class="m-sub" id="okText">Finalize o pagamento. A liberação ocorre após verificarmos o recebimento.</p>
-      <div class="cta-row" style="flex-direction:column;align-items:stretch">
-        <a class="btn btn-amber" id="okPayBtn" href="#" target="_blank" rel="noopener" style="width:100%;max-width:none">Abrir pagamento</a>
-        <a class="btn btn-ghost" id="okZapBtn" href="#" target="_blank" rel="noopener" style="width:100%;max-width:none">Enviar comprovante no WhatsApp</a>
-        <button class="btn btn-outline-w" id="modalBack" style="width:100%;max-width:none">Voltar</button>
-      </div>
-    </div>
-  </div>
-</div>
+<!-- Captação comercial: os CTAs direcionam para /cadastro (formulário de
+     interesse com persistência no banco). Sem cobrança direta nesta página:
+     nenhuma chave Pix ou link de pagamento é exibido aqui. -->
 
 <footer class="footer-light">
   <div class="wrap">
@@ -835,8 +735,8 @@ body{padding-top:60px}
 </footer>
 <div class="legal">© 2026 Automatiza Solução • Completo: R$ 2.467 no cartão • R$ 2.343,65 no Pix (-5%)</div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
+// Captação comercial: sem cobrança direta nesta página (ver comentário no HTML).
 // Slider TV 6 anúncios / 4s
 (function(){
   var slides = Array.prototype.slice.call(document.querySelectorAll('#slides .ad'));
@@ -877,108 +777,7 @@ body{padding-top:60px}
   }catch(e){}
 })();
 
-// Config pagamento — QR Pix oficial (imagem original, sem gerar QR novo):
-// Arquivo: qr-pix-dellyvery.jpg (salvar o JPEG oficial nesta pasta).
-// Código Pix copia e cola real: preencher somente com o código oficial.
-// Enquanto vazio, o botão "Copiar código Pix" fica oculto e nada é inventado.
-var PIX_COPIA_E_COLA = "00020126580014br.gov.bcb.pix01366c30fbe0-c714-41ac-95c3-702773ac946a52040000530398654072343.655802BR592554.876.082 SAMUEL LEITE C6007Atibaia6211050726f78796304B4BC";
-var RECARGAPAY_PIX_URL = "https://recargapay.com.br/pagar/vWxZjGQ";
-var ASAAS_CARD_URL = "COLE_AQUI_LINK_ASAAS_CARTAO";
-(function(){
-  var ov=document.getElementById('payModal');
-  var closeBtn=document.getElementById('modalClose');
-  var form=document.getElementById('payForm');
-  var err=document.getElementById('mErr');
-  var ok=document.getElementById('modalOk');
-  var formWrap=document.getElementById('modalFormWrap');
-  var pixView=document.getElementById('pixView');
-  var back=document.getElementById('modalBack');
-  var pixBack=document.getElementById('pixBack');
-  var priceEl=document.getElementById('mPlanPrice');
-  var submitBtn=document.getElementById('paySubmit');
-  var okPay=document.getElementById('okPayBtn');
-  var okZap=document.getElementById('okZapBtn');
-  var okText=document.getElementById('okText');
-  var pixSub=document.getElementById('pixSub');
-  var pixZapBtn=document.getElementById('pixZapBtn');
-  var pixPaidBtn=document.getElementById('pixPaidBtn');
-  var pixCopyWrap=document.getElementById('pixCopyWrap');
-  var pixCodeEl=document.getElementById('pixCode');
-  var copyBtn=document.getElementById('copyPixBtn');
-  var qrBox=document.getElementById('qrBox');
-  var payBtns=Array.prototype.slice.call(document.querySelectorAll('[data-paybtn]'));
-  var pay='pix', lastRequestUrl='', lastPaidUrl='';
-  var PRICES={pix:'R$ 2.343,65',cartao:'R$ 2.467,00'};
-  function hasRealCopy(){return PIX_COPIA_E_COLA && PIX_COPIA_E_COLA.indexOf('COLE_AQUI')!==0 && PIX_COPIA_E_COLA.length>20;}
-  // Desenha o QR a partir do código oficial informado (mesmo payload, nada inventado).
-  // Se qr-pix-dellyvery.jpg existir, ele fica como fundo até a lib desenhar por cima.
-  function renderOfficialQR(){
-    if(!hasRealCopy()||!qrBox)return;
-    try{
-      if(typeof QRCode!=='undefined'){qrBox.innerHTML='';new QRCode(qrBox,{text:PIX_COPIA_E_COLA,width:190,height:190,correctLevel:QRCode.CorrectLevel.M});return;}
-    }catch(e){}
-    try{
-      if(!qrBox.querySelector('img.qr-fallback')){var img=document.createElement('img');img.className='qr-img qr-fallback';img.alt='QR Code Pix oficial Dellyvery — R$ 2.343,65';img.style.width='190px';img.src='https://api.qrserver.com/v1/create-qr-code/?size=190x190&data='+encodeURIComponent(PIX_COPIA_E_COLA);qrBox.appendChild(img);}
-    }catch(e){}
-  }
-  function setPay(v){
-    pay=(v==='cartao')?'cartao':'pix';
-    payBtns.forEach(function(b){b.classList.toggle('active',b.getAttribute('data-paybtn')===pay);});
-    priceEl.textContent = pay==='pix' ? 'R$ 2.343,65 no Pix' : 'R$ 2.467,00 no Cartão';
-    submitBtn.textContent = pay==='pix' ? 'Continuar — Pagar com Pix' : 'Continuar — Pagar com Cartão';
-  }
-  payBtns.forEach(function(b){b.addEventListener('click',function(){setPay(b.getAttribute('data-paybtn'));});});
-  function open(v){setPay(v||'pix');ok.style.display='none';pixView.style.display='none';formWrap.style.display='block';ov.classList.add('open');ov.setAttribute('aria-hidden','false');document.body.style.overflow='hidden';}
-  function hide(){ov.classList.remove('open');ov.setAttribute('aria-hidden','true');document.body.style.overflow='';}
-  document.querySelectorAll('[data-open-modal]').forEach(function(b){b.addEventListener('click',function(){open(b.getAttribute('data-pay'));});});
-  closeBtn.addEventListener('click',hide);
-  back.addEventListener('click',hide);
-  pixBack.addEventListener('click',function(){pixView.style.display='none';formWrap.style.display='block';});
-  ov.addEventListener('click',function(e){if(e.target===ov)hide();});
-  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});
-  if(copyBtn)copyBtn.addEventListener('click',function(){
-    var code=PIX_COPIA_E_COLA;
-    function done(){copyBtn.textContent='Copiado! ✅';setTimeout(function(){copyBtn.textContent='Copiar código Pix';},1800);}
-    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(code).then(done).catch(done);}else{var t=document.createElement('textarea');t.value=code;document.body.appendChild(t);t.select();try{document.execCommand('copy');}catch(e){}document.body.removeChild(t);done();}
-  });
-  form.addEventListener('submit',function(e){
-    e.preventDefault();
-    var nome=document.getElementById('fName').value.trim();
-    var zap=document.getElementById('fZap').value.trim();
-    var biz=document.getElementById('fBiz').value.trim();
-    var email=document.getElementById('fEmail').value.trim();
-    if(!nome||!zap||!biz){err.style.display='block';return;}
-    err.style.display='none';
-    var helpMsg='Olá! Sou '+encodeURIComponent(nome)+' ('+encodeURIComponent(biz)+')%0A'+
-      'Quero o Dellyvery Completo no Pix '+encodeURIComponent('(R$ 2.343,65)')+'%0A'+
-      'Preciso de ajuda com o pagamento.%0A'+
-      'Meu WhatsApp: '+encodeURIComponent(zap);
-    var paidMsg='Olá! Sou '+encodeURIComponent(nome)+' ('+encodeURIComponent(biz)+')%0A'+
-      'Paguei o Dellyvery Completo '+encodeURIComponent('(R$ 2.343,65 no Pix)')+'%0A'+
-      'Segue o comprovante para verificação:';
-    lastRequestUrl='https://wa.me/5511932314551?text='+helpMsg;
-    lastPaidUrl='https://wa.me/5511932314551?text='+paidMsg;
-    if(pay==='cartao'){
-      var hasCard=ASAAS_CARD_URL&&ASAAS_CARD_URL.indexOf('COLE_AQUI')!==0&&ASAAS_CARD_URL.indexOf('http')===0;
-      var cardMsg='Olá! Sou '+encodeURIComponent(nome)+' ('+encodeURIComponent(biz)+')%0AQuero o Dellyvery no Cartão '+encodeURIComponent('(R$ 2.467,00)');
-      var cardZap='https://wa.me/5511932314551?text='+cardMsg;
-      if(hasCard){window.open(ASAAS_CARD_URL,'_blank');okText.textContent='Abrimos o checkout do cartão. Finalize lá e envie o comprovante — a liberação ocorre após verificarmos o recebimento.';okPay.href=ASAAS_CARD_URL;okPay.style.display='';}
-      else{okText.textContent='Link do cartão ainda não configurado — chame no WhatsApp para concluir.';okPay.style.display='none';}
-      okZap.href=cardZap;
-      formWrap.style.display='none';pixView.style.display='none';ok.style.display='block';
-      return;
-    }
-    // Pix: QR oficial + RecargaPay. QR desenhado do código oficial acima.
-    pixSub.textContent='Dellyvery completo — '+nome+' ('+biz+')';
-    if(hasRealCopy()){pixCopyWrap.style.display='block';pixCodeEl.textContent=PIX_COPIA_E_COLA;renderOfficialQR();}
-    else{pixCopyWrap.style.display='none';}
-    pixZapBtn.href=lastRequestUrl;
-    pixPaidBtn.href=lastPaidUrl;
-    formWrap.style.display='none';ok.style.display='none';pixView.style.display='block';
-  });
-  pixZapBtn.addEventListener('click',function(){okText.textContent='Você pediu ajuda. Conclua no QR ou no RecargaPay e envie o comprovante — a liberação ocorre após verificarmos o recebimento.';okPay.style.display='none';okZap.href=lastPaidUrl;});
-  pixPaidBtn.addEventListener('click',function(){formWrap.style.display='none';pixView.style.display='none';okText.textContent='Comprovante a caminho. A liberação ocorre após verificarmos o recebimento.';okPay.style.display='none';okZap.href=lastPaidUrl;ok.style.display='block';});
-})();
+// Captação comercial: CTAs direcionam para /cadastro. Sem cobrança direta aqui.
 
 // Reveal on scroll
 (function(){

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/api/supabaseClient";
 import { signInWithPassword } from "@/api/supabaseAuth";
 import { useSupabaseAuth } from "@/lib/SupabaseAuthContext";
+import { resolveMasterIdentifier, masterAuthMessage } from "@/lib/masterAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,7 +14,7 @@ import { ShieldCheck, Mail, Lock, Loader2, Eye, EyeOff } from "lucide-react";
 export default function MasterLogin({ returnTo = "/master/planos" }) {
   const navigate = useNavigate();
   const { refresh: refreshSb } = useSupabaseAuth();
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
@@ -22,13 +23,18 @@ export default function MasterLogin({ returnTo = "/master/planos" }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    const email = resolveMasterIdentifier(identifier);
+    if (!email) {
+      setError("Informe seu e-mail ou usuário administrativo.");
+      return;
+    }
     setLoading(true);
     try {
       await signInWithPassword(supabase, { email, password });
       await refreshSb();
       navigate(returnTo, { replace: true });
     } catch (err) {
-      setError(err?.message || "E-mail ou senha inválidos");
+      setError(masterAuthMessage(err));
     } finally {
       setLoading(false);
     }
@@ -54,17 +60,17 @@ export default function MasterLogin({ returnTo = "/master/planos" }) {
           )}
           <form onSubmit={handleSubmit} className="space-y-3">
             <div className="space-y-1">
-              <Label htmlFor="master-email" className="text-xs">Email</Label>
+              <Label htmlFor="master-email" className="text-xs">E-mail ou usuário</Label>
               <div className="relative">
                 <Mail className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
                 <Input
                   id="master-email"
-                  type="email"
-                  autoComplete="email"
+                  type="text"
+                  autoComplete="username"
                   autoFocus
-                  placeholder="admin@empresa.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="voce@empresa.com ou usuário"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
                   className="pl-8 h-9 text-sm"
                   required
                 />

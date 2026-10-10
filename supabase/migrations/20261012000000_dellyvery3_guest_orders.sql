@@ -4,9 +4,15 @@
 -- (balcão) aceitam pedido sem cliente: sem upsert, sem cliente fictício
 -- (customer_id null, customer_data com strings vazias). RLS intacta.
 -- Remove a sobrecarga antiga de 9 args (PostgREST exige assinatura única).
+-- Remove também a sobrecarga legada de 8 args (sem p_source, anterior à
+-- ...0002): com qualquer sobrecarga antiga presente, chamadas com parâmetros
+-- omitidos tornam-se ambíguas (PGRST203 comprovado em homologação).
 
 drop function if exists
   create_order(text, text, text, jsonb, jsonb, uuid, text, text, text);
+
+drop function if exists
+  create_order(text, text, text, jsonb, jsonb, uuid, text, text);
 
 create or replace function create_order(
   p_company_slug text,

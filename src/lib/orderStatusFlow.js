@@ -1,5 +1,5 @@
-import { supabase } from '@/api/supabaseClient';
-import { changeOrderStatus as sbChangeOrderStatus } from '@/api/orders';
+import { supabase } from '../api/supabaseClient.js';
+import { changeOrderStatus as sbChangeOrderStatus } from '../api/orders.js';
 
 /**
  * Fluxo centralizado de mudança de status de pedidos (frontend).

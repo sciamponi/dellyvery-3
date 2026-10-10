@@ -25,12 +25,13 @@ import { changeOrderStatus, getAvailableActions, STATUS_LABELS } from '@/lib/ord
 import {
   LEGACY_STAGE_SEED,
   listStages as sbListStages,
-  visibleStages,
+  displayStages as buildDisplayStages,
   stageForStatus,
-  resolveAdvanceTarget,
+  resolveCardPrimary,
   assertSingleStep,
 } from '@/api/orderStages';
 import StageManagerDialog from '@/components/orders/StageManagerDialog';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { shortAddress } from '@/lib/deliveryRoute';
 
 // Colunas legadas (fallback quando as stages configuráveis ainda não
@@ -105,6 +106,8 @@ export default function Pedidos() {
   const [, setTick] = useState(0);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [cancelOrderData, setCancelOrderData] = useState(null);
+  // Baixa de entrega: pede confirmação antes de finalizar (evita toque acidental).
+  const [finishOrderData, setFinishOrderData] = useState(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const [highlightId, setHighlightId] = useState(null);
   const [alertQueue, setAlertQueue] = useState([]);
@@ -112,7 +115,11 @@ export default function Pedidos() {
   // migration ausente -> Kanban usa o fallback legado, sem quebrar).
   const [stages, setStages] = useState(null);
   const [stageDialogOpen, setStageDialogOpen] = useState(false);
-  const displayStages = stages && stages.length > 0 ? visibleStages(stages) : LEGACY_FALLBACK_STAGES;
+  // Colunas: visíveis + terminais (Finalizado/Cancelado) mesmo inativas, para
+  // pedidos terminais nunca caírem pelo fallback em outra coluna.
+  const displayStages = buildDisplayStages(
+    stages && stages.length > 0 ? stages : LEGACY_FALLBACK_STAGES,
+  );
   const stageById = React.useMemo(
     () => Object.fromEntries(displayStages.map((s) => [s.id, s])),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -305,23 +312,27 @@ export default function Pedidos() {
   if (!company) return null;
 
   // Ação primária do card: com stages, o rótulo segue a próxima ETAPA
-  // (uma transição legada por vez); sem stages, fluxo legado.
+  // (uma transição legada por vez) com fallback legado — pedido não-terminal
+  // nunca fica sem ação visível; sem stages, fluxo legado.
   const getCardPrimary = (order) => {
     if (!order || ['finalizado', 'cancelado'].includes(order.status)) return null;
     if (stages && stages.length > 0) {
-      const target = resolveAdvanceTarget(displayStages, order);
-      if (!target) return null;
-      return {
-        id: order.status === 'novo' ? 'accept' : 'advance',
-        label: order.status === 'novo' ? 'Aceitar' : `→ ${target.targetStage.name}`,
-        next: target.targetStatus,
-      };
+      return resolveCardPrimary(displayStages, order);
     }
     const legacy = getAvailableActions(order);
     return legacy.find((a) => a.id === 'accept' || a.id === 'advance') || null;
   };
 
-  // Ação direta no card (reutiliza fluxo central + guarda anti-duplo do drag)
+  // Ação direta no card (reutiliza fluxo central + guarda anti-duplo do drag).
+  // Avanço para etapa terminal (baixa da entrega) exige confirmação explícita.
+  const requestCardAction = (order, action) => {
+    if (!order || !action) return;
+    if (action.next === 'finalizado') {
+      setFinishOrderData({ order, action });
+      return;
+    }
+    void handleCardAction(order, action);
+  };
   const handleCardAction = async (order, action) => {
     if (pendingStatusRef.current.has(order.id)) return;
     pendingStatusRef.current.add(order.id);
@@ -360,6 +371,8 @@ export default function Pedidos() {
     try {
       const check = assertSingleStep(displayStages, dragged.status, toStatus, dragged.order_type);
       if (check.noop) return;
+      // Arraste para Cancelado abre o diálogo com motivo (nunca baixa direta).
+      if (check.cancel) { setCancelOrderData(dragged); return; }
     } catch (err) {
       toast({ title: 'Movimento inválido', description: err?.message, variant: 'destructive' });
       try {
@@ -538,15 +551,22 @@ export default function Pedidos() {
                                         {cardPrimary && (
                                           <button
                                             type="button"
-                                            onClick={(e) => { e.stopPropagation(); handleCardAction(order, cardPrimary); }}
+                                            onClick={(e) => { e.stopPropagation(); requestCardAction(order, cardPrimary); }}
+                                            title={cardPrimary.fallback ? 'Etapa seguinte inativa: usa o fluxo padrão do sistema' : undefined}
                                             className="h-8 px-2.5 rounded-lg text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors whitespace-nowrap"
                                           >
-                                            {cardPrimary.label}
+                                            {cardPrimary.next === 'finalizado' && order.status === 'saiu_entrega' ? 'Concluir entrega' : cardPrimary.label}
                                           </button>
                                         )}
                                       </span>
                                     )}
                                   </div>
+                                  {cardPrimary?.fallback && (
+                                    <p className="mt-1 text-[11px] text-muted-foreground">⚠️ fluxo padrão (etapa seguinte inativa — verifique em Etapas)</p>
+                                  )}
+                                  {!cardPrimary && cardCancel && (
+                                    <p className="mt-1 text-[11px] text-muted-foreground">⚠️ sem transição válida — verifique as Etapas do Kanban</p>
+                                  )}
                                 </div>
                               )}
                             </Draggable>
@@ -604,6 +624,20 @@ export default function Pedidos() {
           onCancelled={(updated) => {
             setOrders(prev => mergeUpdated(prev, updated));
             setSelectedOrder(null);
+          }}
+        />
+      )}
+      {finishOrderData && (
+        <ConfirmDialog
+          open={!!finishOrderData}
+          onOpenChange={(open) => { if (!open) setFinishOrderData(null); }}
+          title="Concluir entrega?"
+          description={`Dar baixa no pedido #${finishOrderData.order?.order_number || '—'} como Finalizado. A baixa registra a entrega concluída e não altera pagamento.`}
+          confirmLabel="Concluir entrega"
+          onConfirm={() => {
+            const { order, action } = finishOrderData;
+            setFinishOrderData(null);
+            void handleCardAction(order, action);
           }}
         />
       )}

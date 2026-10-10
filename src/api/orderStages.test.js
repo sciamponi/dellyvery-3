@@ -17,9 +17,11 @@ import {
   sortStages,
   visibleStages,
   flowStages,
+  displayStages,
   stageForStatus,
   resolveAdvanceTarget,
   resolveRegressTarget,
+  resolveCardPrimary,
   assertSingleStep,
   advanceOrder,
   regressOrder,
@@ -228,6 +230,108 @@ describe('orderStages — fluxo puro (uma etapa por vez)', () => {
     assert.equal(shouldAutoCloseOnAction('regress'), true);
     assert.equal(shouldAutoCloseOnAction('cancel'), false);
     assert.equal(shouldAutoCloseOnAction('edit'), false);
+  });
+});
+
+describe('orderStages — colunas terminais e ação garantida (Kanban)', () => {
+  // Cenário real: empresa com finalizado/cancelado/aguardando inativos.
+  const samuelLike = () => mapped(seedRows()).map((s) => (
+    ['aguardando_retirada', 'finalizado', 'cancelado'].includes(s.key)
+      ? { ...s, active: false }
+      : s
+  ));
+
+  it('displayStages mantém terminais mesmo inativos (sem duplicar)', () => {
+    const cols = displayStages(samuelLike());
+    const keys = cols.map((s) => s.key);
+    assert.ok(keys.includes('finalizado'));
+    assert.ok(keys.includes('cancelado'));
+    assert.ok(!keys.includes('aguardando_retirada'));
+    assert.equal(new Set(cols.map((s) => s.id)).size, cols.length);
+    assert.deepEqual(displayStages(mapped(seedRows())).map((s) => s.key), [
+      'novo', 'confirmado', 'em_preparo', 'aguardando_retirada',
+      'saiu_entrega', 'finalizado', 'cancelado',
+    ]);
+  });
+
+  it('resolveCardPrimary: configurada quando há alvo; fallback legado senão', () => {
+    const full = mapped(seedRows());
+    assert.deepEqual(
+      resolveCardPrimary(full, { status: 'novo' }),
+      { id: 'accept', label: 'Aceitar', next: 'confirmado', fallback: false },
+    );
+    assert.equal(
+      resolveCardPrimary(full, { status: 'saiu_entrega', order_type: 'delivery' }).next,
+      'finalizado',
+    );
+    // Sem alvo configurado (finalizado inativo): fallback mostra a baixa.
+    const stuck = samuelLike();
+    assert.equal(resolveAdvanceTarget(stuck, { status: 'saiu_entrega', order_type: 'delivery' }), null);
+    assert.deepEqual(
+      resolveCardPrimary(stuck, { status: 'saiu_entrega', order_type: 'delivery' }),
+      { id: 'advance', label: '→ Finalizado', next: 'finalizado', fallback: true },
+    );
+    // Terminais e status desconhecido nunca têm ação.
+    assert.equal(resolveCardPrimary(full, { status: 'finalizado' }), null);
+    assert.equal(resolveCardPrimary(full, { status: 'cancelado' }), null);
+  });
+
+  it('assertSingleStep: baixa terminal passa quando é o próximo legado', () => {
+    const stuck = samuelLike();
+    assert.equal(
+      assertSingleStep(stuck, 'saiu_entrega', 'finalizado', 'delivery').direction,
+      'advance',
+    );
+    assert.equal(
+      assertSingleStep(stuck, 'aguardando_retirada', 'finalizado', 'mesa').direction,
+      'advance',
+    );
+    // Pulo continua rejeitado mesmo com terminal no destino.
+    assert.throws(() => assertSingleStep(stuck, 'novo', 'finalizado', 'delivery'), /uma etapa/);
+    assert.throws(() => assertSingleStep(stuck, 'confirmado', 'finalizado', 'mesa'), /uma etapa/);
+  });
+
+  it('pedido novo com próxima inativa: fallback sinalizado (nunca silencioso)', () => {
+    // Só Novo ativa: sem alvo configurado, o card usa o fluxo padrão.
+    const onlyNovo = mapped(seedRows()).map((s) => (
+      s.key === 'novo' ? s : { ...s, active: false }
+    ));
+    assert.equal(resolveAdvanceTarget(onlyNovo, { status: 'novo' }), null);
+    assert.deepEqual(
+      resolveCardPrimary(onlyNovo, { status: 'novo' }),
+      { id: 'accept', label: 'Aceitar', next: 'confirmado', fallback: true },
+    );
+  });
+
+  it('status desconhecido: na primeira coluna, sem inventar transição', () => {
+    const full = mapped(seedRows());
+    assert.equal(stageForStatus(full, 'arquivado').key, 'novo');
+    // Sem ação (card exibe diagnóstico); nunca avança para status arbitrário.
+    assert.equal(resolveCardPrimary(full, { status: 'arquivado' }), null);
+  });
+
+  it('realtime/recarga: colunas determinísticas entre carregamentos', () => {
+    const samuelA = samuelLike();
+    // Simula recarga: objetos novos, mesmo conteúdo (como após refresh/realtime).
+    const samuelB = samuelLike();
+    const keysA = displayStages(samuelA).map((s) => `${s.key}:${s.active !== false ? 1 : 0}`);
+    const keysB = displayStages(samuelB).map((s) => `${s.key}:${s.active !== false ? 1 : 0}`);
+    assert.deepEqual(keysA, keysB);
+    // Terminais sempre presentes como coluna (mesmo inativos).
+    assert.ok(keysA.some((k) => k.startsWith('finalizado')));
+    assert.ok(keysA.some((k) => k.startsWith('cancelado')));
+    // Pedido terminal mapeia para a própria coluna (nunca Novo).
+    assert.equal(stageForStatus(displayStages(samuelA), 'finalizado').mapsTo, 'finalizado');
+    assert.equal(stageForStatus(displayStages(samuelA), 'cancelado').mapsTo, 'cancelado');
+  });
+
+  it('terminal nunca tem ação; saiu_entrega mira a baixa', () => {
+    const full = mapped(seedRows());
+    assert.equal(resolveCardPrimary(full, { status: 'finalizado' }), null);
+    assert.equal(resolveCardPrimary(full, { status: 'cancelado' }), null);
+    const baixa = resolveCardPrimary(full, { status: 'saiu_entrega', order_type: 'delivery' });
+    assert.equal(baixa.next, 'finalizado');
+    assert.equal(baixa.fallback, false);
   });
 });
 

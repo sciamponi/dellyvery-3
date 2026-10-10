@@ -9,6 +9,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { supabase } from '@/api/supabaseClient';
 import {
   LEGACY_STATUSES,
+  TERMINAL_MAPS_TO,
   isLegacyStageKey,
   createStage,
   updateStage,
@@ -115,6 +116,10 @@ export default function StageManagerDialog({ open, onClose, companyId, stages, o
           {sorted.map((stage, index) => {
             const legacy = isLegacyStageKey(stage.key);
             const isEditing = editingId === stage.id;
+            const isTerminal = TERMINAL_MAPS_TO.includes(stage.mapsTo);
+            const hasVisibleSibling = sorted.some(
+              (s) => s.id !== stage.id && s.mapsTo === stage.mapsTo && s.active !== false,
+            );
             return (
               <div key={stage.id} className="rounded-xl border border-border p-3 space-y-2">
                 <div className="flex items-center gap-2">
@@ -177,6 +182,16 @@ export default function StageManagerDialog({ open, onClose, companyId, stages, o
                     Ativa
                   </label>
                 </div>
+                {stage.active !== false && isTerminal && (
+                  <p className="text-[11px] text-amber-600">
+                    Desativar oculta a coluna, mas os pedidos finalizados/cancelados continuam na própria coluna.
+                  </p>
+                )}
+                {stage.active !== false && !hasVisibleSibling && !isTerminal && (
+                  <p className="text-[11px] text-amber-600">
+                    Última coluna visível deste status: ao desativar, os cartões usam o fluxo padrão do sistema.
+                  </p>
+                )}
 
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Button size="sm" variant="outline" onClick={() => move(index, -1)} disabled={index === 0 || busy !== null} aria-label="Mover para a esquerda">

@@ -1,5 +1,6 @@
 import { supabase as defaultClient } from './supabaseClient.js';
 import { changeOrderStatus } from './orders.js';
+import { getNextStatus, STATUS_LABELS } from '../lib/orderStatusFlow.js';
 
 // DELLVERY 3 — Adapter Kanban configurável (FASE 1)
 // Compatibilidade com o legado (decisão Fase 1):
@@ -294,12 +295,30 @@ export function flowStages(stages) {
   return visibleStages(stages).filter((s) => s.mapsTo !== 'cancelado');
 }
 
+// Colunas exibidas no Kanban: visíveis + terminais (finalizado/cancelado)
+// mesmo quando inativas. Sem isso, pedidos terminais caem pelo fallback em
+// outra coluna (ex.: Novo) e seus cards ficam sem ação e sem contexto.
+export function displayStages(stages) {
+  const vis = visibleStages(stages);
+  const terms = sortStages(stages).filter(
+    (s) => TERMINAL_MAPS_TO.includes(s.mapsTo) && !vis.some((v) => v.id === s.id),
+  );
+  return [...vis, ...terms];
+}
+
 // Coluna natural de um status legado: primeira visível com mapsTo igual;
-// fallback: primeira visível (pedido nunca some do Kanban).
+// terminais usam a coluna própria mesmo inativa (nunca caem no Novo);
+// demais casos: primeira visível (pedido nunca some do Kanban).
 export function stageForStatus(stages, status) {
   const vis = visibleStages(stages);
   if (vis.length === 0) return null;
-  return vis.find((s) => s.mapsTo === status) || vis[0];
+  const natural = vis.find((s) => s.mapsTo === status);
+  if (natural) return natural;
+  if (TERMINAL_MAPS_TO.includes(status)) {
+    const own = sortStages(stages).find((s) => s.mapsTo === status);
+    if (own) return own;
+  }
+  return vis[0];
 }
 
 // Regra legada preservada (orderStatusFlow.getNextStatus): pedido delivery
@@ -342,6 +361,8 @@ export function resolveRegressTarget(stages, order) {
 
 // Valida movimento de UMA etapa (drag ou botão). Lança erro ao pular etapa.
 // 'cancelado' passa (caminho legado via changeOrderStatus, como no drag atual).
+// Destino terminal (ex.: coluna Finalizado inativa) passa quando é o próximo
+// legado do pedido — a baixa nunca fica sem caminho no Kanban.
 export function assertSingleStep(stages, fromStatus, toStatus, orderType = null) {
   if (!fromStatus || !toStatus) throw new Error('Status de origem/destino inválidos');
   if (fromStatus === toStatus) return { noop: true };
@@ -351,7 +372,39 @@ export function assertSingleStep(stages, fromStatus, toStatus, orderType = null)
   if (next && next.targetStatus === toStatus) return { direction: 'advance', ...next };
   const prev = resolveRegressTarget(stages, order);
   if (prev && prev.targetStatus === toStatus) return { direction: 'regress', ...prev };
+  if (TERMINAL_MAPS_TO.includes(toStatus) && getNextStatus(order) === toStatus) {
+    return { direction: 'advance', targetStatus: toStatus, targetStage: null };
+  }
   throw new Error('Só é permitido mover o pedido uma etapa por vez');
+}
+
+// Ação primária do card: próxima etapa configurada; com fallback legado para
+// nunca esconder o avanço de pedido não-terminal (stages incompletas ou
+// inativas não podem deixar o card sem ação). `fallback: true` indica que a
+// UI deve sinalizar o uso do fluxo padrão (nunca silencioso). Status
+// desconhecido do sistema (fora do enum legado) não recebe ação: o card
+// exibe diagnóstico em vez de inventar transição.
+export function resolveCardPrimary(stages, order) {
+  if (!order || TERMINAL_MAPS_TO.includes(order.status)) return null;
+  // Status fora do enum do sistema: sem ação (o card exibe diagnóstico).
+  if (!LEGACY_STATUSES.includes(order.status)) return null;
+  const target = resolveAdvanceTarget(stages, order);
+  if (target) {
+    return {
+      id: order.status === 'novo' ? 'accept' : 'advance',
+      label: order.status === 'novo' ? 'Aceitar' : `→ ${target.targetStage.name}`,
+      next: target.targetStatus,
+      fallback: false,
+    };
+  }
+  const legacyNext = getNextStatus(order);
+  if (!legacyNext) return null;
+  return {
+    id: order.status === 'novo' ? 'accept' : 'advance',
+    label: order.status === 'novo' ? 'Aceitar' : `→ ${STATUS_LABELS[legacyNext] || legacyNext}`,
+    next: legacyNext,
+    fallback: true,
+  };
 }
 
 export async function advanceOrder(client, stages, order) {

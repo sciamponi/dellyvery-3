@@ -6,6 +6,7 @@ import {
   fromSupabaseHistory,
   listOrders,
   createOrder,
+  buildCreateOrderItems,
   changeOrderStatus,
   cancelOrder,
   editOrder,
@@ -131,6 +132,42 @@ describe('orders — escrita via RPC (nunca direta)', () => {
     assert.equal(client.calls.rpc[0].fn, 'create_order');
     assert.ok(!('total' in args) && !('subtotal' in args) && !JSON.stringify(args).includes('unit_price'));
     assert.equal(args.p_table_number, '5');
+  });
+
+  it('createOrder repassa troco (p_change_for) e mapeia change_for', async () => {
+    const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o', order_number: 2, tracking_token: 't' }, error: null } } });
+    await createOrder(client, {
+      companySlug: 'loja', orderType: 'delivery',
+      items: [{ product_id: 'p', quantity: 1 }],
+      customer: { name: 'Z', phone: '119' }, paymentMethod: 'dinheiro', changeFor: 50,
+    });
+    assert.equal(client.calls.rpc[0].args.p_change_for, 50);
+    const row = {
+      id: 'o', company_id: 'c', status: 'novo', subtotal: 20, total: 20,
+      change_for: 50, customer_data: {}, delivery_address: {}, created_at: '',
+    };
+    assert.equal(fromSupabaseOrder(row).change_for, 50);
+    assert.equal(fromSupabaseOrder({ ...row, change_for: null }).change_for, null);
+    // Sem troco: parâmetro vai nulo (RPC antiga continua válida).
+    const c2 = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
+    await createOrder(c2, { companySlug: 'loja', items: [{ product_id: 'p', quantity: 1 }], customer: { name: 'Z', phone: '119' } });
+    assert.equal(c2.calls.rpc[0].args.p_change_for, null);
+  });
+
+  it('buildCreateOrderItems preserva todas as linhas (jornada completa)', () => {
+    const cart = [
+      { product_id: 'lanche', quantity: 1, complements: [{ group_name: 'G', option_name: 'O', price: 2, quantity: 1 }], notes: 'sem cebola' },
+      { product_id: 'fritas', quantity: 2 },
+      { product_id: 'coca', quantity: 1, notes: '' },
+      { product_id: 'pudim', quantity: 3, complements: [] },
+    ];
+    assert.deepEqual(buildCreateOrderItems(cart), [
+      { product_id: 'lanche', quantity: 1, complements: [{ group_name: 'G', option_name: 'O', price: 2, quantity: 1 }], notes: 'sem cebola' },
+      { product_id: 'fritas', quantity: 2, complements: [], notes: '' },
+      { product_id: 'coca', quantity: 1, complements: [], notes: '' },
+      { product_id: 'pudim', quantity: 3, complements: [], notes: '' },
+    ]);
+    assert.deepEqual(buildCreateOrderItems(null), []);
   });
 
   it('changeOrderStatus/cancel/edit usam manage_order', async () => {

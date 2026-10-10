@@ -49,6 +49,7 @@ export function fromSupabaseOrder(row) {
     delivery_fee: Number(row.delivery_fee) || 0,
     discount: Number(row.discount) || 0,
     total: Number(row.total) || 0,
+    change_for: row.change_for == null || row.change_for === '' ? null : Number(row.change_for),
     customer_data: cd,
     customer_name: cd.name || '',
     customer_phone: cd.phone || '',
@@ -166,10 +167,23 @@ export async function listOrdersWithItems(client, companyId, limit = 100) {
 
 // ---------- Escrita via RPC ----------
 
+// Mapeamento puro carrinho → payload da RPC (preserva quantidade,
+// complementos, observações e ids de TODAS as linhas; sem totais do cliente).
+// Mesma função usada pelo Checkout público e pelo PDV: o que o backend
+// valida e persiste é exatamente o que estava no carrinho.
+export function buildCreateOrderItems(cartItems) {
+  return (cartItems || []).map((i) => ({
+    product_id: i.product_id,
+    quantity: i.quantity,
+    complements: i.complements || [],
+    notes: i.notes || '',
+  }));
+}
+
 export async function createOrder(client, {
   companySlug, orderType = 'delivery', tableNumber = '', items = [],
   customer = {}, deliveryZoneId = null, paymentMethod = '', notes = '',
-  source = 'online',
+  source = 'online', changeFor = null,
 }) {
   const c = mustBeConfigured(client);
   if (!companySlug) throw new Error('Empresa não identificada');
@@ -177,12 +191,7 @@ export async function createOrder(client, {
     p_company_slug: companySlug,
     p_order_type: orderType,
     p_table_number: tableNumber || null,
-    p_items: items.map((i) => ({
-      product_id: i.product_id,
-      quantity: i.quantity,
-      complements: i.complements || [],
-      notes: i.notes || '',
-    })),
+    p_items: buildCreateOrderItems(items),
     p_customer: {
       name: customer.name || '',
       phone: customer.phone || '',
@@ -200,6 +209,8 @@ export async function createOrder(client, {
     // FASE 2: origem do pedido. 'balcao' (PDV interno) nunca é bloqueado
     // por is_open no banco; 'online'/'whatsapp' são. Default = online.
     p_source: source || 'online',
+    // Operação: troco (opcional; servidor valida > 0 e >= total).
+    p_change_for: changeFor == null || changeFor === '' ? null : Number(changeFor),
   });
   if (error) rpcError(error);
   return data; // { order_id, order_number, tracking_token }

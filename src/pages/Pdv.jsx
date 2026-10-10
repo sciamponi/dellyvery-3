@@ -1,10 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { useCompany } from '@/hooks/useCompany';
 import { listProducts, listCategories } from '@/api/catalog';
 import { listCustomers } from '@/api/customers';
 import { listZones } from '@/api/deliveryZones';
-import { createOrder, editOrder, cancelOrder, getOrderDetail, listOrdersWithItems } from '@/api/orders';
+import { createOrder, editOrder, cancelOrder, getOrderDetail, listOrdersWithItems, assignDriver, buildCreateOrderItems } from '@/api/orders';
+import { listDrivers } from '@/api/team';
+import { markDriverNotified } from '@/api/driverNotifications';
+import { buildDriverDeliveryUrl } from '@/lib/driverMessage';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,13 +19,14 @@ import { buildWhatsAppUrl } from '@/lib/menuShare';
 import TableSelectModal, { MergeConfirmModal, TableMergePicker } from '@/components/pdv/TableSelectModal';
 import OrderModal from '@/components/orders/OrderModal';
 import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
-import { Plus, Minus, Trash2, Search, Package, CheckCircle, Bike, Store, Table2, User } from 'lucide-react';
+import { Plus, Minus, Trash2, Search, Package, CheckCircle, Bike, Store, Table2, User, Printer, MessageCircle, Tag } from 'lucide-react';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
 const ORDER_TYPES = [
   { id: 'mesa', label: '🍽️ Mesa', icon: Table2 },
-  { id: 'retirada', label: '🛍️ Retirada', icon: Store },
+  // Balcão opera como retirada com origem presencial (sem novo valor no enum).
+  { id: 'retirada', label: '🛍️ Balcão', icon: Store },
   { id: 'delivery', label: '🛵 Entrega', icon: Bike },
 ];
 
@@ -55,9 +59,19 @@ export default function Pdv() {
   const [address, setAddress] = useState('');
   const [deliveryZoneId, setDeliveryZoneId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [changeFor, setChangeFor] = useState('');
   const [discount, setDiscount] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Guarda anti-duplo: cliques repetidos antes do estado assentar.
+  const submitRef = useRef(false);
   const [doneOrder, setDoneOrder] = useState(null);
+  // Entregadores (ativos) + notificação manual por pedido.
+  const [drivers, setDrivers] = useState([]);
+  const [driverId, setDriverId] = useState('');
+  const [notifying, setNotifying] = useState(false);
+  const [notifyState, setNotifyState] = useState('');
+  // Observação por item do rascunho (expandida por linha).
+  const [noteOpenId, setNoteOpenId] = useState(null);
 
   // Comandas de mesa (derivadas dos pedidos ativos — sem entidade Mesa).
   const [mesaOrders, setMesaOrders] = useState([]);
@@ -85,6 +99,9 @@ export default function Pdv() {
         setCategories(cats);
         setCustomers(custs);
         setZones(zn);
+        listDrivers(supabase, company.id).then((list) => {
+          setDrivers((list || []).filter((d) => d.status === 'ativo'));
+        }).catch(() => {});
       } catch (err) {
         toast({ title: 'Erro ao carregar cardápio', description: err?.message, variant: 'destructive' });
       } finally {
@@ -155,6 +172,10 @@ export default function Pdv() {
 
   const removeItem = (productId) => setItems(prev => prev.filter(x => x.product_id !== productId));
 
+  const setItemNotes = (productId, notes) => {
+    setItems(prev => prev.map(x => x.product_id === productId ? { ...x, notes } : x));
+  };
+
   const zone = zones.find(z => z.id === deliveryZoneId);
   const fee = orderType === 'delivery' ? (zone?.fee ?? company?.delivery_fee ?? 0) : 0;
   const { subtotal, count: itemCount } = calcPdvTotals(items, fee);
@@ -166,7 +187,11 @@ export default function Pdv() {
     setCustomer({ name: '', phone: '' });
     setCustomerSearch('');
     setPaymentMethod('');
+    setChangeFor('');
     setDiscount('');
+    setDriverId('');
+    setNotifyState('');
+    setNoteOpenId(null);
     setSelectedComandaId(null);
     if (!keepTable) {
       setTableNumber('');
@@ -228,7 +253,8 @@ export default function Pdv() {
 
   const requestPayment = (order) => {
     const phone = (order.customer_phone || order.customer_data?.phone || '').replace(/\D/g, '');
-    const msg = `Olá ${order.customer_name || ''}! Sua comanda da Mesa ${order.table_number || ''} (Pedido #${order.order_number}) totalizou ${fmtCurrency(order.total)}. Segue para pagamento. Obrigado!`;
+    const who = order.customer_name || 'Olá';
+    const msg = `${who}! Sua comanda da Mesa ${order.table_number || ''} (Pedido #${order.order_number}) totalizou ${fmtCurrency(order.total)}. Segue para pagamento. Obrigado!`;
     // Sem automação de WhatsApp nesta fase (u17 = em breve): abre conversa.
     const url = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(msg)}` : buildWhatsAppUrl(msg);
     window.open(url, '_blank', 'noopener');
@@ -289,22 +315,35 @@ export default function Pdv() {
       toast({ title: 'Mesa obrigatória', description: 'Informe o número da mesa.', variant: 'destructive' });
       return;
     }
-    if (!customer.name.trim() || !customer.phone.trim()) {
-      toast({ title: 'Cliente obrigatório', description: 'Informe nome e telefone (ou selecione um cliente).', variant: 'destructive' });
+    // Entrega exige identificação; mesa/balcão aceitam pedido avulso.
+    if (orderType === 'delivery' && (!customer.name.trim() || !customer.phone.trim())) {
+      toast({ title: 'Cliente obrigatório', description: 'Para entrega, informe nome e telefone.', variant: 'destructive' });
       return;
     }
     if (orderType === 'delivery' && !address.trim()) {
       toast({ title: 'Endereço obrigatório', description: 'Informe o endereço de entrega.', variant: 'destructive' });
       return;
     }
+    const changeForValue = paymentMethod === 'Dinheiro' && String(changeFor).trim() !== ''
+      ? Number(String(changeFor).replace(',', '.'))
+      : null;
+    if (paymentMethod === 'Dinheiro' && String(changeFor).trim() !== ''
+      && !(changeForValue > 0)) {
+      toast({ title: 'Troco inválido', description: 'Informe um valor maior que zero.', variant: 'destructive' });
+      return;
+    }
+    if (submitRef.current) return;
+    submitRef.current = true;
     setSubmitting(true);
     try {
-      const apiItems = items.map(i => ({ product_id: i.product_id, quantity: i.quantity, complements: i.complements || [], notes: i.notes || '' }));
+      const apiItems = buildCreateOrderItems(items);
       let number;
+      let savedId = null;
       if (selectedComanda) {
         // Comanda existente: soma ao pedido via edit (totais recalculados no backend).
         await editOrder(supabase, selectedComanda.id, { items: apiItems, discount: discountValue });
         number = selectedComanda.order_number;
+        savedId = selectedComanda.id;
         toast({ title: `Comanda #${number} atualizada!` });
       } else {
         const created = await createOrder(supabase, {
@@ -316,11 +355,21 @@ export default function Pdv() {
           deliveryZoneId: deliveryZoneId || null,
           paymentMethod: paymentMethod || null,
           notes: '',
+          changeFor: changeForValue,
           // FASE 2: PDV é atendimento presencial (balcão) — funciona mesmo
           // com o restaurante fechado para pedidos online (is_open=false).
           source: 'balcao',
         });
         number = created.order_number;
+        savedId = created.order_id;
+        // Entrega com entregador escolhido: associa ao pedido (sem notificar sozinho).
+        if (orderType === 'delivery' && driverId) {
+          try {
+            await assignDriver(supabase, savedId, company.id, driverId);
+          } catch {
+            toast({ title: `Pedido #${number} criado sem entregador`, description: 'Associe o entregador em Pedidos.', variant: 'destructive' });
+          }
+        }
         // create_order não aceita desconto: aplica via edit em seguida.
         if (discountValue > 0) {
           try {
@@ -331,7 +380,8 @@ export default function Pdv() {
         }
         toast({ title: `Pedido #${number} criado!` });
       }
-      setDoneOrder({ order_number: number });
+      setDoneOrder({ order_id: savedId, order_number: number, order_type: orderType, driver_id: driverId || null });
+      setNotifyState('');
       const keepTable = orderType === 'mesa';
       resetDraft(keepTable);
       refreshMesaOrders();
@@ -339,6 +389,35 @@ export default function Pdv() {
       toast({ title: 'Erro ao criar pedido', description: err?.message, variant: 'destructive' });
     } finally {
       setSubmitting(false);
+      submitRef.current = false;
+    }
+  };
+
+  // Notificação manual ao entregador: busca o pedido persistido, monta a
+  // mensagem com dados reais, abre o wa.me e registra NO MÁXIMO "iniciado".
+  const notifyDriver = async () => {
+    const notifyDriverId = doneOrder?.driver_id;
+    if (!doneOrder?.order_id || !notifyDriverId || notifying) return;
+    const driver = drivers.find((d) => d.id === notifyDriverId);
+    if (!driver?.phone) {
+      setNotifyState('Entregador sem telefone válido.');
+      return;
+    }
+    setNotifying(true);
+    try {
+      const detail = await getOrderDetail(supabase, company.id, doneOrder.order_id);
+      if (!detail) throw new Error('Pedido não encontrado.');
+      const url = buildDriverDeliveryUrl(detail, driver);
+      await markDriverNotified(supabase, company.id, {
+        orderId: doneOrder.order_id, driverId: driver.id,
+        message: `Conversa iniciada manualmente pelo PDV (pedido #${detail.order_number}).`,
+      });
+      window.open(url, '_blank', 'noopener');
+      setNotifyState('Conversa aberta no WhatsApp (envio manual). Status: iniciado.');
+    } catch (err) {
+      setNotifyState(`Falha ao preparar notificação: ${err?.message || 'tente de novo.'}`);
+    } finally {
+      setNotifying(false);
     }
   };
 
@@ -353,12 +432,40 @@ export default function Pdv() {
       </div>
 
       {doneOrder && (
-        <div className="mb-3 shrink-0 flex items-center gap-3 rounded-2xl border border-green-200 bg-green-50 p-4">
-          <CheckCircle className="h-6 w-6 text-green-600 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="font-medium text-foreground">Pedido #{doneOrder.order_number} criado!</p>
+        <div className="mb-3 shrink-0 rounded-2xl border border-green-200 bg-green-50 p-4">
+          <div className="flex items-center gap-3">
+            <CheckCircle className="h-6 w-6 text-green-600 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-foreground">Pedido #{doneOrder.order_number} salvo!</p>
+              {notifyState && <p className="text-xs text-muted-foreground mt-0.5">{notifyState}</p>}
+            </div>
+            <Button variant="outline" size="sm" onClick={() => { setDoneOrder(null); setNotifyState(''); }}>Nova venda</Button>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setDoneOrder(null)}>Novo pedido</Button>
+          {doneOrder.order_id && (
+            <div className="flex flex-wrap gap-2 mt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(`/impressao/${doneOrder.order_id}?modo=cozinha`, '_blank', 'noopener')}
+              >
+                <Printer className="h-3.5 w-3.5" /> Cupom cozinha
+              </Button>
+              {doneOrder.order_type === 'delivery' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.open(`/impressao/${doneOrder.order_id}?modo=pacote`, '_blank', 'noopener')}
+                >
+                  <Tag className="h-3.5 w-3.5" /> Etiqueta pacote
+                </Button>
+              )}
+              {doneOrder.order_type === 'delivery' && doneOrder.driver_id && (
+                <Button variant="outline" size="sm" onClick={notifyDriver} disabled={notifying}>
+                  <MessageCircle className="h-3.5 w-3.5" /> {notifying ? 'Preparando...' : 'Avisar entregador'}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -448,7 +555,7 @@ export default function Pdv() {
 
             <div className="flex-1 min-h-0 lg:overflow-y-auto space-y-4 lg:pr-1">
             <div className="space-y-1.5">
-              <Label>👤 Cliente</Label>
+              <Label>👤 Cliente{orderType === 'delivery' ? ' *' : ' (opcional)'}</Label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input value={customerSearch || customer.name} onChange={e => { setCustomerSearch(e.target.value); setCustomer({ name: e.target.value, phone: customer.phone }); }} placeholder="Buscar ou nome avulso" className="pl-9" />
@@ -484,7 +591,30 @@ export default function Pdv() {
                 <option value="">Selecione...</option>
                 {PAYMENTS.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
+              {paymentMethod === 'Dinheiro' && (
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground shrink-0">Troco para R$</Label>
+                  <Input
+                    value={changeFor}
+                    onChange={e => setChangeFor(e.target.value.replace(/[^0-9.,]/g, '').replace(',', '.'))}
+                    placeholder="0,00"
+                    inputMode="decimal"
+                    className="h-8 text-right"
+                    aria-label="Troco para quanto"
+                  />
+                </div>
+              )}
             </div>
+
+            {orderType === 'delivery' && drivers.length > 0 && (
+              <div className="space-y-1.5">
+                <Label>🛵 Entregador</Label>
+                <select value={driverId} onChange={e => setDriverId(e.target.value)} className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm min-w-0">
+                  <option value="">Sem entregador (associar depois)</option>
+                  {drivers.map(d => <option key={d.id} value={d.id}>{d.name}{d.vehicle_type ? ` • ${d.vehicle_type}` : ''}</option>)}
+                </select>
+              </div>
+            )}
 
             <div className="min-w-0">
               {selectedComanda ? (
@@ -504,17 +634,35 @@ export default function Pdv() {
               ) : (
                 <div className="space-y-2 max-h-64 lg:max-h-none overflow-y-auto lg:overflow-visible pr-1">
                   {items.map(x => (
-                    <div key={x.product_id} className="flex items-center gap-2 rounded-xl border border-border p-2 min-w-0">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium truncate">{x.name}</p>
-                        <p className="text-xs text-muted-foreground">{fmtCurrency(x.unit_price)} cada</p>
+                    <div key={x.product_id} className="rounded-xl border border-border p-2 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">{x.name}</p>
+                          <p className="text-xs text-muted-foreground">{fmtCurrency(x.unit_price)} cada</p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button type="button" aria-label="Diminuir" onClick={() => changeQty(x.product_id, -1)} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted"><Minus className="h-3.5 w-3.5" /></button>
+                          <span className="w-6 text-center text-sm font-medium">{x.quantity}</span>
+                          <button type="button" aria-label="Aumentar" onClick={() => changeQty(x.product_id, 1)} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted"><Plus className="h-3.5 w-3.5" /></button>
+                          <button type="button" aria-label={`Remover ${x.name}`} onClick={() => removeItem(x.product_id)} className="flex h-8 w-8 items-center justify-center rounded-md text-destructive hover:bg-destructive/10"><Trash2 className="h-4 w-4" /></button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button type="button" aria-label="Diminuir" onClick={() => changeQty(x.product_id, -1)} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted"><Minus className="h-3.5 w-3.5" /></button>
-                        <span className="w-6 text-center text-sm font-medium">{x.quantity}</span>
-                        <button type="button" aria-label="Aumentar" onClick={() => changeQty(x.product_id, 1)} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted"><Plus className="h-3.5 w-3.5" /></button>
-                        <button type="button" aria-label={`Remover ${x.name}`} onClick={() => removeItem(x.product_id)} className="flex h-8 w-8 items-center justify-center rounded-md text-destructive hover:bg-destructive/10"><Trash2 className="h-4 w-4" /></button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setNoteOpenId(noteOpenId === x.product_id ? null : x.product_id)}
+                        className="mt-1 text-[11px] text-muted-foreground hover:text-foreground"
+                      >
+                        {x.notes ? `📝 ${x.notes}` : '+ obs do item'}
+                      </button>
+                      {noteOpenId === x.product_id && (
+                        <Input
+                          value={x.notes || ''}
+                          onChange={e => setItemNotes(x.product_id, e.target.value)}
+                          placeholder="Ex.: sem cebola, ponto da carne..."
+                          className="mt-1 h-8 text-xs"
+                          aria-label={`Observação de ${x.name}`}
+                        />
+                      )}
                     </div>
                   ))}
                 </div>

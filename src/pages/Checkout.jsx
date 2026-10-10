@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
-import { createOrder as sbCreateOrder } from '@/api/orders';
+import { createOrder as sbCreateOrder, buildCreateOrderItems } from '@/api/orders';
 import { getStorefrontBySlug } from '@/api/storefront';
 import { useCart } from '@/lib/CartContext';
 import { saveResume } from '@/lib/orderResume';
+import { suggestUpsellSteps } from '@/lib/upsell';
+import ProductModal from '@/components/menu/ProductModal';
+import UpsellSuggestions from '@/components/checkout/UpsellSuggestions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,10 +26,17 @@ const ORDER_TYPES = [
 export default function Checkout() {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const { items, getSubtotal, clearCart, company, setCartCompany } = useCart();
+  const { items, getSubtotal, clearCart, company, setCartCompany, addItem } = useCart();
 
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState(1);
+  const [products, setProducts] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [selectedUpsell, setSelectedUpsell] = useState(null);
+  // Wizard de sugestões (Fase B): sub-etapa dentro da etapa 3.
+  const [subStep, setSubStep] = useState(0);
+  // Guarda anti-duplo: cliques repetidos antes do estado assentar.
+  const submitRef = useRef(false);
   const [orderType, setOrderType] = useState('delivery');
   const [tableNumber, setTableNumber] = useState('');
   const [deliveryZones, setDeliveryZones] = useState([]);
@@ -39,6 +49,14 @@ export default function Checkout() {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  // Wizard de sugestões (Fase B): etapas não-vazias (acompanhamentos →
+  // bebidas → sobremesas); carrinho preservado entre elas. Hook antes de
+  // qualquer return antecipado (regras dos Hooks).
+  const upsellSteps = useMemo(
+    () => suggestUpsellSteps({ products, categories, cartItems: items }),
+    [products, categories, items],
+  );
 
   // Check for ?mesa= query param
   const urlParams = new URLSearchParams(window.location.search);
@@ -62,6 +80,8 @@ export default function Checkout() {
         const storefront = await getStorefrontBySlug(supabase, slug);
         setCartCompany(storefront.company);
         setDeliveryZones(storefront.delivery_zones || []);
+        setProducts(storefront.products || []);
+        setCategories(storefront.categories || []);
       } catch (err) {
         if (err?.code === 'NOT_FOUND') navigate('/');
         else {
@@ -97,6 +117,9 @@ export default function Checkout() {
   const deliveryFee = orderType === 'delivery' ? (selectedZone?.fee ?? company?.delivery_fee ?? 0) : 0;
   const total = subtotal + deliveryFee;
 
+  // Sub-etapa atual do wizard (limitada ao número de etapas existentes).
+  const activeSub = Math.min(subStep, Math.max(upsellSteps.length - 1, 0));
+
   const handleNext = () => {
     setError('');
     if (step === 1) {
@@ -114,8 +137,23 @@ export default function Checkout() {
         setError('Endereço é obrigatório para delivery');
         return;
       }
-      setStep(3);
+      // Sem sugestões: pula direto para a revisão.
+      setSubStep(0);
+      setStep(upsellSteps.length > 0 ? 3 : 4);
+    } else if (step === 3) {
+      // Sugestões são opcionais: avançar sem validar.
+      if (activeSub < upsellSteps.length - 1) setSubStep(activeSub + 1);
+      else setStep(4);
     }
+  };
+
+  const handleBack = () => {
+    setError('');
+    if (step === 3 && activeSub > 0) setSubStep(activeSub - 1);
+    else if (step === 3) setStep(2);
+    else if (step === 4 && upsellSteps.length > 0) { setSubStep(upsellSteps.length - 1); setStep(3); }
+    else if (step === 4) setStep(2);
+    else setStep((s) => Math.max(1, s - 1));
   };
 
   // Loja fechada não recebe pedidos (mesma fonte do cardápio: companies.is_open).
@@ -131,6 +169,10 @@ export default function Checkout() {
       setError('Esta loja está fechada no momento e não está recebendo pedidos.');
       return;
     }
+    // Idempotência no cliente: ignora cliques repetidos com envio em curso.
+    // Em falha, o carrinho é preservado e uma nova tentativa é permitida.
+    if (submitRef.current) return;
+    submitRef.current = true;
     setSubmitting(true);
     setError('');
     try {
@@ -138,12 +180,7 @@ export default function Checkout() {
         companySlug: slug,
         orderType,
         tableNumber,
-        items: items.map(item => ({
-          product_id: item.product_id,
-          quantity: item.quantity,
-          complements: item.complements,
-          notes: item.notes
-        })),
+        items: buildCreateOrderItems(items),
         customer,
         deliveryZoneId,
         paymentMethod,
@@ -157,6 +194,7 @@ export default function Checkout() {
       setError(err?.message || 'Erro ao criar pedido. Tente novamente.');
     } finally {
       setSubmitting(false);
+      submitRef.current = false;
     }
   };
 
@@ -178,7 +216,7 @@ export default function Checkout() {
       {/* Progress */}
       <div className="mx-auto max-w-2xl px-4 py-4">
         <div className="flex items-center gap-2">
-          {[1, 2, 3].map(s => (
+          {[1, 2, 3, 4].map(s => (
             <div key={s} className="flex items-center gap-2 flex-1">
               <div
                 className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium transition-colors ${
@@ -188,7 +226,7 @@ export default function Checkout() {
               >
                 {s < step ? <CheckCircle className="h-4 w-4" /> : s}
               </div>
-              {s < 3 && <div className={`h-1 flex-1 rounded ${s < step ? '' : 'bg-muted'}`} style={s < step ? { backgroundColor: primaryColor } : {}} />}
+              {s < 4 && <div className={`h-1 flex-1 rounded ${s < step ? '' : 'bg-muted'}`} style={s < step ? { backgroundColor: primaryColor } : {}} />}
             </div>
           ))}
         </div>
@@ -328,8 +366,32 @@ export default function Checkout() {
           </div>
         )}
 
-        {/* Step 3: Review */}
-        {step === 3 && (
+        {/* Step 3: Upsell em etapas (acompanhamentos → bebidas → sobremesas) */}
+        {step === 3 && upsellSteps[activeSub] && (
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground text-center">
+              Sugestões {activeSub + 1} de {upsellSteps.length}: {upsellSteps[activeSub].title} (opcional)
+            </p>
+            <UpsellSuggestions
+              products={products}
+              categories={categories}
+              primaryColor={primaryColor}
+              onCustomize={setSelectedUpsell}
+              onSkip={handleNext}
+              section={upsellSteps[activeSub]}
+            />
+            {error && <p className="text-sm text-red-600">{error}</p>}
+            <div className="flex gap-3">
+              <Button variant="outline" className="flex-1" onClick={handleBack}>Voltar</Button>
+              <Button className="flex-1" style={{ backgroundColor: primaryColor }} onClick={handleNext}>
+                {activeSub < upsellSteps.length - 1 ? 'Pular' : 'Continuar'} <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 4: Review */}
+        {step === 4 && (
           <div className="space-y-4">
             <h2 className="font-heading text-lg font-bold">Revisar pedido</h2>
 
@@ -397,7 +459,7 @@ export default function Checkout() {
 
             {error && <p className="text-sm text-red-600">{error}</p>}
             <div className="flex gap-3">
-              <Button variant="outline" className="flex-1" onClick={() => setStep(2)} disabled={submitting}>Voltar</Button>
+              <Button variant="outline" className="flex-1" onClick={handleBack} disabled={submitting}>Voltar</Button>
               <Button className="flex-1" style={{ backgroundColor: primaryColor }} onClick={handleSubmit} disabled={submitting || isClosed}>
                 {submitting ? (
                   <><Loader2 className="h-4 w-4 animate-spin" /> Enviando...</>
@@ -408,6 +470,15 @@ export default function Checkout() {
             </div>
           </div>
         )}
+
+        {/* Configurador para sugestões com adicionais/opções */}
+        <ProductModal
+          product={selectedUpsell}
+          primaryColor={primaryColor}
+          isOpen={!!selectedUpsell}
+          onClose={() => setSelectedUpsell(null)}
+          onAddToCart={addItem}
+        />
       </div>
     </div>
   );

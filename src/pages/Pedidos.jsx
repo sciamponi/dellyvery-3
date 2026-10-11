@@ -22,6 +22,7 @@ import { playNewOrderAlert, requestNotificationPermission, showOrderNotification
 import { getAlertPrefs } from '@/lib/alertPrefs';
 import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
 import { changeOrderStatus, getAvailableActions, STATUS_LABELS } from '@/lib/orderStatusFlow';
+import { formatOrderTotal, isMissingTotal } from '@/lib/money';
 import {
   LEGACY_STAGE_SEED,
   listStages as sbListStages,
@@ -536,7 +537,12 @@ export default function Pedidos() {
                                   {order.payment_method && <p className="text-xs text-muted-foreground mt-1 truncate">💳 {order.payment_method}</p>}
                                   {order.notes && <p className="text-xs text-muted-foreground mt-1 italic truncate">📝 {order.notes}</p>}
                                   <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-border">
-                                    <span className="font-heading font-bold text-sm text-foreground truncate min-w-0">{fmtCurrency(order.total)}</span>
+                                    <span
+                                      title={isMissingTotal(order.total) ? 'Total indisponível para este pedido' : undefined}
+                                      className="font-heading font-bold text-sm text-foreground whitespace-nowrap shrink-0"
+                                    >
+                                      {formatOrderTotal(order.total)}
+                                    </span>
                                     {(cardPrimary || cardCancel) && (
                                       <span className="flex shrink-0 items-center justify-end gap-1.5">
                                           {cardCancel && (

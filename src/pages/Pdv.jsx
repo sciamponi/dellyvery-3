@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Image } from '@/components/ui/image';
 import { useToast } from '@/components/ui/use-toast';
 import { calcPdvTotals } from '@/lib/orderDay';
+import { validatePdvDraft } from '@/lib/pdvValidation';
 import { groupComandasByTable, mergeComandaItems, toPdvDraftItem, normalizeTable } from '@/lib/tableComandas';
 import { buildWhatsAppUrl } from '@/lib/menuShare';
 import TableSelectModal, { MergeConfirmModal, TableMergePicker } from '@/components/pdv/TableSelectModal';
@@ -52,7 +53,9 @@ export default function Pdv() {
   const [filterCat, setFilterCat] = useState('all');
 
   const [items, setItems] = useState([]);
-  const [orderType, setOrderType] = useState('mesa');
+  // Balcão (retirada) é o padrão: finalizar sem escolher tipo nunca
+  // deve cobrar mesa.
+  const [orderType, setOrderType] = useState('retirada');
   const [tableNumber, setTableNumber] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [customer, setCustomer] = useState({ name: '', phone: '' });
@@ -200,9 +203,18 @@ export default function Pdv() {
     }
   };
 
+  // Troca de modalidade nunca mistura comanda de mesa com outro tipo:
+  // o rascunho vira pedido novo (itens preservados como linhas avulsas).
+  const selectOrderType = (t) => {
+    if (t === orderType) return;
+    setOrderType(t);
+    setSelectedComandaId(null);
+  };
+
   // Mesa → comanda ativa → cliente (nome/telefone automáticos).
   const loadComanda = (order) => {
     if (!order) return;
+    setOrderType('mesa');
     setTableNumber(order.table_number || '');
     setCustomer({ name: order.customer_name || '', phone: order.customer_phone || '' });
     setCustomerSearch('');
@@ -217,6 +229,7 @@ export default function Pdv() {
 
   const pickTable = (table) => {
     const t = normalizeTable(table);
+    setOrderType('mesa');
     setTableNumber(t);
     const group = tables.find(x => x.table === t);
     if (group && group.comandas.length === 1) {
@@ -232,6 +245,7 @@ export default function Pdv() {
   const newComanda = (table) => {
     const t = normalizeTable(table) || normalizeTable(tableNumber);
     resetDraft(true);
+    setOrderType('mesa');
     setTableNumber(t);
     setTableOpen(false);
     setMergeTable(null);
@@ -307,32 +321,20 @@ export default function Pdv() {
   };
 
   const handleSubmit = async () => {
-    if (items.length === 0) {
-      toast({ title: 'Pedido vazio', description: 'Adicione ao menos um produto.', variant: 'destructive' });
-      return;
-    }
-    if (orderType === 'mesa' && !tableNumber.trim()) {
-      toast({ title: 'Mesa obrigatória', description: 'Informe o número da mesa.', variant: 'destructive' });
-      return;
-    }
-    // Entrega exige identificação; mesa/balcão aceitam pedido avulso.
-    if (orderType === 'delivery' && (!customer.name.trim() || !customer.phone.trim())) {
-      toast({ title: 'Cliente obrigatório', description: 'Para entrega, informe nome e telefone.', variant: 'destructive' });
-      return;
-    }
-    if (orderType === 'delivery' && !address.trim()) {
-      toast({ title: 'Endereço obrigatório', description: 'Informe o endereço de entrega.', variant: 'destructive' });
+    // Guarda anti-duplo no topo: antes das validações, para toques
+    // repetidos nunca gerarem nem toast duplicado nem pedido duplo.
+    if (submitRef.current) return;
+    // Validação única por tentativa (validatePdvDraft retorna o 1º erro).
+    const invalid = validatePdvDraft({
+      items, orderType, tableNumber, customer, address, paymentMethod, changeFor,
+    });
+    if (invalid) {
+      toast({ title: invalid.title, description: invalid.description, variant: 'destructive' });
       return;
     }
     const changeForValue = paymentMethod === 'Dinheiro' && String(changeFor).trim() !== ''
       ? Number(String(changeFor).replace(',', '.'))
       : null;
-    if (paymentMethod === 'Dinheiro' && String(changeFor).trim() !== ''
-      && !(changeForValue > 0)) {
-      toast({ title: 'Troco inválido', description: 'Informe um valor maior que zero.', variant: 'destructive' });
-      return;
-    }
-    if (submitRef.current) return;
     submitRef.current = true;
     setSubmitting(true);
     try {
@@ -518,7 +520,7 @@ export default function Pdv() {
                   <button
                     key={t.id}
                     type="button"
-                    onClick={() => setOrderType(t.id)}
+                    onClick={() => selectOrderType(t.id)}
                     className={`flex flex-col items-center gap-0.5 rounded-xl border px-1 py-2 text-[11px] font-medium transition-colors min-w-0 ${orderType === t.id ? 'border-primary bg-primary/5 text-foreground' : 'border-border text-muted-foreground'}`}
                   >
                     <t.icon className="h-4 w-4 shrink-0" />

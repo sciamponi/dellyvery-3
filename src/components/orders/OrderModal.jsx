@@ -13,7 +13,8 @@ import { listDrivers } from '@/api/team';
 import { assignDriver as sbAssignDriver } from '@/api/orders';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
-import { editOrder as sbEditOrder, getOrderDetail as sbGetOrderDetail, listOrdersWithItems as sbListOrdersWithItems } from '@/api/orders';
+import { listCustomers as sbListCustomers } from '@/api/customers';
+import { editOrder as sbEditOrder, getOrderDetail as sbGetOrderDetail, listOrdersWithItems as sbListOrdersWithItems, linkOrderCustomer as sbLinkCustomer, linkOrderTable as sbLinkTable } from '@/api/orders';
 import { listProducts as sbListProducts } from '@/api/catalog';
 import { getCompanySettings as sbGetSettings } from '@/api/company';
 import { useToast } from '@/components/ui/use-toast';
@@ -52,6 +53,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const [photoMap, setPhotoMap] = useState({});
   const [custHistory, setCustHistory] = useState([]);
   const [custStats, setCustStats] = useState(null);
+  const [histOk, setHistOk] = useState(false);
   const [extraLoading, setExtraLoading] = useState(false);
   const statusBusyRef = useRef(false);
   const [showPicker, setShowPicker] = useState(false);
@@ -69,6 +71,14 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const [assigning, setAssigning] = useState(false);
   // UX Kanban: gerenciar entregador direto no pedido (alterar/remover).
   const [managingDriver, setManagingDriver] = useState(false);
+  // Vínculos de balcão: cliente e mesa (sem recriar o pedido).
+  const [linking, setLinking] = useState(null);
+  const [custQuery, setCustQuery] = useState('');
+  const [custResults, setCustResults] = useState([]);
+  const [custSelected, setCustSelected] = useState('');
+  const [tableList, setTableList] = useState([]);
+  const [tableSelected, setTableSelected] = useState('');
+  const [linkBusy, setLinkBusy] = useState(false);
   const [defaultDriverId, setDefaultDriverId] = useState(null);
   const [manageList, setManageList] = useState([]);
   const [manageSelected, setManageSelected] = useState('');
@@ -82,11 +92,16 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setAssignStep(null);
     setKeepStep(null);
     setManagingDriver(false);
+    setLinking(null);
+    setCustQuery('');
+    setCustResults([]);
+    setTableList([]);
     setStatusAction(null);
     statusBusyRef.current = false;
     setPhotoMap({});
     setCustHistory([]);
     setCustStats(null);
+    setHistOk(false);
     setExtraLoading(true);
 
     const load = async () => {
@@ -118,6 +133,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
             (order.customer_id && h.customer_id === order.customer_id) ||
             (!order.customer_id && order.customer_phone && (h.customer_phone === order.customer_phone || h.customer_data?.phone === order.customer_phone))
           )).slice(0, 5);
+        setHistOk(true);
         setCustHistory(mine);
         if (mine.length > 0 || order.customer_id || order.customer_phone) {
           const prevTotal = mine.reduce((s, h) => s + (Number(h.total) || 0), 0);
@@ -129,6 +145,43 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     load();
     return () => { cancelled = true; };
   }, [order?.id, isOpen]);
+
+  // Vínculos: recarrega o detalhe (itens/totais preservados pela API).
+  const reloadAfterLink = async (okMsg) => {
+    try {
+      const detail = await sbGetOrderDetail(supabase, order.company_id, order.id);
+      onOrderUpdated(detail || order);
+    } catch {
+      onOrderUpdated(order);
+    }
+    toast({ title: okMsg });
+    setLinking(null);
+  };
+
+  const openLinkCustomer = async () => {
+    setCustQuery('');
+    setCustSelected(order.customer_id || '');
+    try {
+      const list = await sbListCustomers(supabase, order.company_id);
+      setCustResults(list || []);
+    } catch {
+      setCustResults([]);
+    }
+    setLinking('customer');
+  };
+
+  const openLinkTable = async () => {
+    setTableSelected(order.table_id || '');
+    try {
+      const { data } = await supabase.from('dining_tables')
+        .select('id,name,active').eq('company_id', order.company_id).eq('active', true)
+        .order('name');
+      setTableList(data || []);
+    } catch {
+      setTableList([]);
+    }
+    setLinking('table');
+  };
 
   // Motoboy padrão da empresa (para o selo "Padrão" no entregador).
   useEffect(() => {
@@ -370,6 +423,14 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
             <div className="rounded-2xl bg-muted/50 p-4 space-y-1.5">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Cliente</p>
               <p className="font-heading text-xl font-bold text-foreground break-words">{order.customer_name}</p>
+              {order.customer_id && order.status !== 'cancelado' && histOk &&
+                !custHistory.some(h => h.status !== 'cancelado') && (
+                <p title="Cliente identificado sem pedidos anteriores nesta empresa">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">
+                    🥇 Primeiro pedido deste cliente
+                  </span>
+                </p>
+              )}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
                 {order.customer_phone && (
                   <span className="flex items-center gap-1.5">
@@ -402,6 +463,126 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                     <span className="block text-foreground break-words mt-0.5">{formatAddress(order)}</span>
                   </span>
                 </button>
+              )}
+              {order.status !== 'finalizado' && order.status !== 'cancelado' && sbActive && (
+                <div className="rounded-xl border border-border p-3 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">🔗 Vínculos</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm text-muted-foreground truncate">
+                      Cliente: <span className="font-medium text-foreground">{order.customer_name || 'Avulso'}</span>
+                      {order.order_type === 'mesa' && (
+                        <> • Mesa: <span className="font-medium text-foreground">{order.table_number || '—'}</span></>
+                      )}
+                    </p>
+                    {linking ? (
+                      <Button variant="ghost" size="sm" onClick={() => setLinking(null)} disabled={linkBusy}>
+                        Fechar
+                      </Button>
+                    ) : (
+                      <div className="flex shrink-0 gap-1.5">
+                        <Button variant="outline" size="sm" onClick={openLinkCustomer}>
+                          {order.customer_id ? 'Alterar' : 'Vincular'}
+                        </Button>
+                        {order.order_type === 'mesa' && (
+                          <Button variant="outline" size="sm" onClick={openLinkTable}>Mesa</Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {linking === 'customer' && (
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                        <Input
+                          value={custQuery}
+                          onChange={(e) => setCustQuery(e.target.value)}
+                          placeholder="Buscar cliente por nome ou telefone..."
+                          className="pl-8 h-9 text-sm"
+                        />
+                      </div>
+                      <div className="max-h-40 overflow-y-auto rounded-lg border border-border divide-y divide-border">
+                        {custResults
+                          .filter((c) => {
+                            const q = custQuery.trim().toLowerCase();
+                            if (!q) return true;
+                            return (c.name || '').toLowerCase().includes(q) || (c.phone || '').includes(q);
+                          })
+                          .slice(0, 8)
+                          .map((c) => (
+                            <button
+                              key={c.id}
+                              type="button"
+                              onClick={() => setCustSelected(c.id)}
+                              className={`w-full text-left px-3 py-2 text-sm hover:bg-muted ${custSelected === c.id ? 'bg-muted font-medium' : ''}`}
+                            >
+                              {c.name || 'Sem nome'}
+                              {c.phone && <span className="text-muted-foreground"> • {c.phone}</span>}
+                            </button>
+                          ))}
+                        {custResults.length === 0 && (
+                          <p className="px-3 py-2 text-xs text-muted-foreground">Nenhum cliente encontrado.</p>
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        className="w-full"
+                        disabled={!custSelected || linkBusy}
+                        onClick={async () => {
+                          setLinkBusy(true);
+                          try {
+                            const chosen = custResults.find((c) => c.id === custSelected);
+                            if (!chosen) throw new Error('Escolha um cliente da lista');
+                            if (!window.confirm(`Vincular "${chosen.name || 'sem nome'}" a este pedido?`)) return;
+                            await sbLinkCustomer(supabase, order.id, order.company_id, chosen.id);
+                            await reloadAfterLink('Cliente vinculado!');
+                          } catch (err) {
+                            toast({ title: 'Erro ao vincular', description: err?.message, variant: 'destructive' });
+                          } finally {
+                            setLinkBusy(false);
+                          }
+                        }}
+                      >
+                        {linkBusy ? 'Salvando...' : 'Confirmar vínculo'}
+                      </Button>
+                    </div>
+                  )}
+                  {linking === 'table' && order.order_type === 'mesa' && (
+                    <div className="space-y-2">
+                      <Select value={tableSelected} onValueChange={setTableSelected}>
+                        <SelectTrigger><SelectValue placeholder="Selecione a mesa..." /></SelectTrigger>
+                        <SelectContent>
+                          {tableList.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>Mesa {t.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {tableList.length === 0 && (
+                        <p className="text-xs text-muted-foreground">Nenhuma mesa ativa configurada.</p>
+                      )}
+                      <Button
+                        size="sm"
+                        className="w-full"
+                        disabled={!tableSelected || linkBusy}
+                        onClick={async () => {
+                          setLinkBusy(true);
+                          try {
+                            const chosen = tableList.find((t) => t.id === tableSelected);
+                            if (!chosen) throw new Error('Escolha uma mesa válida');
+                            if (!window.confirm(`Vincular este pedido à Mesa ${chosen.name}?`)) return;
+                            await sbLinkTable(supabase, order.id, order.company_id, chosen.id);
+                            await reloadAfterLink('Mesa vinculada!');
+                          } catch (err) {
+                            toast({ title: 'Erro ao vincular', description: err?.message, variant: 'destructive' });
+                          } finally {
+                            setLinkBusy(false);
+                          }
+                        }}
+                      >
+                        {linkBusy ? 'Salvando...' : 'Confirmar mesa'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
               )}
               {order.order_type === 'delivery' && order.status !== 'finalizado' && order.status !== 'cancelado' && sbActive && (
                 <div className="rounded-xl border border-border p-3 space-y-2">
@@ -604,7 +785,11 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
               {extraLoading ? (
                 <p className="text-sm text-muted-foreground">Carregando...</p>
               ) : custHistory.length === 0 ? (
+                (histOk && (order.customer_id || order.customer_phone)) ? (
                 <p className="text-sm text-muted-foreground">Este é o primeiro pedido deste cliente.</p>
+                ) : (
+                <p className="text-sm text-muted-foreground">Sem histórico vinculado a este pedido.</p>
+                )
               ) : (
                 <div className="space-y-2">
                   {custHistory.map(h => (

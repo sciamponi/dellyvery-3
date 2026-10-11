@@ -2,6 +2,9 @@
  * Canal 📢 Atualizações: novidades entregues + roadmap.
  * Hardcoded (sem migration); futura tabela `changelog` quando preciso.
  * status: 'disponivel' | 'desenvolvimento' | 'embreve'
+ * Processo: a cada publicação, adicionar aqui SOMENTE o que foi entregue e
+ * testado (nunca o planejado), com id/sort_order sequenciais na aba, e
+ * atualizar as contagens em updates.test.js.
  */
 
 export const UPDATE_TABS = [
@@ -45,6 +48,11 @@ export const UPDATES = [
       'Quando chega um pedido, o sistema mostra o aviso e destaca que existe uma nova solicitação.',
       'Você percebe rapidamente que existe um novo pedido para atender.',
       'Ao receber o aviso, abra o pedido, confira os detalhes e confirme o atendimento.') },
+  { id: 'u25', tab: 'destaques', sort_order: 4, icon: '🖨️', title: 'Cupom de cozinha e etiqueta', desc: 'Imprima o cupom de produção para a cozinha e a etiqueta de identificação do pacote de entrega.', status: 'disponivel',
+    details: D('Cupom de produção com itens, complementos e observações em destaque, mais etiqueta do pacote com cliente, endereço e resumo.',
+      'Após salvar o pedido no PDV, use os botões de impressão; também dá para reimprimir sem criar outro pedido.',
+      'A cozinha recebe o essencial para produzir e o entregador identifica o pacote correto.',
+      'No PDV, finalize o pedido e clique em Cupom cozinha ou Etiqueta pacote.') },
   // Novidades
   { id: 'u04', tab: 'novidades', sort_order: 1, icon: '🚴', title: 'Motoboy padrão', desc: 'Deixe um motoboy definido para receber automaticamente os pedidos de entrega.', status: 'disponivel',
     details: D('Uma opção para escolher o motoboy que será usado como padrão nas entregas.',
@@ -61,6 +69,21 @@ export const UPDATES = [
       'O sistema reúne os pedidos finalizados e apresenta os valores de forma organizada.',
       'Você consegue entender melhor quanto está vendendo sem precisar fazer as contas manualmente.',
       'Acesse Financeiro e escolha o período que deseja consultar.') },
+  { id: 'u26', tab: 'novidades', sort_order: 4, icon: '🍟', title: 'Sugestões no checkout', desc: 'Ofereça acompanhamentos, bebidas e sobremesas em etapas opcionais antes da confirmação.', status: 'disponivel',
+    details: D('Etapas opcionais de venda adicional no pedido online: acompanhamentos, depois bebidas, depois sobremesas.',
+      'O cliente pode pular, voltar, ajustar quantidades; nada é adicionado sozinho e o total é recalculado.',
+      'Aumenta o ticket sem atrito na compra.',
+      'Acontece sozinho no checkout quando o cardápio tem essas categorias.') },
+  { id: 'u27', tab: 'novidades', sort_order: 5, icon: '🥇', title: 'Selo de primeiro pedido', desc: 'Identifique de relance quando um pedido é o primeiro daquele cliente na sua empresa.', status: 'disponivel',
+    details: D('Um selo visível no Kanban e nos detalhes quando o cliente identificado ainda não tem pedidos anteriores (cancelados não contam).',
+      'A verificação usa o histórico já carregado, sem consultas extras, e respeita cada empresa.',
+      'Dê boas-vindas e atenção especial a quem compra pela primeira vez.',
+      'Aparece sozinho nos cartões e no modal do pedido.') },
+  { id: 'u28', tab: 'novidades', sort_order: 6, icon: '🔗', title: 'Vincular cliente e mesa', desc: 'Complete depois: vincule um cliente ou uma mesa a pedidos de balcão, sem recriar o pedido.', status: 'disponivel',
+    details: D('Nos detalhes do pedido, pesquise um cliente da empresa ou escolha uma mesa ativa e confirme o vínculo.',
+      'O vínculo atualiza o pedido e registra no histórico; número, itens e total são preservados, sem trocar o tipo do pedido.',
+      'Pedidos avulsos ganham identificação sem retrabalho.',
+      'Abra o pedido, use a seção Vínculos e confirme.') },
   // Melhorias
   { id: 'u07', tab: 'melhorias', sort_order: 1, icon: '📱', title: 'Compartilhe seu cardápio', desc: 'Divulgue seu cardápio facilmente pelo WhatsApp, redes sociais ou onde quiser.', status: 'disponivel',
     details: D('Um link exclusivo para seus clientes acessarem seu cardápio.',
@@ -77,6 +100,11 @@ export const UPDATES = [
       'Você cria categorias como Lanches, Bebidas ou Sobremesas e adiciona os produtos dentro delas.',
       'Seu cliente encontra mais rapidamente aquilo que procura.',
       'Acesse Cardápio, cadastre suas categorias e depois adicione seus produtos com foto, preço e informações.') },
+  { id: 'u29', tab: 'melhorias', sort_order: 4, icon: '✅', title: 'Baixa de entrega confirmada', desc: 'Conclua entregas com confirmação e mantenha as colunas de finalizados sempre visíveis.', status: 'disponivel',
+    details: D('O cartão em entrega mostra Concluir entrega com pedido de confirmação; Finalizado e Cancelado têm coluna própria mesmo quando inativos.',
+      'A baixa usa a mesma API de status, preserva histórico e não altera pagamento.',
+      'Sem baixas acidentais e sem pedidos sumidos do Kanban.',
+      'No Kanban, clique em Concluir entrega e confirme.') },
   // Correções
   { id: 'u10', tab: 'correcoes', sort_order: 1, icon: '🛵', title: 'Entregas', desc: 'Organize suas entregas e acompanhe os pedidos que precisam chegar até seus clientes.', status: 'disponivel',
     details: D('Ferramentas para ajudar no controle dos pedidos de delivery.',
@@ -88,6 +116,11 @@ export const UPDATES = [
       'Você entra com seu e-mail e senha para acessar as ferramentas da sua loja.',
       'Suas informações ficam organizadas em um único lugar e o acesso pode ser protegido.',
       'Entre pelo seu acesso e, quando necessário, altere sua senha em Perfil.') },
+  { id: 'u30', tab: 'correcoes', sort_order: 3, icon: '🧾', title: 'Totais e PDV por modalidade', desc: 'Totais sempre visíveis nos cartões e PDV validando cada modalidade (mesa, balcão, entrega).', status: 'disponivel',
+    details: D('O total do cartão nunca trunca nem some; valor ausente aparece como indisponível em vez de enganar.',
+      'O PDV abre no balcão, valida mesa só para mesa, exige dados só na entrega e impede toques duplos.',
+      'Menos erros de digitação e de modalidade no salão.',
+      'Opere normalmente no PDV; as regras aparecem como mensagens quando faltar algo.') },
   // Pagamentos (planejamento)
   { id: 'u12', tab: 'pagamentos', sort_order: 1, icon: '💳', title: 'Pagamentos online', desc: 'Desenho aprovado: Asaas + Mercado Pago via abstração PaymentProvider.', status: 'desenvolvimento' },
   { id: 'u13', tab: 'pagamentos', sort_order: 2, icon: '🟢', title: 'Mercado Pago', desc: 'PIX e cartão no checkout do cliente e na assinatura do lojista.', status: 'embreve' },

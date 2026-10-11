@@ -23,6 +23,7 @@ import { getAlertPrefs } from '@/lib/alertPrefs';
 import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
 import { changeOrderStatus, getAvailableActions, STATUS_LABELS } from '@/lib/orderStatusFlow';
 import { formatOrderTotal, isMissingTotal } from '@/lib/money';
+import { isFirstOrder } from '@/lib/customerHistory';
 import {
   LEGACY_STAGE_SEED,
   listStages as sbListStages,
@@ -474,6 +475,7 @@ export default function Pedidos() {
                           const isDelayed = wtNum > 30 && !['finalizado', 'cancelado'].includes(col.mapsTo);
                           const cardPrimary = getCardPrimary(order);
                           const cardCancel = !['finalizado', 'cancelado'].includes(order.status);
+                          const firstOrder = isFirstOrder(order, orders);
                           return (
                             <Draggable key={order.id} draggableId={order.id} index={index}>
                               {(prov, snapshot) => (
@@ -536,6 +538,7 @@ export default function Pedidos() {
                                   </div>
                                   {order.payment_method && <p className="text-xs text-muted-foreground mt-1 truncate">💳 {order.payment_method}</p>}
                                   {order.notes && <p className="text-xs text-muted-foreground mt-1 italic truncate">📝 {order.notes}</p>}
+                                  {/* Total + selo: linha própria, nunca truncada nem disputada */}
                                   <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-border">
                                     <span
                                       title={isMissingTotal(order.total) ? 'Total indisponível para este pedido' : undefined}
@@ -543,30 +546,41 @@ export default function Pedidos() {
                                     >
                                       {formatOrderTotal(order.total)}
                                     </span>
-                                    {(cardPrimary || cardCancel) && (
-                                      <span className="flex shrink-0 items-center justify-end gap-1.5">
-                                          {cardCancel && (
-                                            <button
-                                              type="button"
-                                              onClick={(e) => { e.stopPropagation(); setCancelOrderData(order); }}
-                                              className="h-8 px-2.5 rounded-lg text-xs font-medium text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors"
-                                            >
-                                              Cancelar
-                                            </button>
-                                          )}
-                                        {cardPrimary && (
-                                          <button
-                                            type="button"
-                                            onClick={(e) => { e.stopPropagation(); requestCardAction(order, cardPrimary); }}
-                                            title={cardPrimary.fallback ? 'Etapa seguinte inativa: usa o fluxo padrão do sistema' : undefined}
-                                            className="h-8 px-2.5 rounded-lg text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors whitespace-nowrap"
-                                          >
-                                            {cardPrimary.next === 'finalizado' && order.status === 'saiu_entrega' ? 'Concluir entrega' : cardPrimary.label}
-                                          </button>
-                                        )}
+                                    {firstOrder && (
+                                      <span
+                                        title="Cliente identificado sem pedidos anteriores nesta empresa"
+                                        className="shrink-0 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800"
+                                      >
+                                        🥇 1º pedido
                                       </span>
                                     )}
                                   </div>
+                                  {/* Ações: empilhadas em largura cheia — nenhum botão
+                                      ultrapassa o cartão em telas estreitas (320–430px).
+                                      Toque mínimo 44px, quebra de linha liberada. */}
+                                  {(cardPrimary || cardCancel) && (
+                                    <div className="flex flex-col items-stretch gap-1.5 mt-2">
+                                      {cardPrimary && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); requestCardAction(order, cardPrimary); }}
+                                          title={cardPrimary.fallback ? 'Etapa seguinte inativa: usa o fluxo padrão do sistema' : undefined}
+                                          className="min-h-11 w-full px-2.5 py-2 rounded-lg text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors whitespace-normal text-center leading-snug"
+                                        >
+                                          {cardPrimary.next === 'finalizado' && order.status === 'saiu_entrega' ? 'Concluir entrega' : cardPrimary.label}
+                                        </button>
+                                      )}
+                                      {cardCancel && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); setCancelOrderData(order); }}
+                                          className="min-h-11 w-full px-2.5 py-2 rounded-lg text-xs font-medium text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors whitespace-normal text-center leading-snug"
+                                        >
+                                          Cancelar
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
                                   {cardPrimary?.fallback && (
                                     <p className="mt-1 text-[11px] text-muted-foreground">⚠️ fluxo padrão (etapa seguinte inativa — verifique em Etapas)</p>
                                   )}

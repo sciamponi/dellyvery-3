@@ -317,6 +317,93 @@ export async function assignDriver(client, orderId, companyId, driverId) {
   return true;
 }
 
+// ---------- Vínculo de cliente/mesa em pedido de balcão ----------
+async function logOrderLink(c, cid, order, action, label, metadata) {
+  try {
+    const { data: sess } = await c.auth.getSession();
+    const uid = sess?.session?.user?.id || null;
+    await c.from('order_status_history').insert({
+      order_id: order.id, old_status: order.status, new_status: order.status,
+      changed_by: uid, notes: label,
+    });
+    await c.from('audit_logs').insert({
+      company_id: cid, user_id: uid, action,
+      entity: 'order', entity_id: order.id, metadata,
+    });
+  } catch {
+    // registro auxiliar nunca bloqueia o vínculo
+  }
+}
+
+async function fetchOrderForLink(c, cid, orderId) {
+  const { data: order, error: ordErr } = await c
+    .from('orders')
+    .select('id,company_id,status,order_type')
+    .eq('id', orderId)
+    .eq('company_id', cid)
+    .maybeSingle();
+  if (ordErr) rpcError(ordErr);
+  if (!order) throw new Error('Pedido não encontrado ou sem permissão');
+  if (TERMINAL_FOR_ASSIGN.includes(order.status)) {
+    throw new Error('Pedido finalizado/cancelado não pode ser alterado');
+  }
+  return order;
+}
+
+// Vincula cliente existente ao pedido (sem recriar, sem mudar número/itens).
+// Atualiza customer_id + snapshot customer_data (nome/telefone) para a UI
+// refletir de imediato. Trigger trg_orders_company_refs é segunda barreira.
+export async function linkOrderCustomer(client, orderId, companyId, customerId) {
+  const c = mustBeConfigured(client);
+  const cid = requireCompanyId(companyId);
+  if (!customerId) throw new Error('Cliente não identificado');
+  const order = await fetchOrderForLink(c, cid, orderId);
+  const { data: cust, error: custErr } = await c
+    .from('customers')
+    .select('id,company_id,name,phone,email')
+    .eq('id', customerId)
+    .maybeSingle();
+  if (custErr) rpcError(custErr);
+  if (!cust || cust.company_id !== cid) throw new Error('Cliente pertence a outra empresa');
+  const { error: updErr } = await c.from('orders').update({
+    customer_id: cust.id,
+    customer_data: { name: cust.name || '', phone: cust.phone || '', email: cust.email || '' },
+  }).eq('id', orderId);
+  if (updErr) rpcError(updErr);
+  await logOrderLink(c, cid, order, 'link_customer', `Cliente vinculado: ${cust.name || 'sem nome'}`, {
+    customer_id: cust.id,
+  });
+  return true;
+}
+
+// Vincula mesa válida (ativa, mesma empresa) a pedido de MESA.
+// Não converte tipo: pedidos de entrega/retirada não aceitam mesa aqui.
+export async function linkOrderTable(client, orderId, companyId, tableId) {
+  const c = mustBeConfigured(client);
+  const cid = requireCompanyId(companyId);
+  if (!tableId) throw new Error('Mesa não identificada');
+  const order = await fetchOrderForLink(c, cid, orderId);
+  if (order.order_type !== 'mesa') {
+    throw new Error('Somente pedidos de mesa aceitam vínculo de mesa');
+  }
+  const { data: table, error: tableErr } = await c
+    .from('dining_tables')
+    .select('id,company_id,name,active')
+    .eq('id', tableId)
+    .maybeSingle();
+  if (tableErr) rpcError(tableErr);
+  if (!table || table.company_id !== cid) throw new Error('Mesa pertence a outra empresa');
+  if (table.active === false) throw new Error('Mesa inativa');
+  const { error: updErr } = await c.from('orders').update({
+    table_id: table.id, table_number: table.name || '',
+  }).eq('id', orderId);
+  if (updErr) rpcError(updErr);
+  await logOrderLink(c, cid, order, 'link_table', `Mesa vinculada: ${table.name || ''}`, {
+    table_id: table.id,
+  });
+  return true;
+}
+
 // ---------- Tracking público (anon via RPC; nunca SELECT direto) ----------
 
 export async function getOrderByToken(client, trackingToken) {

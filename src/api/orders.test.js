@@ -16,6 +16,8 @@ import {
   __activeChannelCount,
   assignDriver,
   isRestaurantClosedError,
+  linkOrderCustomer,
+  linkOrderTable,
 } from './orders.js';
 
 // Mock fiel ao supabase-js v2: channel() devolve a MESMA instância por tópico
@@ -349,6 +351,81 @@ describe('orders — assignDriver (5.5-B3)', () => {  const order = { id: 'o1', 
   it('pedido de outra empresa não é encontrado', async () => {
     const client = assignMock({ orderRow: null });
     await assert.rejects(() => assignDriver(client, 'o1', 'c1', 'd1'), /sem permissão/);
+  });
+});
+
+describe('orders — vincular cliente/mesa (balcão)', () => {
+  const order = { id: 'o1', company_id: 'c1', status: 'novo', order_type: 'retirada' };
+  const cust = { id: 'k1', company_id: 'c1', name: 'Maria', phone: '119', email: '' };
+  const table = { id: 't1', company_id: 'c1', name: '7', active: true };
+  function linkMock({ orderRow = order, refRow = cust, refTable = 'customers' } = {}) {
+    const calls = [];
+    const tableFn = (name) => {
+      const chain = {
+        select: () => chain,
+        eq: () => chain,
+        order: () => chain,
+        limit: () => chain,
+        insert: (p) => { calls.push({ table: name, op: 'insert', payload: p }); return chain; },
+        update: (p) => { calls.push({ table: name, op: 'update', payload: p }); return chain; },
+        delete: () => chain,
+        single: async () => ({ data: null, error: null }),
+        maybeSingle: async () => ({
+          data: name === 'orders' ? orderRow : (name === refTable ? refRow : null),
+          error: null,
+        }),
+        then: (resolve) => resolve({ data: [], error: null }),
+      };
+      return chain;
+    };
+    return {
+      calls,
+      from: (name) => tableFn(name),
+      auth: { getSession: async () => ({ data: { session: { user: { id: 'u1' } } }, error: null }) },
+    };
+  }
+
+  it('vincula cliente com snapshot + history/audit, sem recriar', async () => {
+    const client = linkMock();
+    assert.equal(await linkOrderCustomer(client, 'o1', 'c1', 'k1'), true);
+    const upd = client.calls.find((c) => c.table === 'orders');
+    assert.equal(upd.payload.customer_id, 'k1');
+    assert.deepEqual(upd.payload.customer_data, { name: 'Maria', phone: '119', email: '' });
+    assert.ok(!('order_number' in upd.payload) && !('items' in upd.payload));
+    const hist = client.calls.find((c) => c.table === 'order_status_history');
+    assert.equal(hist.payload.new_status, 'novo');
+    const audit = client.calls.find((c) => c.table === 'audit_logs');
+    assert.equal(audit.payload.action, 'link_customer');
+    assert.ok(!client.calls.some((c) => c.table === 'notifications'));
+  });
+
+  it('rejeita cliente de outra empresa, pedido terminal e sem id', async () => {
+    const cross = linkMock({ refRow: { ...cust, company_id: 'OUTRA' } });
+    await assert.rejects(() => linkOrderCustomer(cross, 'o1', 'c1', 'k1'), /outra empresa/);
+    const term = linkMock({ orderRow: { ...order, status: 'cancelado' } });
+    await assert.rejects(() => linkOrderCustomer(term, 'o1', 'c1', 'k1'), /finalizado\/cancelado/);
+    await assert.rejects(() => linkOrderCustomer(linkMock(), 'o1', 'c1', ''), /identificado/);
+    await assert.rejects(() => linkOrderCustomer(linkMock(), 'o1', '', 'k1'), /Empresa/);
+  });
+
+  it('vincula mesa válida em pedido de mesa', async () => {
+    const mesaOrder = { ...order, order_type: 'mesa' };
+    const client = linkMock({ orderRow: mesaOrder, refRow: table, refTable: 'dining_tables' });
+    assert.equal(await linkOrderTable(client, 'o1', 'c1', 't1'), true);
+    const upd = client.calls.find((c) => c.table === 'orders');
+    assert.deepEqual(upd.payload, { table_id: 't1', table_number: '7' });
+    const audit = client.calls.find((c) => c.table === 'audit_logs');
+    assert.equal(audit.payload.action, 'link_table');
+  });
+
+  it('rejeita mesa de outra empresa, inativa e em pedido não-mesa', async () => {
+    const mesaOrder = { ...order, order_type: 'mesa' };
+    const cross = linkMock({ orderRow: mesaOrder, refRow: { ...table, company_id: 'OUTRA' }, refTable: 'dining_tables' });
+    await assert.rejects(() => linkOrderTable(cross, 'o1', 'c1', 't1'), /outra empresa/);
+    const inat = linkMock({ orderRow: mesaOrder, refRow: { ...table, active: false }, refTable: 'dining_tables' });
+    await assert.rejects(() => linkOrderTable(inat, 'o1', 'c1', 't1'), /inativa/);
+    const deliv = linkMock({ orderRow: { ...order, order_type: 'delivery' }, refRow: table, refTable: 'dining_tables' });
+    await assert.rejects(() => linkOrderTable(deliv, 'o1', 'c1', 't1'), /Somente pedidos de mesa/);
   });
 });
 

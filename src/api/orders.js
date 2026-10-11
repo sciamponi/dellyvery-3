@@ -263,6 +263,25 @@ export async function editOrder(client, orderId, { items, discount, address, not
   return fromSupabaseOrder(data);
 }
 
+// ---------- Histórico do cliente (selo primeiro pedido) ----------
+// Conta pedidos anteriores do cliente na MESMA empresa, excluindo o pedido
+// atual e excluindo cancelados (cancelado nunca concluiu negócio).
+// Uma única consulta agregada (sem N+1): chamada só na chegada de pedido novo.
+export async function countCustomerOrders(client, companyId, customerId, excludeOrderId = null) {
+  const c = mustBeConfigured(client);
+  const cid = requireCompanyId(companyId);
+  if (!customerId) return 0;
+  let q = c.from('orders')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', cid)
+    .eq('customer_id', customerId)
+    .neq('status', 'cancelado');
+  if (excludeOrderId) q = q.neq('id', excludeOrderId);
+  const { count, error } = await q;
+  if (error) rpcError(error);
+  return count || 0;
+}
+
 // ---------- Atribuição de entregador (FASE 5.5-B3) ----------
 // Sem migration/RPC nova: UPDATE direto (RLS membros) + trigger
 // trg_orders_company_refs como segunda barreira. Valida tudo no adapter

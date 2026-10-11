@@ -8,6 +8,8 @@ import {
   isValidCPF, isValidCNPJ, isValidEmail, isValidPhone, isValidCEP,
 } from '@/lib/brdocs';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { PrivacidadeContent } from './Privacidade';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -44,6 +46,9 @@ export default function Cadastro() {
   const [errors, setErrors] = useState({});
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
+  // Termos em modal: o formulário nunca desmonta (dados 100% em memória,
+  // nada sensível persistido; voltar ao início descarta ao desmontar).
+  const [termsOpen, setTermsOpen] = useState(false);
   const sendingRef = useRef(false);
 
   // Plano vindo dos CTAs de /planos (?plano=): atribuição oculta — sem campo
@@ -307,7 +312,10 @@ export default function Cadastro() {
               <label className="flex items-start gap-2.5 rounded-xl border border-border p-3 cursor-pointer text-sm">
                 <Checkbox checked={form.consent} onCheckedChange={v => update('consent', !!v)} className="mt-0.5" />
                 <span className="text-muted-foreground">
-                  Estou ciente de que meus dados serão usados para contato e elaboração da proposta/contrato, conforme a <Link to="/privacidade" className="text-primary hover:underline">política de privacidade</Link>.
+                  Estou ciente de que meus dados serão usados para contato e elaboração da proposta/contrato, conforme a{' '}
+                  <button type="button" onClick={() => setTermsOpen(true)} className="text-primary hover:underline">
+                    política de privacidade
+                  </button>.
                 </span>
               </label>
               <FieldError message={errors.consent} />
@@ -328,6 +336,18 @@ export default function Cadastro() {
             </div>
           )}
         </div>
+
+        <Dialog open={termsOpen} onOpenChange={setTermsOpen}>
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="sr-only">Política de Privacidade</DialogTitle>
+            </DialogHeader>
+            <PrivacidadeContent />
+            <Button variant="outline" className="mt-4 w-full" onClick={() => setTermsOpen(false)}>
+              Voltar ao cadastro
+            </Button>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

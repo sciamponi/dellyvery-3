@@ -32,6 +32,9 @@ import {
   resolveCardPrimary,
   assertSingleStep,
 } from '@/api/orderStages';
+import { normalizePrintSettings, resolvePrintTrigger, wasPrinted, markPrinted } from '@/lib/printSettings';
+import { getCompanySettings as sbGetSettings } from '@/api/company';
+import PrintPromptModal from '@/components/orders/PrintPromptModal';
 import StageManagerDialog from '@/components/orders/StageManagerDialog';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { shortAddress } from '@/lib/deliveryRoute';
@@ -113,6 +116,9 @@ export default function Pedidos() {
   const [queueOpen, setQueueOpen] = useState(false);
   const [highlightId, setHighlightId] = useState(null);
   const [alertQueue, setAlertQueue] = useState([]);
+  // Impressão por empresa (manual = só botão; confirm/auto por etapa).
+  const [printCfg, setPrintCfg] = useState({ mode: 'manual', stages: [], width: '80' });
+  const [printPrompt, setPrintPrompt] = useState(null);
   // FASE 1: stages configuráveis por empresa (null = ainda carregando ou
   // migration ausente -> Kanban usa o fallback legado, sem quebrar).
   const [stages, setStages] = useState(null);
@@ -284,6 +290,12 @@ export default function Pedidos() {
       } catch {
         if (!cancelled) setStages(null);
       }
+      try {
+        const s = await sbGetSettings(supabase, companyId);
+        if (!cancelled) setPrintCfg(normalizePrintSettings(s?.settings?.print));
+      } catch {
+        if (!cancelled) setPrintCfg({ mode: 'manual', stages: [], width: '80' });
+      }
     };
     load();
     let unsub = null;
@@ -325,6 +337,34 @@ export default function Pedidos() {
     return legacy.find((a) => a.id === 'accept' || a.id === 'advance') || null;
   };
 
+  const printUrl = (orderId, stageName) =>
+    `/impressao/${orderId}?modo=cozinha${stageName ? `&etapa=${encodeURIComponent(stageName)}` : ''}`;
+
+  // Impressão por etapa (manual = nada automático). Chamada após transição
+  // persistida; dedupe por pedido+etapa sobrevive a refresh (localStorage).
+  // Reimpressão manual (rota /impressao) nunca passa por aqui.
+  const maybeTriggerPrint = (orderId, toStatus) => {
+    if (!printCfg || printCfg.mode === 'manual') return;
+    const stage = stageForStatus(displayStages, toStatus);
+    const key = stage?.id || toStatus;
+    if (!key || wasPrinted(orderId, key)) return;
+    const how = resolvePrintTrigger({
+      settings: printCfg, toStageId: stage?.id, toMapsTo: toStatus, displayStages,
+    });
+    if (how === 'none') return;
+    if (how === 'prompt') {
+      setPrintPrompt({ orderId, stageId: key, stageName: stage?.name || toStatus });
+      return;
+    }
+    const w = window.open(printUrl(orderId, stage?.name), '_blank', 'noopener');
+    if (w) {
+      markPrinted(orderId, key);
+      toast({ title: 'Impressão aberta — confirme na janela do navegador.' });
+    } else {
+      toast({ title: 'Janela bloqueada', description: 'Use o botão Imprimir no pedido.', variant: 'destructive' });
+    }
+  };
+
   // Ação direta no card (reutiliza fluxo central + guarda anti-duplo do drag).
   // Avanço para etapa terminal (baixa da entrega) exige confirmação explícita.
   const requestCardAction = (order, action) => {
@@ -351,6 +391,7 @@ export default function Pedidos() {
         }
         setOrders(prev => mergeUpdated(prev, detail || updated));
         toast({ title: action.id === 'accept' ? 'Pedido confirmado!' : `Pedido: ${action.label?.replace(/^→ /, '') || STATUS_LABELS[action.next]}` });
+        maybeTriggerPrint(order.id, action.next);
       }
     } catch (err) {
       toast({ title: 'Erro ao atualizar pedido', description: err?.message, variant: 'destructive' });
@@ -397,6 +438,7 @@ export default function Pedidos() {
           detail = null;
         }
         setOrders(prev => mergeUpdated(prev, { ...(detail || updated), id: draggableId }));
+        maybeTriggerPrint(draggableId, newStatus);
       }
     } catch (err) {
       toast({ title: 'Erro ao atualizar pedido', variant: 'destructive' });
@@ -658,6 +700,25 @@ export default function Pedidos() {
             const { order, action } = finishOrderData;
             setFinishOrderData(null);
             void handleCardAction(order, action);
+          }}
+        />
+      )}
+      {printPrompt && (
+        <PrintPromptModal
+          open={!!printPrompt}
+          onOpenChange={(open) => { if (!open) setPrintPrompt(null); }}
+          orderNumber={orders.find((o) => o.id === printPrompt.orderId)?.order_number}
+          stageName={printPrompt.stageName}
+          onSkip={() => setPrintPrompt(null)}
+          onPrint={() => {
+            const { orderId, stageId, stageName } = printPrompt;
+            const w = window.open(printUrl(orderId, stageName), '_blank', 'noopener');
+            if (w) {
+              markPrinted(orderId, stageId);
+              setPrintPrompt(null);
+            } else {
+              toast({ title: 'Janela bloqueada', description: 'Permita pop-ups ou use Imprimir no pedido.', variant: 'destructive' });
+            }
           }}
         />
       )}

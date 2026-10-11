@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
@@ -19,6 +19,7 @@ import { playNewOrderAlert, requestNotificationPermission, showOrderNotification
 import { getAlertPrefs } from '@/lib/alertPrefs';
 import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
 import { getQueueOrders, getDelayedOrders, getFinalizedByType, getCanceled, filterByDriver } from '@/lib/orderQueue';
+import { isFirstOrder } from '@/lib/customerHistory';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { useToast } from '@/components/ui/use-toast';
@@ -147,7 +148,7 @@ export default function Dashboard() {
     };
     load();
 
-    const handleEvent = (event) => {
+    const handleEvent = async (event) => {
       if (!companyIdRef.current) return;
       if (event.data?.company_id && event.data.company_id !== companyIdRef.current) return;
       if (event.type === 'create') {
@@ -163,9 +164,23 @@ export default function Dashboard() {
         if (isNew && isFresh) {
           const prefs = alertPrefsRef.current;
           if (prefs.sound) playNewOrderAlert();
+          // Selo de primeiro pedido: 1 consulta agregada por chegada
+          // (sem N+1 por render); falha = sem selo, nunca bloqueia o alerta.
+          let firstFlag;
+          if (event.data.customer_id && companyIdRef.current) {
+            try {
+              const prior = await countCustomerOrders(
+                supabase, companyIdRef.current, event.data.customer_id, event.data.id,
+              );
+              firstFlag = prior === 0;
+            } catch { firstFlag = undefined; }
+          }
+          const alertItem = firstFlag === undefined
+            ? event.data
+            : { ...event.data, isFirstOrder: firstFlag };
           if (prefs.visual) {
-            showOrderNotification(event.data);
-            setAlertQueue(prev => prev.some(o => o.id === event.data.id) ? prev : [...prev, event.data]);
+            showOrderNotification(alertItem);
+            setAlertQueue(prev => prev.some(o => o.id === alertItem.id) ? prev : [...prev, alertItem]);
           }
           setHighlightId(event.data.id);
           if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
@@ -220,6 +235,12 @@ export default function Dashboard() {
       .finally(() => { if (!cancelled) setDayLoading(false); });
     return () => { cancelled = true; };
   }, [selectedDate, company?.id]);
+
+  // Faixa de novos não tratados (hook antes de qualquer return antecipado).
+  const untreatedNovo = useMemo(
+    () => orders.filter(o => o.status === 'novo').slice(0, 5),
+    [orders],
+  );
 
   if (loading) {
     return (
@@ -375,6 +396,43 @@ export default function Dashboard() {
           />
         </div>
       </div>
+
+      {/* Novos não tratados: acesso direto + selo de primeiro pedido */}
+      {untreatedNovo.length > 0 && (
+        <div className="rounded-2xl border border-red-200 bg-red-50/60 p-3 sm:p-4">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <p className="text-xs font-bold uppercase tracking-wider text-red-700">
+              🔔 {untreatedNovo.length} {untreatedNovo.length === 1 ? 'pedido novo' : 'pedidos novos'} aguardando
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate('/pedidos')}
+              className="text-xs font-medium text-red-700 hover:underline shrink-0"
+            >
+              Ver fila
+            </button>
+          </div>
+          <div className="space-y-1.5">
+            {untreatedNovo.map(o => (
+              <button
+                key={o.id}
+                type="button"
+                onClick={() => setSelectedOrder(o)}
+                className="flex w-full items-center gap-2 rounded-xl bg-card border border-border px-3 py-2 text-left hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="font-heading font-bold text-sm text-foreground shrink-0">#{o.order_number || '—'}</span>
+                <span className="flex-1 min-w-0 truncate text-sm text-muted-foreground">{o.customer_name || 'Avulso'}</span>
+                {isFirstOrder(o, orders) && (
+                  <span className="shrink-0 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                    🥇 1º pedido
+                  </span>
+                )}
+                <span className="shrink-0 text-[11px] text-muted-foreground">{timeSince(o.created_date)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Stats compactos */}
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">

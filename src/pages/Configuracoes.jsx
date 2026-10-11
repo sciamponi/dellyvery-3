@@ -18,6 +18,8 @@ import { useToast } from '@/components/ui/use-toast';
 import { Image } from '@/components/ui/image';
 import { Upload, Loader2, Save, Plus, Trash2, X, Check, Link2, QrCode, Share2, Download, Copy, ExternalLink, Megaphone, Printer, Globe } from 'lucide-react';
 import { normalizeSlug, isValidSlug, buildMenuUrl, buildShareMessage, buildWhatsAppUrl } from '@/lib/menuShare';
+import { normalizePrintSettings, PRINT_MODES, PRINT_WIDTHS } from '@/lib/printSettings';
+import { listStages as sbListStages, displayStages as buildDisplayStages } from '@/api/orderStages';
 
 const COLOR_PRESETS = ['#DC2626', '#F97316', '#2563EB', '#16A34A', '#9333EA', '#DB2777', '#0D9488', '#1E293B'];
 
@@ -43,6 +45,11 @@ export default function Configuracoes() {
   const [drivers, setDrivers] = useState([]);
   const [opsSettings, setOpsSettings] = useState({ default_driver_id: '', auto_assign_delivery: false });
   const [opsSaving, setOpsSaving] = useState(false);
+  // Impressão por empresa (company_settings.settings.print). Sem migration:
+  // mesmo JSONB das operações. Modo manual = só botão (padrão).
+  const [printCfg, setPrintCfg] = useState({ mode: 'manual', stages: [], width: '80' });
+  const [printStages, setPrintStages] = useState([]);
+  const [printSaving, setPrintSaving] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const qrRef = useRef(null);
 
@@ -93,13 +100,14 @@ export default function Configuracoes() {
       sbGetSettings(supabase, cid).then(s => {
         const cur = s?.settings || {};
         setOpsSettings({ default_driver_id: cur.default_driver_id || '', auto_assign_delivery: !!cur.auto_assign_delivery });
+        setPrintCfg(normalizePrintSettings(cur.print));
       }).catch(() => {});
+      sbListStages(supabase, cid).then(setPrintStages).catch(() => setPrintStages([]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company, sbActive]);
 
-  const saveOpsSettings = async (next) => {
-    setOpsSettings(next);
+  const saveOpsSettings = async (next) => {    setOpsSettings(next);
     setOpsSaving(true);
     try {
       const cid = sbCompany?.id || company.id;
@@ -112,6 +120,30 @@ export default function Configuracoes() {
     } finally {
       setOpsSaving(false);
     }
+  };
+
+  const savePrintSettings = async (next) => {
+    const norm = normalizePrintSettings(next);
+    setPrintCfg(norm);
+    setPrintSaving(true);
+    try {
+      const cid = sbCompany?.id || company.id;
+      const cur = await sbGetSettings(supabase, cid).catch(() => null);
+      await sbUpdateSettings(supabase, cid, { ...(cur?.settings || {}), print: norm });
+      toast({ title: 'Impressão salva!' });
+    } catch (err) {
+      toast({ title: 'Erro ao salvar', description: err?.message, variant: 'destructive' });
+    } finally {
+      setPrintSaving(false);
+    }
+  };
+
+  const togglePrintStage = (id) => {
+    const has = printCfg.stages.includes(id);
+    savePrintSettings({
+      ...printCfg,
+      stages: has ? printCfg.stages.filter((s) => s !== id) : [...printCfg.stages, id],
+    });
   };
 
   if (loading || !form) return <Spinner />;
@@ -198,6 +230,7 @@ export default function Configuracoes() {
           <TabsTrigger value="contato">📞 Contato</TabsTrigger>
           <TabsTrigger value="funcionamento">🕐 Funcionamento</TabsTrigger>
           <TabsTrigger value="delivery">🚴 Delivery</TabsTrigger>
+          <TabsTrigger value="impressao">🖨️ Impressão</TabsTrigger>
         </TabsList>
 
         {/* Identidade */}
@@ -422,6 +455,78 @@ export default function Configuracoes() {
                 <div className="w-24 space-y-1"><Input type="number" min="1" value={newZone.estimated_time} onChange={e => setNewZone(p => ({ ...p, estimated_time: e.target.value }))} placeholder="Min" /></div>
                 <Button onClick={addZone} variant="outline"><Plus className="h-4 w-4" /></Button>
               </div>
+            </div>
+          </div>
+        </TabsContent>
+        {/* Impressão: modo + etapas por empresa (company_settings) */}
+        <TabsContent value="impressao">
+          <div className="rounded-2xl border border-border bg-card p-6 space-y-5 max-w-2xl">
+            <div className="space-y-2">
+              <Label>🖨️ Modo de impressão</Label>
+              <p className="text-xs text-muted-foreground">
+                Vale para esta empresa. O navegador sempre abre a janela de impressão —
+                impressão silenciosa automática não é garantida sem equipamento próprio.
+              </p>
+              <div className="grid gap-2">
+                {PRINT_MODES.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    disabled={printSaving}
+                    onClick={() => savePrintSettings({ ...printCfg, mode: m.id })}
+                    className={`rounded-xl border px-3 py-2.5 text-left text-sm transition-colors ${
+                      printCfg.mode === m.id
+                        ? 'border-primary bg-primary/5 font-medium'
+                        : 'border-border text-muted-foreground hover:bg-muted/50'
+                    }`}
+                  >
+                    {m.label}
+                    <span className="block text-xs font-normal text-muted-foreground mt-0.5">
+                      {m.id === 'manual' && 'Imprime somente pelo botão Imprimir.'}
+                      {m.id === 'confirm' && 'Pergunta antes de imprimir ao atingir a etapa.'}
+                      {m.id === 'auto' && 'Abre a impressão ao entrar na etapa (confirme na janela).'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {printCfg.mode !== 'manual' && (
+              <div className="space-y-2">
+                <Label>Etapas que disparam</Label>
+                {buildDisplayStages(printStages).length === 0 && (
+                  <p className="text-xs text-muted-foreground">Etapas padrão do sistema serão usadas.</p>
+                )}
+                <div className="space-y-1.5">
+                  {buildDisplayStages(printStages).map((s) => (
+                    <label key={s.id} className="flex items-center gap-2.5 rounded-xl border border-border px-3 py-2 text-sm cursor-pointer hover:bg-muted/50">
+                      <input
+                        type="checkbox"
+                        checked={printCfg.stages.includes(s.id)}
+                        onChange={() => togglePrintStage(s.id)}
+                        disabled={printSaving}
+                        className="h-4 w-4 accent-primary"
+                      />
+                      <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
+                      <span className="font-medium">{s.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="space-y-2 max-w-[200px]">
+              <Label>Largura do cupom</Label>
+              <Select
+                value={printCfg.width}
+                onValueChange={(v) => savePrintSettings({ ...printCfg, width: v })}
+                disabled={printSaving}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PRINT_WIDTHS.map((w) => (
+                    <SelectItem key={w} value={w}>{w} mm</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </TabsContent>

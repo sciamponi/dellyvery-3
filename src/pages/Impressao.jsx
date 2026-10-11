@@ -35,6 +35,7 @@ export default function Impressao() {
   const [error, setError] = useState('');
   const [printRequested, setPrintRequested] = useState(false);
   const modo = searchParams.get('modo') === 'pacote' ? 'pacote' : 'cozinha';
+  const etapa = (searchParams.get('etapa') || '').slice(0, 60);
   const [width, setWidth] = useState('80');
 
   useEffect(() => {
@@ -133,6 +134,7 @@ export default function Impressao() {
             <div className="text-center">
               <h1>{ticket.companyName}</h1>
               <p className="text-xs">CUPOM DE PRODUÇÃO — {ticket.typeLabel.toUpperCase()}</p>
+              {etapa && <p className="text-xs">Etapa: {etapa}</p>}
             </div>
             <hr className="border-dashed" />
             <div className="text-sm">

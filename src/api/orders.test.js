@@ -7,6 +7,7 @@ import {
   listOrders,
   createOrder,
   buildCreateOrderItems,
+  countCustomerOrders,
   changeOrderStatus,
   cancelOrder,
   editOrder,
@@ -156,8 +157,7 @@ describe('orders — escrita via RPC (nunca direta)', () => {
     assert.equal(c2.calls.rpc[0].args.p_change_for, null);
   });
 
-  it('buildCreateOrderItems preserva todas as linhas (jornada completa)', () => {
-    const cart = [
+  it('buildCreateOrderItems preserva todas as linhas (jornada completa)', () => {    const cart = [
       { product_id: 'lanche', quantity: 1, complements: [{ group_name: 'G', option_name: 'O', price: 2, quantity: 1 }], notes: 'sem cebola' },
       { product_id: 'fritas', quantity: 2 },
       { product_id: 'coca', quantity: 1, notes: '' },
@@ -170,6 +170,24 @@ describe('orders — escrita via RPC (nunca direta)', () => {
       { product_id: 'pudim', quantity: 3, complements: [], notes: '' },
     ]);
     assert.deepEqual(buildCreateOrderItems(null), []);
+  });
+
+  it('countCustomerOrders conta anteriores (sem cancelados, sem o atual)', async () => {
+    const calls = [];
+    const chain = {
+      select: () => chain,
+      eq: (k, v) => { calls.push(['eq', k, v]); return chain; },
+      neq: (k, v) => { calls.push(['neq', k, v]); return chain; },
+      then: (resolve) => resolve({ count: 2, error: null }),
+    };
+    const client = { from: () => chain };
+    assert.equal(await countCustomerOrders(client, 'c1', 'k1', 'o9'), 2);
+    assert.ok(calls.some(([op, k, v]) => op === 'eq' && k === 'company_id' && v === 'c1'));
+    assert.ok(calls.some(([op, k, v]) => op === 'eq' && k === 'customer_id' && v === 'k1'));
+    assert.ok(calls.some(([op, k, v]) => op === 'neq' && k === 'status' && v === 'cancelado'));
+    assert.ok(calls.some(([op, k, v]) => op === 'neq' && k === 'id' && v === 'o9'));
+    assert.equal(await countCustomerOrders(client, 'c1', null), 0);
+    await assert.rejects(() => countCustomerOrders(client, '', 'k1'), /Empresa/);
   });
 
   it('changeOrderStatus/cancel/edit usam manage_order', async () => {

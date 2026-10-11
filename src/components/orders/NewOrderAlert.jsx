@@ -25,6 +25,16 @@ export default function NewOrderAlert({ order, open, onView, onClose }) {
         <div className="space-y-1">
           <p className="font-heading text-lg font-bold text-foreground">Pedido #{order.order_number}</p>
           <p className="font-medium text-foreground truncate">{order.customer_name}</p>
+          {order.isFirstOrder && (
+            <p>
+              <span
+                title="Cliente identificado sem pedidos anteriores nesta empresa"
+                className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800"
+              >
+                🥇 Primeiro pedido deste cliente
+              </span>
+            </p>
+          )}
           <p className="text-sm text-muted-foreground">
             {itemCount} {itemCount === 1 ? 'item' : 'itens'} • {fmtCurrency(order.total)}
           </p>

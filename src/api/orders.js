@@ -181,7 +181,7 @@ export function buildCreateOrderItems(cartItems) {
 }
 
 export async function createOrder(client, {
-  companySlug, orderType = 'delivery', tableNumber = '', items = [],
+  companySlug, orderType = 'delivery', tableNumber = '', tableId = null, tableToken = null, items = [],
   customer = {}, deliveryZoneId = null, paymentMethod = '', notes = '',
   source = 'online', changeFor = null,
 }) {
@@ -191,6 +191,9 @@ export async function createOrder(client, {
     p_company_slug: companySlug,
     p_order_type: orderType,
     p_table_number: tableNumber || null,
+    p_table_id: tableId || null,
+    // Fluxo público (QR): token validado no servidor; nunca table_id cru.
+    p_table_token: tableToken || null,
     p_items: buildCreateOrderItems(items),
     p_customer: {
       name: customer.name || '',

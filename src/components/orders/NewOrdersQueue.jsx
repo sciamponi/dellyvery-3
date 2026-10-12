@@ -1,9 +1,15 @@
-import React, { useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
-import { Check, Clock } from 'lucide-react';
+import { Check, Clock, Printer } from 'lucide-react';
 import { changeOrderStatus } from '@/lib/orderStatusFlow';
+import { supabase } from '@/api/supabaseClient';
+import { getCompanySettings as sbGetSettings } from '@/api/company';
+import { listStages as sbListStages } from '@/api/orderStages';
+import { normalizePrintSettings, markPrinted } from '@/lib/printSettings';
+import { decidePrintTrigger, openPrintWindow, printUrl, PRINT_FAILURE_MESSAGE } from '@/lib/printTrigger';
+import PrintPromptModal from '@/components/orders/PrintPromptModal';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -22,7 +28,67 @@ function timeSince(dateStr) {
 export default function NewOrdersQueue({ open, onClose, orders, onOrderUpdated }) {
   const { toast } = useToast();
   const busyRef = useRef(new Set());
-  const [, forceTick] = React.useState(0);
+  const [, forceTick] = useState(0);
+  // Impressão pós-aceite (mesma decisão do Kanban/modal).
+  const [printCfg, setPrintCfg] = useState({ mode: 'manual', stages: [], width: '80' });
+  // Stages reais só para a decisão de impressão (paridade com o Kanban).
+  const [printStages, setPrintStages] = useState(null);
+  const printCfgLoadedRef = useRef(false);
+  const [printPrompt, setPrintPrompt] = useState(null);
+  // Pedidos aceitos com impressão pendente/retry. Referência própria
+  // (sobrevive a updates realtime e à saída da fila de novos); cada
+  // entrada sai só com impressão confirmada ou ao fechar a fila.
+  // { orderId, orderNumber, url, stageId, stageName, flow: 'auto'|'manual', failed: null|reason }
+  const [pendingPrints, setPendingPrints] = useState([]);
+
+  const companyId = (orders || []).find(o => o.company_id)?.company_id || null;
+
+  useEffect(() => {
+    if (!open || !companyId) return;
+    let cancelled = false;
+    printCfgLoadedRef.current = false;
+    sbGetSettings(supabase, companyId)
+      .then(s => {
+        if (cancelled) return;
+        setPrintCfg(normalizePrintSettings(s?.settings?.print));
+        printCfgLoadedRef.current = true;
+      })
+      .catch(() => { if (!cancelled) { setPrintCfg({ mode: 'manual', stages: [], width: '80' }); printCfgLoadedRef.current = true; } });
+    sbListStages(supabase, companyId)
+      .then(list => { if (!cancelled) setPrintStages(list && list.length > 0 ? list : null); })
+      .catch(() => { if (!cancelled) setPrintStages(null); });
+    return () => { cancelled = true; };
+  }, [open, companyId]);
+
+  const pushPending = (entry) => {
+    setPendingPrints(prev => {
+      const rest = prev.filter(p => p.orderId !== entry.orderId);
+      return [...rest, entry].slice(-5);
+    });
+  };
+
+  const dropPending = (orderId) => {
+    setPendingPrints(prev => prev.filter(p => p.orderId !== orderId));
+  };
+
+  // Abertura do cupom com falha detectável (popup/erros). Sucesso no fluxo
+  // auto marca o dedupe e encerra a pendência; manual nunca marca e mantém
+  // o botão (reimpressão sempre livre). Retorna true se abriu.
+  const tryOpenPrint = (entry) => {
+    const r = openPrintWindow(entry.url);
+    if (r.ok) {
+      if (entry.flow === 'auto') {
+        markPrinted(entry.orderId, entry.stageId);
+        dropPending(entry.orderId);
+      } else {
+        setPendingPrints(prev => prev.map(p => (p.orderId === entry.orderId ? { ...p, failed: null } : p)));
+      }
+      return true;
+    }
+    setPendingPrints(prev => prev.map(p => (p.orderId === entry.orderId ? { ...p, failed: r.reason } : p)));
+    toast({ title: 'Falha na impressão', description: `${PRINT_FAILURE_MESSAGE[r.reason]} Tente de novo.`, variant: 'destructive' });
+    return false;
+  };
 
   const novos = orders
     .filter(o => o.status === 'novo')
@@ -36,6 +102,38 @@ export default function NewOrdersQueue({ open, onClose, orders, onOrderUpdated }
       const updated = await changeOrderStatus(order.id, 'confirmado');
       onOrderUpdated(updated);
       toast({ title: `Pedido #${order.order_number} confirmado!` });
+      // Impressão somente após sucesso confirmado; sem tocar de novo no
+      // status (guarda busyRef + sem nova chamada à RPC aqui). Se a config
+      // ainda não carregou, busca na hora (aceite rápido nunca cai à toa).
+      let cfg = printCfg;
+      let stgs = printStages;
+      if (!printCfgLoadedRef.current) {
+        try {
+          const s = await sbGetSettings(supabase, order.company_id || companyId);
+          cfg = normalizePrintSettings(s?.settings?.print);
+          setPrintCfg(cfg);
+          printCfgLoadedRef.current = true;
+        } catch { /* mantém a atual */ }
+        try {
+          const l = await sbListStages(supabase, order.company_id || companyId);
+          stgs = l && l.length > 0 ? l : null;
+          setPrintStages(stgs);
+        } catch { /* mantém */ }
+      }
+      const d = decidePrintTrigger({
+        printCfg: cfg, stages: stgs, toStatus: 'confirmado', orderId: updated?.id || order.id,
+      });
+      const orderId = updated?.id || order.id;
+      const orderNumber = updated?.order_number || order.order_number;
+      if (d.kind === 'none') {
+        // Modo manual: sem nada automático; "Imprimir pedido" fica
+        // disponível na seção de aceitos e no modal do pedido.
+        pushPending({ orderId, orderNumber, url: printUrl(orderId), stageId: null, stageName: null, flow: 'manual', failed: null });
+      } else {
+        const entry = { orderId, orderNumber, url: d.url, stageId: d.stageId, stageName: d.stageName, flow: 'auto', failed: null };
+        pushPending(entry);
+        setPrintPrompt({ ...entry });
+      }
     } catch (err) {
       toast({ title: 'Erro ao aceitar pedido', description: err?.message, variant: 'destructive' });
     } finally {
@@ -54,6 +152,29 @@ export default function NewOrdersQueue({ open, onClose, orders, onOrderUpdated }
           </DialogTitle>
         </DialogHeader>
         <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4">
+          {pendingPrints.length > 0 && (
+            <div className="mb-3 rounded-xl border border-border bg-muted/40 p-3 space-y-2">
+              <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                🖨️ Impressão {printCfg.mode === 'manual' ? 'manual' : 'pendente'}
+              </p>
+              {pendingPrints.map(p => (
+                <div key={p.orderId} className="flex items-center gap-2">
+                  <span className="flex-1 min-w-0 truncate text-sm font-medium">#{p.orderNumber || '—'}</span>
+                  {p.failed && (
+                    <span className="shrink-0 text-[11px] text-destructive">Falhou — tente de novo</span>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => tryOpenPrint(p)}
+                  >
+                    <Printer className="h-4 w-4" /> {p.failed ? 'Tentar de novo' : 'Imprimir pedido'}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
           {novos.length === 0 ? (
             <p className="text-center text-sm text-muted-foreground py-8">Nenhum pedido novo aguardando.</p>
           ) : (
@@ -87,6 +208,18 @@ export default function NewOrdersQueue({ open, onClose, orders, onOrderUpdated }
             </div>
           )}
         </div>
+        {printPrompt && (
+          <PrintPromptModal
+            open={!!printPrompt}
+            onOpenChange={(open) => { if (!open) setPrintPrompt(null); }}
+            orderNumber={printPrompt.orderNumber}
+            stageName={printPrompt.stageName}
+            onSkip={() => setPrintPrompt(null)}
+            onPrint={() => {
+              if (tryOpenPrint({ ...printPrompt })) setPrintPrompt(null);
+            }}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );

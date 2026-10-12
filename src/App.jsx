@@ -24,6 +24,7 @@ import AppLayout from './components/AppLayout';
 import GestaoProdutos from './pages/GestaoProdutos';
 import Pedidos from './pages/Pedidos';
 import Pdv from './pages/Pdv';
+import Mesas from './pages/Mesas';
 import Impressao from './pages/Impressao';
 import Configuracoes from './pages/Configuracoes';
 import Clientes from './pages/Clientes';
@@ -72,6 +73,7 @@ function App() {
                 <Route path="/gestao-produtos" element={<GestaoProdutos />} />
                 <Route path="/pedidos" element={<Pedidos />} />
                 <Route path="/pdv" element={<Pdv />} />
+                <Route path="/mesas" element={<Mesas />} />
                 <Route path="/impressao/:orderId" element={<Impressao />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
                 <Route path="/clientes" element={<Clientes />} />

@@ -6,8 +6,11 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Image } from '@/components/ui/image';
-import { Bike, Store, Table2, Phone, MapPin, Receipt, Clock, XCircle, Pencil, X, Check, ArrowRight, ArrowLeft, Undo2, Package, Plus, Search, ShoppingBag, UtensilsCrossed } from 'lucide-react';
+import { Bike, Store, Table2, Phone, MapPin, Receipt, Clock, XCircle, Pencil, X, Check, ArrowRight, ArrowLeft, Undo2, Package, Plus, Search, ShoppingBag, UtensilsCrossed, Printer } from 'lucide-react';
 import RouteModal from '@/components/orders/RouteModal';
+import PrintPromptModal from '@/components/orders/PrintPromptModal';
+import { normalizePrintSettings, markPrinted } from '@/lib/printSettings';
+import { decidePrintTrigger, openPrintWindow, printUrl, PRINT_FAILURE_MESSAGE } from '@/lib/printTrigger';
 import { formatAddress, resolveAdvanceFlow } from '@/lib/deliveryRoute';
 import { listDrivers } from '@/api/team';
 import { assignDriver as sbAssignDriver } from '@/api/orders';
@@ -19,7 +22,7 @@ import { listProducts as sbListProducts } from '@/api/catalog';
 import { getCompanySettings as sbGetSettings } from '@/api/company';
 import { useToast } from '@/components/ui/use-toast';
 import { changeOrderStatus, getAvailableActions, getNextStatus, STATUS_LABELS } from '@/lib/orderStatusFlow';
-import { resolveAdvanceTarget, resolveRegressTarget, shouldAutoCloseOnAction } from '@/api/orderStages';
+import { resolveAdvanceTarget, resolveRegressTarget, shouldAutoCloseOnAction, listStages as sbListStages } from '@/api/orderStages';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -80,6 +83,16 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const [tableSelected, setTableSelected] = useState('');
   const [linkBusy, setLinkBusy] = useState(false);
   const [defaultDriverId, setDefaultDriverId] = useState(null);
+  // Impressão pós-aceite: mesma decisão do Kanban (printTrigger). Manual =
+  // só o botão "Imprimir pedido"; confirm/auto = PrintPromptModal.
+  const [printCfg, setPrintCfg] = useState({ mode: 'manual', stages: [], width: '80' });
+  const [printPrompt, setPrintPrompt] = useState(null);
+  // Stages reais para a DECISÃO de impressão (paridade com o Kanban).
+  // Usadas SÓ aqui: ações do modal seguem o fluxo existente (stages prop).
+  const [printStages, setPrintStages] = useState(null);
+  // Config de impressão carregada? Se o aceite for mais rápido que a carga,
+  // a decisão abaixo recarrega na hora (nunca usa o padrão manual à toa).
+  const printCfgLoadedRef = useRef(false);
   const [manageList, setManageList] = useState([]);
   const [manageSelected, setManageSelected] = useState('');
   const [manageBusy, setManageBusy] = useState(false);
@@ -97,6 +110,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setCustResults([]);
     setTableList([]);
     setStatusAction(null);
+    setPrintPrompt(null);
     statusBusyRef.current = false;
     setPhotoMap({});
     setCustHistory([]);
@@ -183,16 +197,28 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setLinking('table');
   };
 
-  // Motoboy padrão da empresa (para o selo "Padrão" no entregador).
+  // Motoboy padrão + config de impressão + stages reais da empresa (selo
+  // "Padrão", decisão de impressão pós-aceite com paridade Kanban; falha
+  // nunca quebra o modal).
   useEffect(() => {
     if (!order || !isOpen || !sbActive) {
       setDefaultDriverId(null);
       return;
     }
     let cancelled = false;
+    printCfgLoadedRef.current = false;
     sbGetSettings(supabase, order.company_id)
-      .then(s => { if (!cancelled) setDefaultDriverId(s?.settings?.default_driver_id || null); })
-      .catch(() => {});
+      .then(s => {
+        if (cancelled) return;
+        setDefaultDriverId(s?.settings?.default_driver_id || null);
+        setPrintCfg(normalizePrintSettings(s?.settings?.print));
+        printCfgLoadedRef.current = true;
+      })
+      .catch(() => { if (!cancelled) { setPrintCfg({ mode: 'manual', stages: [], width: '80' }); printCfgLoadedRef.current = true; } });
+    // Só para a decisão de impressão (ações do modal não mudam).
+    sbListStages(supabase, order.company_id)
+      .then(list => { if (!cancelled) setPrintStages(list && list.length > 0 ? list : null); })
+      .catch(() => { if (!cancelled) setPrintStages(null); });
     return () => { cancelled = true; };
   }, [order?.id, order?.company_id, isOpen, sbActive]);
 
@@ -245,17 +271,60 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
       } catch {
         detail = null;
       }
-      onOrderUpdated(detail || updated);
+      const merged = detail || updated;
+      onOrderUpdated(merged);
       toast({ title: action.id === 'accept' ? 'Pedido confirmado!' : `Pedido: ${STATUS_LABELS[action.next] || action.next}` });
-      // FASE 1: concluiu a interação -> Kanban atualiza (realtime + merge) e o
-      // modal fecha sozinho. Em erro, o modal permanece aberto (sem rollback
-      // necessário: nada otimista foi aplicado aqui).
-      if (shouldAutoCloseOnAction(action.id)) onClose();
+      // Impressão pós-aceite (mesma decisão do Kanban/fila): só após sucesso
+      // confirmado, sem tocar de novo no status. Se a config ainda não
+      // carregou, busca na hora (aceite rápido nunca cai no manual à toa).
+      let cfg = printCfg;
+      let printStagesForDecision = hasStages ? stages : printStages;
+      if (!printCfgLoadedRef.current) {
+        try {
+          const s = await sbGetSettings(supabase, order.company_id);
+          cfg = normalizePrintSettings(s?.settings?.print);
+          setPrintCfg(cfg);
+          printCfgLoadedRef.current = true;
+        } catch { /* mantém a atual */ }
+        if (!hasStages) {
+          try {
+            const l = await sbListStages(supabase, order.company_id);
+            printStagesForDecision = l && l.length > 0 ? l : null;
+            setPrintStages(printStagesForDecision);
+          } catch { /* mantém */ }
+        }
+      }
+      const d = decidePrintTrigger({
+        printCfg: cfg, stages: printStagesForDecision, toStatus: action.next,
+        orderId: merged?.id || order.id,
+      });
+      if (d.kind === 'none') {
+        if (shouldAutoCloseOnAction(action.id)) onClose();
+      } else {
+        setPrintPrompt({
+          orderId: merged?.id || order.id,
+          orderNumber: merged?.order_number || order.order_number,
+          stageId: d.stageId, stageName: d.stageName, url: d.url,
+          autoClose: shouldAutoCloseOnAction(action.id),
+        });
+      }
+      // FASE 1: concluiu a interação -> Kanban atualiza (realtime + merge).
+      // Em erro, o modal permanece aberto (sem rollback necessário: nada
+      // otimista foi aplicado aqui).
     } catch (err) {
       toast({ title: 'Erro ao atualizar pedido', description: err?.message, variant: 'destructive' });
     } finally {
       statusBusyRef.current = false;
       setStatusAction(null);
+    }
+  };
+
+  // Reimpressão manual / nova tentativa: abre a rota dedicada, nunca altera
+  // o status e nunca usa o dedupe (sempre permitida).
+  const handleManualPrint = () => {
+    const r = openPrintWindow(printUrl(order.id, stageName || order.status));
+    if (!r.ok) {
+      toast({ title: 'Falha na impressão', description: `${PRINT_FAILURE_MESSAGE[r.reason]} Tente de novo.`, variant: 'destructive' });
     }
   };
 
@@ -911,6 +980,17 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                       )}
                     </Button>
                   )}
+                  {order.status !== 'cancelado' && order.status !== 'finalizado' && (
+                    <Button
+                      variant="outline"
+                      className="w-full sm:w-auto sm:min-w-32 min-h-11"
+                      onClick={handleManualPrint}
+                      disabled={busy}
+                      aria-label={`Imprimir pedido ${order.order_number || ''}`}
+                    >
+                      <Printer className="h-4 w-4" /> Imprimir pedido
+                    </Button>
+                  )}
                 </div>
                 {order.status !== 'cancelado' && order.status !== 'finalizado' && onRequestPayment && (
                   <Button variant="outline" className="w-full mt-2" onClick={() => onRequestPayment(order)} disabled={busy}>
@@ -1024,6 +1104,33 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
         )}
       </DialogContent>
       <RouteModal open={routeOpen} onClose={() => setRouteOpen(false)} order={order} company={company} />
+      {printPrompt && (
+        <PrintPromptModal
+          open={!!printPrompt}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPrintPrompt(null);
+              if (printPrompt.autoClose) onClose();
+            }
+          }}
+          orderNumber={printPrompt.orderNumber}
+          stageName={printPrompt.stageName}
+          onSkip={() => {
+            setPrintPrompt(null);
+            if (printPrompt.autoClose) onClose();
+          }}
+          onPrint={() => {
+            const r = openPrintWindow(printPrompt.url);
+            if (r.ok) {
+              markPrinted(printPrompt.orderId, printPrompt.stageId);
+              setPrintPrompt(null);
+              if (printPrompt.autoClose) onClose();
+            } else {
+              toast({ title: 'Falha na impressão', description: `${PRINT_FAILURE_MESSAGE[r.reason]} Tente de novo.`, variant: 'destructive' });
+            }
+          }}
+        />
+      )}
     </Dialog>
   );
 }

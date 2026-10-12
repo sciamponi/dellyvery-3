@@ -37,6 +37,7 @@ describe('storage — validação', () => {
     assert.deepEqual(buildUploadPath('avatar', 'u1', jpg(), 'a').path, 'u1/a.jpg');
     assert.deepEqual(buildUploadPath('logo', 'c1', { type: 'image/png', size: 1 }, 'b'), { bucket: 'logos', path: 'c1/b.png' });
     assert.deepEqual(buildUploadPath('catalog', 'c1', { type: 'image/webp', size: 1 }, 'd').bucket, 'catalog');
+    assert.deepEqual(buildUploadPath('cover', 'c1', jpg(), 'e'), { bucket: 'logos', path: 'c1/e.jpg' });
     assert.throws(() => buildUploadPath('x', 'c1', jpg()), /inválido/);
     assert.throws(() => buildUploadPath('logo', null, jpg()), /Dono/);
   });

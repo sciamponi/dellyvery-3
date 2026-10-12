@@ -32,7 +32,8 @@ import {
   resolveCardPrimary,
   assertSingleStep,
 } from '@/api/orderStages';
-import { normalizePrintSettings, resolvePrintTrigger, wasPrinted, markPrinted } from '@/lib/printSettings';
+import { normalizePrintSettings, markPrinted } from '@/lib/printSettings';
+import { decidePrintTrigger, openPrintWindow, printUrl, PRINT_FAILURE_MESSAGE } from '@/lib/printTrigger';
 import { getCompanySettings as sbGetSettings } from '@/api/company';
 import PrintPromptModal from '@/components/orders/PrintPromptModal';
 import StageManagerDialog from '@/components/orders/StageManagerDialog';
@@ -337,31 +338,23 @@ export default function Pedidos() {
     return legacy.find((a) => a.id === 'accept' || a.id === 'advance') || null;
   };
 
-  const printUrl = (orderId, stageName) =>
-    `/impressao/${orderId}?modo=cozinha${stageName ? `&etapa=${encodeURIComponent(stageName)}` : ''}`;
-
   // Impressão por etapa (manual = nada automático). Chamada após transição
   // persistida; dedupe por pedido+etapa sobrevive a refresh (localStorage).
   // Reimpressão manual (rota /impressao) nunca passa por aqui.
+  // Decisão centralizada em printTrigger (mesma usada no modal e na fila).
   const maybeTriggerPrint = (orderId, toStatus) => {
-    if (!printCfg || printCfg.mode === 'manual') return;
-    const stage = stageForStatus(displayStages, toStatus);
-    const key = stage?.id || toStatus;
-    if (!key || wasPrinted(orderId, key)) return;
-    const how = resolvePrintTrigger({
-      settings: printCfg, toStageId: stage?.id, toMapsTo: toStatus, displayStages,
-    });
-    if (how === 'none') return;
-    if (how === 'prompt') {
-      setPrintPrompt({ orderId, stageId: key, stageName: stage?.name || toStatus });
+    const d = decidePrintTrigger({ printCfg, displayStages, toStatus, orderId });
+    if (d.kind === 'none') return;
+    if (d.kind === 'prompt') {
+      setPrintPrompt({ orderId, stageId: d.stageId, stageName: d.stageName });
       return;
     }
-    const w = window.open(printUrl(orderId, stage?.name), '_blank', 'noopener');
-    if (w) {
-      markPrinted(orderId, key);
+    const r = openPrintWindow(d.url);
+    if (r.ok) {
+      markPrinted(orderId, d.stageId);
       toast({ title: 'Impressão aberta — confirme na janela do navegador.' });
     } else {
-      toast({ title: 'Janela bloqueada', description: 'Use o botão Imprimir no pedido.', variant: 'destructive' });
+      toast({ title: 'Janela bloqueada', description: PRINT_FAILURE_MESSAGE[r.reason], variant: 'destructive' });
     }
   };
 
@@ -712,12 +705,12 @@ export default function Pedidos() {
           onSkip={() => setPrintPrompt(null)}
           onPrint={() => {
             const { orderId, stageId, stageName } = printPrompt;
-            const w = window.open(printUrl(orderId, stageName), '_blank', 'noopener');
-            if (w) {
+            const r = openPrintWindow(printUrl(orderId, stageName));
+            if (r.ok) {
               markPrinted(orderId, stageId);
               setPrintPrompt(null);
             } else {
-              toast({ title: 'Janela bloqueada', description: 'Permita pop-ups ou use Imprimir no pedido.', variant: 'destructive' });
+              toast({ title: 'Janela bloqueada', description: `${PRINT_FAILURE_MESSAGE[r.reason]} Tente de novo ou use Imprimir no pedido.`, variant: 'destructive' });
             }
           }}
         />

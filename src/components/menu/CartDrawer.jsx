@@ -17,7 +17,9 @@ export default function CartDrawer({ open, onClose }) {
   const handleCheckout = () => {
     if (storeClosed) return;
     onClose();
-    navigate(`/checkout/${company.slug}`);
+    // Preserva a mesa do QR Code (?mesa=token) até o checkout.
+    const mesa = new URLSearchParams(window.location.search).get('mesa');
+    navigate(`/checkout/${company.slug}${mesa ? `?mesa=${encodeURIComponent(mesa)}` : ''}`);
   };
 
   return (

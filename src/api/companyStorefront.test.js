@@ -55,8 +55,13 @@ describe('company — patch parcial (sem company_id; slug editável)', () => {
     assert.deepEqual(patch, { name: 'N', is_open: false, slug: 'y' });
   });
 
-  it('updateCompany nunca envia company_id', async () => {
-    const client = createMockClient({ tables: { companies: { single: { data: { id: 'c' }, error: null } } } });
+  it('cover_url liberado no patch (capa do material)', () => {
+    assert.deepEqual(toSupabaseCompanyPatch({ cover_url: 'https://x/c.jpg', outro: 1 }), {
+      cover_url: 'https://x/c.jpg',
+    });
+  });
+
+  it('updateCompany nunca envia company_id', async () => {    const client = createMockClient({ tables: { companies: { single: { data: { id: 'c' }, error: null } } } });
     await updateCompany(client, 'c', { name: 'N', company_id: 'OUTRA' });
     assert.ok(!('company_id' in client.calls[0].payload));
   });

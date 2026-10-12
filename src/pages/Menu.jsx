@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { getStorefrontBySlug } from '@/api/storefront';
+import { resolveTableToken } from '@/api/tables';
 import { useCart } from '@/lib/CartContext';
 import { getOrderByToken } from '@/api/orders';
 import { loadResume, clearResume, isActiveOrderStatus } from '@/lib/orderResume';
@@ -25,6 +26,10 @@ export default function Menu() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [resumedOrder, setResumedOrder] = useState(null);
+  // Mesa via QR Code (?mesa=token): validada no servidor; banner + trava
+  // seguem no checkout. Token inválido: aviso + cardápio sem mesa.
+  const [tableBanner, setTableBanner] = useState(null);
+  const [tableError, setTableError] = useState('');
 
   // Cardápio público Supabase-only via RPC pública (sem SELECT anon direto).
   useEffect(() => {
@@ -41,6 +46,19 @@ export default function Menu() {
         setCategories(storefront.categories || []);
         setProducts(storefront.products || []);
         setActiveCategory('all');
+        // QR Code de mesa: resolve e confere a empresa (anti cross-tenant).
+        try {
+          const token = new URLSearchParams(window.location.search).get('mesa');
+          if (token) {
+            const resolved = await resolveTableToken(supabase, token);
+            if (resolved?.company_slug && resolved.company_slug !== comp.slug) {
+              throw new Error('Mesa de outra empresa');
+            }
+            setTableBanner({ name: resolved?.table_name || '', token });
+          }
+        } catch (err) {
+          setTableError(err?.message || 'Não foi possível identificar a mesa. Siga sem mesa ou peça ajuda.');
+        }
         // Retomada: pedido anterior desta loja ainda ativo? (1 consulta, sem polling)
         try {
           const saved = loadResume(slug);
@@ -121,6 +139,24 @@ export default function Menu() {
             <Button asChild size="sm" className="shrink-0">
               <Link to={`/acompanhar/${resumedOrder.token}`}>Acompanhar pedido →</Link>
             </Button>
+          </div>
+        </div>
+      )}
+
+      {tableBanner && (
+        <div className="mx-auto max-w-4xl px-4 pt-4">
+          <div className="flex items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 p-4">
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-foreground">🪑 Você está pedindo na {tableBanner.name}</p>
+              <p className="text-sm text-muted-foreground">O pedido chegará identificado para a equipe.</p>
+            </div>
+          </div>
+        </div>
+      )}
+      {tableError && (
+        <div className="mx-auto max-w-4xl px-4 pt-4">
+          <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
+            {tableError} Siga com o cardápio sem mesa vinculada.
           </div>
         </div>
       )}

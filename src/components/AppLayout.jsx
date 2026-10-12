@@ -9,7 +9,7 @@ import SelectGuard from '@/components/SelectGuard';
 import {
   LayoutDashboard, ShoppingBag, UtensilsCrossed, Users, User,
   Settings, LogOut, Menu as MenuIcon, X, Store, Wallet, CreditCard, LayoutGrid,
-  ContactRound, Megaphone, UserPlus, ShieldCheck, Undo2
+  ContactRound, Megaphone, UserPlus, ShieldCheck, Undo2, Armchair
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { label: 'Pedidos', path: '/pedidos', icon: ShoppingBag },
   { label: 'Cardápio', path: '/gestao-produtos', icon: UtensilsCrossed },
   { label: 'Clientes', path: '/clientes', icon: Users },
+  { label: 'Mesas', path: '/mesas', icon: Armchair },
   { label: 'Equipe', path: '/equipe', icon: ContactRound },
   { label: 'Assinatura', path: '/assinatura', icon: CreditCard },
   { label: 'Financeiro', path: '/financeiro', icon: Wallet },

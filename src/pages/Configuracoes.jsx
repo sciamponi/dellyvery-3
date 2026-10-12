@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listZones, createZone as sbCreateZone, deleteZone as sbDeleteZone } from '@/api/deliveryZones';
@@ -20,6 +21,14 @@ import { Upload, Loader2, Save, Plus, Trash2, X, Check, Link2, QrCode, Share2, D
 import { normalizeSlug, isValidSlug, buildMenuUrl, buildShareMessage, buildWhatsAppUrl } from '@/lib/menuShare';
 import { normalizePrintSettings, PRINT_MODES, PRINT_WIDTHS } from '@/lib/printSettings';
 import { listStages as sbListStages, displayStages as buildDisplayStages } from '@/api/orderStages';
+import { listTables as sbListTables } from '@/api/tables';
+import { listProducts as sbListCatalogProducts } from '@/api/catalog';
+import { FLYER_PRINT_CSS } from '@/lib/printCss';
+import { resolvePublicBaseUrl } from '@/lib/tableQr';
+import {
+  buildFlyerModel, renderFlyerPng, DEFAULT_TABLE_TITLE, DEFAULT_GENERAL_TITLE,
+  DEFAULT_INSTRUCTION,
+} from '@/lib/flyer';
 
 const COLOR_PRESETS = ['#DC2626', '#F97316', '#2563EB', '#16A34A', '#9333EA', '#DB2777', '#0D9488', '#1E293B'];
 
@@ -50,14 +59,45 @@ export default function Configuracoes() {
   const [printCfg, setPrintCfg] = useState({ mode: 'manual', stages: [], width: '80' });
   const [printStages, setPrintStages] = useState([]);
   const [printSaving, setPrintSaving] = useState(false);
+  // Divulgação: QR geral + material por mesa (flyer com capa e fotos reais).
+  const [flyTables, setFlyTables] = useState([]);
+  const [flyProducts, setFlyProducts] = useState([]);
+  const [flyTableId, setFlyTableId] = useState('');
+  const [flyTitle, setFlyTitle] = useState('');
+  const [flyInstruction, setFlyInstruction] = useState('');
+  const [flyPhotoIds, setFlyPhotoIds] = useState([]);
+  const [flyQrUrl, setFlyQrUrl] = useState('');
+  const [flyPng, setFlyPng] = useState('');
+  const [flyBusy, setFlyBusy] = useState(false);
+  const [coverUploading, setCoverUploading] = useState(false);
+  // PNG dedicado à impressão (WYSIWYG com o download, A4 página única).
+  const [printPng, setPrintPng] = useState('');
+  // Capa verificada: só conta como aplicada se a imagem carregar de verdade.
+  const [coverStatus, setCoverStatus] = useState('idle');
+  const coverUrl = form?.cover_url || company?.cover_url || '';
+
+  useEffect(() => {
+    if (!coverUrl) { setCoverStatus('idle'); return; }
+    let alive = true;
+    setCoverStatus('checking');
+    // Construtor global explícito: `Image` aqui é o componente importado
+    // de @/components/ui/image (não-construtível); `new Image()` quebrava
+    // a página inteira (tela branca) para empresas COM capa.
+    const Ctor = typeof window !== 'undefined' ? window.Image : null;
+    if (!Ctor) { setCoverStatus('error'); return; }
+    const img = new Ctor();
+    img.onload = () => { if (alive) setCoverStatus('ok'); };
+    img.onerror = () => { if (alive) setCoverStatus('error'); };
+    img.src = coverUrl;
+    return () => { alive = false; };
+  }, [coverUrl]);
   const [copiedLink, setCopiedLink] = useState(false);
   const qrRef = useRef(null);
 
   const menuUrl = form?.slug ? buildMenuUrl(window.location.origin, normalizeSlug(form.slug) || form.slug) : '';
 
   // QR desenhado via callback ref: dispara na montagem do canvas (ao abrir a
-  // aba Cardápio) e quando a URL muda. O useEffect anterior não redesenhava
-  // porque o conteúdo da aba inativa não está montado.
+  // aba Divulgação) e quando a URL muda.
   const qrCallbackRef = useCallback((canvas) => {
     qrRef.current = canvas;
     if (!canvas || !menuUrl) return;
@@ -77,6 +117,11 @@ export default function Configuracoes() {
     }
   };
 
+  const shareWhatsApp = () => {
+    if (!menuUrl) return;
+    window.open(buildWhatsAppUrl(buildShareMessage(form?.name || 'Nosso cardápio', menuUrl)), '_blank', 'noopener');
+  };
+
   const downloadQr = () => {
     const canvas = qrRef.current;
     if (!canvas) return;
@@ -84,11 +129,6 @@ export default function Configuracoes() {
     a.href = canvas.toDataURL('image/png');
     a.download = `qrcode-cardapio-${normalizeSlug(form?.slug || 'loja')}.png`;
     a.click();
-  };
-
-  const shareWhatsApp = () => {
-    if (!menuUrl) return;
-    window.open(buildWhatsAppUrl(buildShareMessage(form?.name || 'Nosso cardápio', menuUrl)), '_blank', 'noopener');
   };
 
   useEffect(() => {
@@ -103,6 +143,8 @@ export default function Configuracoes() {
         setPrintCfg(normalizePrintSettings(cur.print));
       }).catch(() => {});
       sbListStages(supabase, cid).then(setPrintStages).catch(() => setPrintStages([]));
+      sbListTables(supabase, cid, { onlyActive: true }).then(setFlyTables).catch(() => setFlyTables([]));
+      sbListCatalogProducts(supabase, cid).then(setFlyProducts).catch(() => setFlyProducts([]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company, sbActive]);
@@ -144,6 +186,104 @@ export default function Configuracoes() {
       ...printCfg,
       stages: has ? printCfg.stages.filter((s) => s !== id) : [...printCfg.stages, id],
     });
+  };
+
+  // ---- Divulgação: capa + flyer por mesa (individual) ----
+  const flyTable = flyTables.find((t) => t.id === flyTableId) || null;
+
+  const handleCoverUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCoverUploading(true);
+    try {
+      const cid = sbCompany?.id || company.id;
+      const { file_url } = await sbUploadImage(supabase, 'cover', cid, file);
+      const updated = await sbUpdateCompany(supabase, cid, { cover_url: file_url });
+      setCompany((prev) => (prev ? { ...prev, cover_url: updated?.cover_url || file_url } : prev));
+      setForm((prev) => (prev ? { ...prev, cover_url: updated?.cover_url || file_url } : prev));
+      toast({ title: 'Capa atualizada!' });
+    } catch (err) {
+      toast({ title: 'Erro no upload', description: err?.message, variant: 'destructive' });
+    } finally {
+      setCoverUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  const flyerModel = (() => {
+    try {
+      return buildFlyerModel({
+        company: { ...(form || {}), cover_url: coverStatus === 'ok' ? coverUrl : '' },
+        products: flyProducts,
+        table: flyTable,
+        origin: typeof window !== 'undefined' ? resolvePublicBaseUrl(window.location.origin) : '',
+        opts: {
+          title: flyTitle.trim() || undefined,
+          instruction: flyInstruction.trim() || undefined,
+          photoIds: flyPhotoIds,
+        },
+      });
+    } catch {
+      return null;
+    }
+  })();
+
+  const refreshFlyerQr = async () => {
+    if (!flyerModel) return '';
+    try {
+      const { default: QRCode } = await import('qrcode');
+      const url = await QRCode.toDataURL(flyerModel.qrUrl, { width: 560, margin: 2 });
+      setFlyQrUrl(url);
+      return url;
+    } catch {
+      setFlyQrUrl('');
+      return '';
+    }
+  };
+
+  const downloadFlyer = async () => {
+    if (!flyerModel) return;
+    if (coverUrl && coverStatus !== 'ok') {
+      toast({ title: 'Capa indisponível', description: 'A imagem da capa não carregou. Verifique o upload e tente de novo.', variant: 'destructive' });
+      return;
+    }
+    setFlyBusy(true);
+    try {
+      const qr = flyQrUrl || (await refreshFlyerQr());
+      if (!qr) throw new Error('Não foi possível gerar o QR Code');
+      const png = await renderFlyerPng(flyerModel, { qrDataUrl: qr });
+      setFlyPng(png);
+      const a = document.createElement('a');
+      a.href = png;
+      a.download = flyTable ? `mesa-${flyTable.name}.png` : `cardapio-${form?.slug || 'loja'}.png`;
+      a.click();
+    } catch (err) {
+      toast({ title: 'Erro ao gerar', description: err?.message, variant: 'destructive' });
+    } finally {
+      setFlyBusy(false);
+    }
+  };
+
+  // Impressão A4: renderiza o MESMO PNG do download e abre o diálogo.
+  // Sem PNG válido não há impressão (nunca papel em branco).
+  const printFlyer = async () => {
+    if (!flyerModel) return;
+    if (coverUrl && coverStatus !== 'ok') {
+      toast({ title: 'Capa indisponível', description: 'A imagem da capa não carregou. Verifique o upload e tente de novo.', variant: 'destructive' });
+      return;
+    }
+    setFlyBusy(true);
+    try {
+      const qr = flyQrUrl || (await refreshFlyerQr());
+      if (!qr) throw new Error('Não foi possível gerar o QR Code');
+      const png = await renderFlyerPng(flyerModel, { qrDataUrl: qr });
+      setPrintPng(png);
+      setTimeout(() => window.print(), 150);
+    } catch (err) {
+      toast({ title: 'Erro ao preparar impressão', description: err?.message, variant: 'destructive' });
+    } finally {
+      setFlyBusy(false);
+    }
   };
 
   if (loading || !form) return <Spinner />;
@@ -230,6 +370,7 @@ export default function Configuracoes() {
           <TabsTrigger value="contato">📞 Contato</TabsTrigger>
           <TabsTrigger value="funcionamento">🕐 Funcionamento</TabsTrigger>
           <TabsTrigger value="delivery">🚴 Delivery</TabsTrigger>
+          <TabsTrigger value="divulgacao">📣 Divulgação</TabsTrigger>
           <TabsTrigger value="impressao">🖨️ Impressão</TabsTrigger>
         </TabsList>
 
@@ -321,26 +462,11 @@ export default function Configuracoes() {
             </div>
           </div>
 
-          {/* QR Code */}
-          <div className="rounded-2xl border border-border bg-card p-6 space-y-4 max-w-2xl">
-            <div className="flex items-center gap-2">
-              <QrCode className="h-5 w-5 text-primary" />
-              <h3 className="font-heading font-semibold text-foreground">QR Code do cardápio</h3>
-            </div>
-            <div className="flex flex-col sm:flex-row items-center gap-4">
-              <div className="rounded-xl border border-border bg-white p-3">
-                <canvas ref={qrCallbackRef} width={200} height={200} className="h-[180px] w-[180px]" aria-label="QR Code do cardápio" />
-              </div>
-              <div className="flex flex-col gap-2 w-full sm:w-auto">
-                <Button variant="outline" size="sm" onClick={downloadQr}>
-                  <Download className="h-4 w-4" /> Baixar QR Code
-                </Button>
-                <Button variant="outline" size="sm" onClick={shareWhatsApp}>
-                  <Share2 className="h-4 w-4" /> Compartilhar
-                </Button>
-                <p className="text-xs text-muted-foreground">Aponta sempre para o endereço atual do cardápio.</p>
-              </div>
-            </div>
+          {/* QR Code e material impresso vivem na aba Divulgação */}
+          <div className="rounded-2xl border border-border bg-card p-4 sm:p-6 max-w-2xl">
+            <p className="text-sm text-muted-foreground">
+              QR Code e material para impressão estão na aba <span className="font-medium text-foreground">Divulgação</span>.
+            </p>
           </div>
 
           {/* Material de divulgação (futuro) */}
@@ -528,6 +654,173 @@ export default function Configuracoes() {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+        </TabsContent>
+        {/* Divulgação: QR geral + material impresso por mesa (individual) */}
+        <TabsContent value="divulgacao">
+          <p className="text-sm text-muted-foreground max-w-2xl mb-4">
+            <span className="font-medium text-foreground">QR geral</span> abre o cardápio sem mesa.
+            {' '}<span className="font-medium text-foreground">Material por mesa</span> usa o QR exclusivo de cada mesa.
+            Mesas em <Link to="/mesas" className="text-primary hover:underline">Mesas</Link>; cupom de pedido em cada pedido.
+          </p>
+          <div className="rounded-2xl border border-border bg-card p-6 space-y-4 max-w-2xl">
+            <div className="flex items-center gap-2">
+              <QrCode className="h-5 w-5 text-primary" />
+              <h3 className="font-heading font-semibold text-foreground">QR Code geral do cardápio</h3>
+            </div>
+            <div className="flex flex-col sm:flex-row items-center gap-4">
+              <div className="rounded-xl border border-border bg-white p-3">
+                <canvas ref={qrCallbackRef} width={200} height={200} className="h-[180px] w-[180px]" aria-label="QR Code do cardápio" />
+              </div>
+              <div className="flex flex-col gap-2 w-full sm:w-auto">
+                <Button variant="outline" size="sm" onClick={downloadQr}>
+                  <Download className="h-4 w-4" /> Baixar QR Code
+                </Button>
+                <p className="text-xs text-muted-foreground">Abre o cardápio sem vincular mesa.</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-card p-6 space-y-4 max-w-2xl">
+            <div className="flex items-center gap-2">
+              <Megaphone className="h-5 w-5 text-primary" />
+              <h3 className="font-heading font-semibold text-foreground">Material por mesa</h3>
+            </div>
+            <div className="space-y-2">
+              <Label>Mesa (opcional — vazio = material geral)</Label>
+              <Select value={flyTableId || 'none'} onValueChange={(v) => { setFlyTableId(v === 'none' ? '' : v); setFlyPng(''); setFlyQrUrl(''); }}>
+                <SelectTrigger><SelectValue placeholder="Material geral" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Material geral (sem mesa)</SelectItem>
+                  {flyTables.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {flyTables.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Nenhuma mesa cadastrada. <Link to="/mesas" className="text-primary hover:underline">Cadastrar mesas</Link>
+                </p>
+              )}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>Título</Label>
+                <Input
+                  value={flyTitle}
+                  onChange={(e) => setFlyTitle(e.target.value)}
+                  placeholder={flyTable ? DEFAULT_TABLE_TITLE : DEFAULT_GENERAL_TITLE}
+                  maxLength={60}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Capa (fundo)</Label>
+                <div className="flex items-center gap-2">
+                  <Input id="fly-cover" type="file" accept="image/*" className="hidden" onChange={handleCoverUpload} />
+                  <Button variant="outline" size="sm" asChild disabled={coverUploading}>
+                    <label htmlFor="fly-cover" className="cursor-pointer">
+                      {coverUploading ? 'Enviando...' : (form?.cover_url ? 'Trocar capa' : 'Enviar capa')}
+                    </label>
+                  </Button>
+                  {coverStatus === 'ok' && <span className="text-xs text-green-600">Capa aplicada ✓</span>}
+                  {coverStatus === 'checking' && <span className="text-xs text-muted-foreground">Verificando imagem...</span>}
+                  {coverStatus === 'error' && (
+                    <span className="text-xs text-destructive">A capa não carregou — tente outro arquivo.</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Instrução</Label>
+              <Textarea value={flyInstruction} onChange={(e) => setFlyInstruction(e.target.value)} rows={2} placeholder={DEFAULT_INSTRUCTION} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Fotos (até 3, automático)</Label>
+              <div className="flex flex-wrap gap-2">
+                {flyProducts.filter((p) => p.image_url).slice(0, 9).map((p) => {
+                  const on = flyPhotoIds.includes(p.id);
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setFlyPhotoIds((prev) => (on ? prev.filter((id) => id !== p.id) : [...prev, p.id].slice(0, 3)))}
+                      className={`relative h-14 w-14 overflow-hidden rounded-lg border-2 ${on ? 'border-primary' : 'border-transparent opacity-70'}`}
+                      title={p.name}
+                    >
+                      <Image src={p.image_url} fittingType="fill" className="h-full w-full" alt={p.name} />
+                    </button>
+                  );
+                })}
+                {flyProducts.filter((p) => p.image_url).length === 0 && (
+                  <p className="text-xs text-muted-foreground">Sem fotos nos produtos ainda.</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Pré-visualização + ações */}
+          <div className="rounded-2xl border border-border bg-card p-6 space-y-4 max-w-2xl">
+            <h3 className="font-heading font-semibold text-foreground">Pré-visualização</h3>
+            <style>{FLYER_PRINT_CSS}</style>
+            {!flyerModel ? (
+              <p className="text-sm text-muted-foreground">Carregando dados da empresa...</p>
+            ) : (
+              <div className="mx-auto" style={{ maxWidth: 320 }}>
+              <div
+                className="fly-print overflow-hidden rounded-2xl text-white"
+                style={{
+                  background: flyerModel.coverUrl
+                    ? `linear-gradient(rgba(0,0,0,.55),rgba(0,0,0,.55)), url(${flyerModel.coverUrl}) center/cover`
+                    : `linear-gradient(180deg, ${flyerModel.primaryColor}, #0c0a09)`,
+                }}
+              >
+                <div className="p-5 text-center space-y-2">
+                  <p className="font-heading font-bold text-lg">{flyerModel.companyName}</p>
+                  <p className="font-heading text-base font-extrabold text-amber-200">{flyerModel.title}</p>
+                  {flyerModel.kind === 'table' && (
+                    <p className="text-sm font-semibold">Mesa {flyerModel.tableName}</p>
+                  )}
+                  <div className="mx-auto bg-white p-2 rounded-xl" style={{ width: 150 }}>
+                    {flyQrUrl ? (
+                      <img src={flyQrUrl} alt="QR Code" className="w-full" />
+                    ) : (
+                      <button type="button" onClick={refreshFlyerQr} className="text-xs text-muted-foreground py-8 w-full">
+                        Gerar QR Code
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-white/90">{flyerModel.instruction}</p>
+                  {flyerModel.photos.length > 0 && (
+                    <div className="flex justify-center gap-1.5 pt-1">
+                      {flyerModel.photos.map((p) => (
+                        <Image key={p.id} src={p.image_url} fittingType="fill" className="h-11 w-11 rounded-lg object-cover" alt={p.name} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              </div>
+            )}
+            <div className="no-print flex flex-col sm:flex-row gap-2">
+              <Button variant="outline" className="flex-1" onClick={downloadFlyer} disabled={!flyerModel || flyBusy}>
+                <Download className="h-4 w-4" /> {flyBusy ? 'Gerando...' : 'Baixar PNG'}
+              </Button>
+              <Button
+                variant="outline" className="flex-1"
+                onClick={printFlyer}
+                disabled={!flyerModel || flyBusy}
+              >
+                <Printer className="h-4 w-4" /> {flyBusy ? 'Preparando...' : 'Imprimir'}
+              </Button>
+            </div>
+            {printPng && (
+              <div className="fly-print invisible absolute left-0 top-0" aria-hidden>
+                <img className="fly-print-img" src={printPng} alt="" />
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              A impressão usa a janela do navegador. {flyTable ? `QR exclusivo da ${flyTable.name} (não muda ao renomear).` : 'QR geral, sem mesa vinculada.'}
+            </p>
           </div>
         </TabsContent>
       </Tabs>

@@ -6,6 +6,7 @@ import { getStorefrontBySlug } from '@/api/storefront';
 import { useCart } from '@/lib/CartContext';
 import { saveResume } from '@/lib/orderResume';
 import { suggestUpsellSteps } from '@/lib/upsell';
+import { resolveTableToken } from '@/api/tables';
 import ProductModal from '@/components/menu/ProductModal';
 import UpsellSuggestions from '@/components/checkout/UpsellSuggestions';
 import { Button } from '@/components/ui/button';
@@ -58,16 +59,33 @@ export default function Checkout() {
     [products, categories, items],
   );
 
-  // Check for ?mesa= query param
+  // Check for ?mesa= query param (QR Code: token validado no servidor).
   const urlParams = new URLSearchParams(window.location.search);
   const mesaParam = urlParams.get('mesa');
+  // Mesa via QR: token travado (sem edição manual) + nome de exibição.
+  const [tableToken, setTableToken] = useState('');
+  const [tableLocked, setTableLocked] = useState(false);
+  const [tableError, setTableError] = useState('');
 
   useEffect(() => {
-    if (mesaParam) {
-      setOrderType('mesa');
-      setTableNumber(mesaParam);
-    }
-  }, [mesaParam]);
+    if (!mesaParam) return;
+    let cancelled = false;
+    resolveTableToken(supabase, mesaParam)
+      .then((r) => {
+        if (cancelled) return;
+        if (r?.company_slug && company?.slug && r.company_slug !== company.slug) {
+          throw new Error('Mesa de outra empresa');
+        }
+        setOrderType('mesa');
+        setTableNumber(r?.table_name || '');
+        setTableToken(mesaParam);
+        setTableLocked(true);
+      })
+      .catch((err) => {
+        if (!cancelled) setTableError(err?.message || 'Mesa inválida — siga sem mesa vinculada.');
+      });
+    return () => { cancelled = true; };
+  }, [mesaParam, company?.slug]);
 
   // Checkout Supabase-only: leitura via storefront (RPC pública).
   useEffect(() => {
@@ -180,6 +198,7 @@ export default function Checkout() {
         companySlug: slug,
         orderType,
         tableNumber,
+        tableToken: tableLocked ? tableToken : '',
         items: buildCreateOrderItems(items),
         customer,
         deliveryZoneId,
@@ -273,9 +292,12 @@ export default function Checkout() {
                   value={tableNumber}
                   onChange={(e) => setTableNumber(e.target.value)}
                   placeholder="Número da mesa"
-                  disabled={!!mesaParam}
+                  disabled={tableLocked}
                 />
-                {mesaParam && <p className="text-xs text-muted-foreground">Mesa definida pelo QR Code</p>}
+                {tableLocked && <p className="text-xs text-muted-foreground">Mesa definida pelo QR Code</p>}
+                {!tableLocked && tableError && (
+                  <p className="text-xs text-amber-600">{tableError} Siga sem mesa ou digite o número.</p>
+                )}
               </div>
             )}
 

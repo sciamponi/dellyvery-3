@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '@/api/supabaseClient';
 import { useCompany } from '@/hooks/useCompany';
 import { listProducts, listCategories } from '@/api/catalog';
+import { listTables } from '@/api/tables';
 import { listCustomers } from '@/api/customers';
 import { listZones } from '@/api/deliveryZones';
 import { createOrder, editOrder, cancelOrder, getOrderDetail, listOrdersWithItems, assignDriver, buildCreateOrderItems } from '@/api/orders';
@@ -57,6 +59,10 @@ export default function Pdv() {
   // deve cobrar mesa.
   const [orderType, setOrderType] = useState('retirada');
   const [tableNumber, setTableNumber] = useState('');
+  // Mesa cadastrada (ID real) + busca. Manual continua possível.
+  const [registeredTables, setRegisteredTables] = useState([]);
+  const [tableSearch, setTableSearch] = useState('');
+  const [selectedTableId, setSelectedTableId] = useState(null);
   const [customerSearch, setCustomerSearch] = useState('');
   const [customer, setCustomer] = useState({ name: '', phone: '' });
   const [address, setAddress] = useState('');
@@ -102,6 +108,7 @@ export default function Pdv() {
         setCategories(cats);
         setCustomers(custs);
         setZones(zn);
+        listTables(supabase, company.id, { onlyActive: true }).then(setRegisteredTables).catch(() => {});
         listDrivers(supabase, company.id).then((list) => {
           setDrivers((list || []).filter((d) => d.status === 'ativo'));
         }).catch(() => {});
@@ -129,6 +136,31 @@ export default function Pdv() {
   }, [orderType, company?.id]);
 
   const tables = useMemo(() => groupComandasByTable(mesaOrders), [mesaOrders]);
+  // Ocupação por nome normalizado (comandas ativas × mesas cadastradas).
+  const occupiedNames = useMemo(() => {
+    const set = new Set();
+    for (const g of tables) set.add(normalizeTable(g.table));
+    return set;
+  }, [tables]);
+  const filteredTables = useMemo(() => {
+    const q = tableSearch.trim().toLowerCase();
+    if (!q) return registeredTables;
+    return registeredTables.filter((t) =>
+      (t.name || '').toLowerCase().includes(q) || (t.code || '').toLowerCase().includes(q),
+    );
+  }, [registeredTables, tableSearch]);
+
+  const pickRegisteredTable = (t) => {
+    setOrderType('mesa');
+    setSelectedTableId(t.id);
+    setTableNumber(t.name || '');
+    const group = tables.find((x) => normalizeTable(x.table) === normalizeTable(t.name));
+    if (group && group.comandas.length === 1) {
+      const full = mesaOrders.find((o) => o.id === group.comandas[0].id);
+      if (full) loadComanda(full);
+    }
+    // 0 ou N comandas: segue com a mesa vinculada (N usa o seletor de comandas).
+  };
   const currentComandas = useMemo(() => {
     const t = normalizeTable(tableNumber);
     if (!t) return [];
@@ -196,6 +228,7 @@ export default function Pdv() {
     setNotifyState('');
     setNoteOpenId(null);
     setSelectedComandaId(null);
+    setSelectedTableId(null);
     if (!keepTable) {
       setTableNumber('');
       setAddress('');
@@ -209,12 +242,14 @@ export default function Pdv() {
     if (t === orderType) return;
     setOrderType(t);
     setSelectedComandaId(null);
+    setSelectedTableId(null);
   };
 
   // Mesa → comanda ativa → cliente (nome/telefone automáticos).
   const loadComanda = (order) => {
     if (!order) return;
     setOrderType('mesa');
+    setSelectedTableId(order.table_id || null);
     setTableNumber(order.table_number || '');
     setCustomer({ name: order.customer_name || '', phone: order.customer_phone || '' });
     setCustomerSearch('');
@@ -230,6 +265,8 @@ export default function Pdv() {
   const pickTable = (table) => {
     const t = normalizeTable(table);
     setOrderType('mesa');
+    const reg = registeredTables.find((r) => normalizeTable(r.name) === t);
+    setSelectedTableId(reg ? reg.id : null);
     setTableNumber(t);
     const group = tables.find(x => x.table === t);
     if (group && group.comandas.length === 1) {
@@ -246,6 +283,8 @@ export default function Pdv() {
     const t = normalizeTable(table) || normalizeTable(tableNumber);
     resetDraft(true);
     setOrderType('mesa');
+    const reg = registeredTables.find((r) => normalizeTable(r.name) === t);
+    setSelectedTableId(reg ? reg.id : null);
     setTableNumber(t);
     setTableOpen(false);
     setMergeTable(null);
@@ -352,6 +391,7 @@ export default function Pdv() {
           companySlug: company.slug,
           orderType,
           tableNumber,
+          tableId: selectedTableId,
           items: apiItems,
           customer: { name: customer.name, phone: customer.phone, address },
           deliveryZoneId: deliveryZoneId || null,
@@ -533,13 +573,52 @@ export default function Pdv() {
             {orderType === 'mesa' && (
               <div className="space-y-1.5">
                 <Label>🍽️ Mesa *</Label>
+                {registeredTables.length > 0 ? (
+                  <>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input value={tableSearch} onChange={(e) => setTableSearch(e.target.value)} placeholder="Buscar mesa..." className="pl-9 h-9" />
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 max-h-44 overflow-y-auto pr-0.5">
+                      {filteredTables.map((t) => {
+                        const busy = occupiedNames.has(normalizeTable(t.name));
+                        const active = selectedTableId === t.id;
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => pickRegisteredTable(t)}
+                            title={t.notes || t.name}
+                            aria-label={`Mesa ${t.name}${busy ? ' (ocupada)' : ''}`}
+                            className={`min-h-11 rounded-xl border px-1.5 py-1.5 text-xs font-medium transition-colors ${
+                              active ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:bg-muted/50'
+                            }`}
+                          >
+                            <span className="block truncate leading-tight">{t.name}</span>
+                            {busy && <span className="block text-[10px] text-amber-600 leading-tight">● ocupada</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {filteredTables.length === 0 && (
+                      <p className="text-xs text-muted-foreground">Nenhuma mesa com esse nome.</p>
+                    )}
+                  </>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border p-3 text-center">
+                    <p className="text-xs text-muted-foreground">Nenhuma mesa cadastrada.</p>
+                    <Link to="/mesas" className="text-xs font-medium text-primary hover:underline">
+                      Cadastrar mesas
+                    </Link>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => setTableOpen(true)}
                   className="flex w-full items-center gap-2 rounded-md border border-input bg-transparent px-3 py-2 text-sm min-w-0 text-left hover:bg-muted/50"
                 >
                   <span className="flex-1 min-w-0 truncate">
-                    {tableNumber ? `Mesa ${tableNumber}` : 'Selecionar mesa...'}
+                    {tableNumber ? `Mesa ${tableNumber}` : 'Comandas / digitar número...'}
                     {currentComandas.length > 0 && (
                       <span className="text-muted-foreground"> • {currentComandas.length} {currentComandas.length === 1 ? 'comanda' : 'comandas'}</span>
                     )}

@@ -137,6 +137,21 @@ describe('orders — escrita via RPC (nunca direta)', () => {
     assert.equal(args.p_table_number, '5');
   });
 
+  it('createOrder envia p_table_id quando há mesa vinculada', async () => {
+    const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
+    await createOrder(client, {
+      companySlug: 'loja', orderType: 'mesa', tableNumber: 'Janela', tableId: 't1',
+      items: [{ product_id: 'p', quantity: 1 }], customer: {},
+    });
+    assert.equal(client.calls.rpc[0].args.p_table_id, 't1');
+    const c2 = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
+    await createOrder(c2, {
+      companySlug: 'loja', orderType: 'retirada',
+      items: [{ product_id: 'p', quantity: 1 }], customer: {},
+    });
+    assert.equal(c2.calls.rpc[0].args.p_table_id, null);
+  });
+
   it('createOrder repassa troco (p_change_for) e mapeia change_for', async () => {
     const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o', order_number: 2, tracking_token: 't' }, error: null } } });
     await createOrder(client, {

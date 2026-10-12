@@ -19,6 +19,7 @@ export const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
 export const BUCKET_BY_KIND = {
   avatar: 'avatars',
   logo: 'logos',
+  cover: 'logos',
   catalog: 'catalog',
 };
 

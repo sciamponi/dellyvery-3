@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Image } from '@/components/ui/image';
 import { isToday, startOfDay } from 'date-fns';
 import { isSameDay, isFutureDay, addDaysLocal, formatDayLabel, filterByDay } from '@/lib/orderDay';
-import { ShoppingBag, Clock, CheckCircle, Package, ArrowRight, Store, AlertTriangle, XCircle, Bike, ChevronLeft, ChevronRight, Banknote } from 'lucide-react';
+import { ShoppingBag, Clock, CheckCircle, Package, ArrowRight, Store, AlertTriangle, XCircle, Bike, ChevronLeft, ChevronRight, Banknote, BellRing } from 'lucide-react';
 import OrderModal from '@/components/orders/OrderModal';
 import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
 import OrdersListModal from '@/components/orders/OrdersListModal';
@@ -19,7 +19,7 @@ import { playNewOrderAlert, requestNotificationPermission, showOrderNotification
 import { getAlertPrefs } from '@/lib/alertPrefs';
 import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
 import { getQueueOrders, getDelayedOrders, getFinalizedByType, getCanceled, filterByDriver } from '@/lib/orderQueue';
-import { isFirstOrder } from '@/lib/customerHistory';
+import { getDashboardModal, isNovosAlertCard, filterNovosOrders } from '@/lib/dashboardModals';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { useToast } from '@/components/ui/use-toast';
@@ -236,9 +236,11 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [selectedDate, company?.id]);
 
-  // Faixa de novos não tratados (hook antes de qualquer return antecipado).
-  const untreatedNovo = useMemo(
-    () => orders.filter(o => o.status === 'novo').slice(0, 5),
+  // Pedidos novos aguardando aceitação (card + modal; hook antes de
+  // qualquer return antecipado). Contagem sobre o carregado, sem alterar
+  // status nem duplicar pedidos.
+  const novos = useMemo(
+    () => filterNovosOrders(orders),
     [orders],
   );
 
@@ -304,8 +306,10 @@ export default function Dashboard() {
     { icon: AlertTriangle, label: 'Em atraso', value: delayed.length, color: 'text-red-600', bg: 'bg-red-50', ariaLabel: `Ver pedidos em atraso (${delayed.length})`, modal: 'atraso' },
   ];
 
-  // Compactos: Pedidos hoje (só hoje); demais sobre o carregado (como antes).
+  // Compactos: Novos primeiro; Pedidos hoje (só hoje); demais sobre o
+  // carregado (como antes).
   const todayCards = [
+    { icon: BellRing, label: 'Novos pedidos', value: novos.length, color: 'text-amber-600', bg: 'bg-amber-50', ariaLabel: `Ver novos pedidos aguardando (${novos.length})`, modal: 'novos' },
     { icon: ShoppingBag, label: 'Pedidos hoje', value: ordersToday.length, color: 'text-blue-600', bg: 'bg-blue-50', ariaLabel: `Ver pedidos de hoje (${ordersToday.length})`, modal: 'hoje' },
     { icon: Clock, label: 'Em andamento', value: inProgress.length, color: 'text-orange-600', bg: 'bg-orange-50', ariaLabel: `Ver em andamento (${inProgress.length})`, modal: 'andamento' },
     { icon: CheckCircle, label: 'Finalizados', value: finished.length, color: 'text-green-600', bg: 'bg-green-50', ariaLabel: `Ver finalizados (${finished.length})`, modal: 'finalizados' },
@@ -318,25 +322,10 @@ export default function Dashboard() {
     { label: 'Mesas', value: finMesa.length, modal: 'finMesa' },
   ];
 
-  const modalOrders = queueModal === 'atraso' ? delayed
-    : queueModal === 'hoje' ? ordersToday
-    : queueModal === 'andamento' ? inProgress
-    : queueModal === 'finalizados' ? finished
-    : queueModal === 'cancelados' ? canceled
-    : queueModal === 'finDelivery' ? finDeliveryFiltered
-    : queueModal === 'finRetirada' ? finRetirada
-    : queueModal === 'finMesa' ? finMesa
-    : inQueue;
-
-  const modalTitle = queueModal === 'atraso' ? 'Pedidos em atraso'
-    : queueModal === 'hoje' ? 'Pedidos de hoje'
-    : queueModal === 'andamento' ? 'Em andamento'
-    : queueModal === 'finalizados' ? 'Finalizados'
-    : queueModal === 'cancelados' ? 'Cancelados'
-    : queueModal === 'finDelivery' ? 'Entregas finalizadas'
-    : queueModal === 'finRetirada' ? 'Retiradas finalizadas'
-    : queueModal === 'finMesa' ? 'Mesas finalizadas'
-    : 'Pedidos na fila';
+  const { title: modalTitle, orders: modalOrders } = getDashboardModal(queueModal, {
+    delayed, novos, ordersToday, inProgress, finished, canceled,
+    finDeliveryFiltered, finRetirada, finMesa, inQueue,
+  });
 
   const driverOptions = Object.values(driversById);
 
@@ -397,47 +386,10 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Novos não tratados: acesso direto + selo de primeiro pedido */}
-      {untreatedNovo.length > 0 && (
-        <div className="rounded-2xl border border-red-200 bg-red-50/60 p-3 sm:p-4">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <p className="text-xs font-bold uppercase tracking-wider text-red-700">
-              🔔 {untreatedNovo.length} {untreatedNovo.length === 1 ? 'pedido novo' : 'pedidos novos'} aguardando
-            </p>
-            <button
-              type="button"
-              onClick={() => navigate('/pedidos')}
-              className="text-xs font-medium text-red-700 hover:underline shrink-0"
-            >
-              Ver fila
-            </button>
-          </div>
-          <div className="space-y-1.5">
-            {untreatedNovo.map(o => (
-              <button
-                key={o.id}
-                type="button"
-                onClick={() => setSelectedOrder(o)}
-                className="flex w-full items-center gap-2 rounded-xl bg-card border border-border px-3 py-2 text-left hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <span className="font-heading font-bold text-sm text-foreground shrink-0">#{o.order_number || '—'}</span>
-                <span className="flex-1 min-w-0 truncate text-sm text-muted-foreground">{o.customer_name || 'Avulso'}</span>
-                {isFirstOrder(o, orders) && (
-                  <span className="shrink-0 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
-                    🥇 1º pedido
-                  </span>
-                )}
-                <span className="shrink-0 text-[11px] text-muted-foreground">{timeSince(o.created_date)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Stats compactos */}
+      {/* Stats compactos (inclui Novos pedidos; bloco destacado removido) */}
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
         {[...todayCards, ...queueCards].map((s) => {
-          const isAlertCard = hasNovo && (s.label === 'Pedidos hoje' || s.label === 'Na fila');
+          const isAlertCard = isNovosAlertCard(hasNovo, s.label);
           return (
           <button
             key={s.modal || s.label}

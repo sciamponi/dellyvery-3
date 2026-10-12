@@ -24,7 +24,7 @@ function rpcError(error) {
 
 // Campos Base44 <-> Supabase companies (colunas C1; resto direto).
 const COMPANY_WRITE_FIELDS = [
-  'name', 'slug', 'slogan', 'description', 'logo_url',
+  'name', 'slug', 'slogan', 'description', 'logo_url', 'cover_url',
   'primary_color', 'accent_color', 'secondary_color',
   'phone', 'whatsapp', 'email', 'address', 'city', 'state', 'zip_code',
   'instagram', 'facebook', 'website',

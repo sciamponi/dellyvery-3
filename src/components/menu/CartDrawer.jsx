@@ -1,18 +1,25 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Image } from '@/components/ui/image';
 import { Minus, Plus, Trash2, ShoppingCart, Package, X } from 'lucide-react';
 import { useCart } from '@/lib/CartContext';
 import { useNavigate } from 'react-router-dom';
+import { buildDepRulesFromProducts, checkCartDependencies } from '@/lib/productDependencies';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
-export default function CartDrawer({ open, onClose }) {
+export default function CartDrawer({ open, onClose, products = [] }) {
   const { items, updateItemQuantity, removeItem, clearCart, getSubtotal, getTotalItems, company } = useCart();
   const navigate = useNavigate();
   // FASE 2: com loja fechada o cliente vê o carrinho, mas não finaliza.
   const storeClosed = company?.is_open === false;
+  // Gate 3: aviso reativo (não remove nada). Ex.: remover o lanche deixa
+  // a batata órfã — o checkout/servidor barram; aqui só avisamos.
+  const depErrors = useMemo(
+    () => checkCartDependencies(items, buildDepRulesFromProducts(products)),
+    [items, products],
+  );
 
   const handleCheckout = () => {
     if (storeClosed) return;
@@ -120,6 +127,13 @@ export default function CartDrawer({ open, onClose }) {
                 <span className="text-sm text-muted-foreground">Subtotal</span>
                 <span className="font-heading text-base font-bold">{fmtCurrency(getSubtotal())}</span>
               </div>
+              {depErrors.length > 0 && (
+                <div className="w-full rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-800" role="alert">
+                  {depErrors.map((e) => (
+                    <p key={e.productId}>⚠️ {e.message}</p>
+                  ))}
+                </div>
+              )}
               {storeClosed && (
                 <p className="w-full rounded-lg border border-red-200 bg-red-50 p-2.5 text-center text-sm text-red-700">
                   🔴 Restaurante fechado — Estamos fechados no momento.

@@ -11,6 +11,8 @@ import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import ProductFormDialog from '@/components/products/ProductFormDialog';
 import CategoryFormDialog from '@/components/products/CategoryFormDialog';
+import IngredientsManager from '@/components/products/IngredientsManager';
+import DependenciesManager from '@/components/products/DependenciesManager';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -125,17 +127,19 @@ export default function GestaoProdutos() {
           <Button onClick={() => { setEditProduct(null); setProductDialog(true); }} className="bg-primary hover:bg-primary/90 h-9 px-4">
             <Plus className="h-4 w-4" /> Novo produto
           </Button>
-        ) : (
+        ) : tab === 'categorias' ? (
           <Button onClick={() => { setEditCategory(null); setCategoryDialog(true); }} className="bg-primary hover:bg-primary/90 h-9 px-4">
             <Plus className="h-4 w-4" /> Nova categoria
           </Button>
-        )}
+        ) : null}
       </PageHeader>
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="produtos">Produtos ({products.length})</TabsTrigger>
           <TabsTrigger value="categorias">Categorias ({categories.length})</TabsTrigger>
+          <TabsTrigger value="complementos">Complementos</TabsTrigger>
+          <TabsTrigger value="dependencias">Dependências</TabsTrigger>
         </TabsList>
 
         {/* Products tab */}
@@ -297,6 +301,16 @@ export default function GestaoProdutos() {
             </div>
           )}
         </TabsContent>
+
+        {/* Complementos: biblioteca reutilizável (ingredientes) */}
+        <TabsContent value="complementos" className="mt-4">
+          <IngredientsManager companyId={company.id} />
+        </TabsContent>
+
+        {/* Dependências: produto exige outro(s) no pedido (opt-in) */}
+        <TabsContent value="dependencias" className="mt-4">
+          <DependenciesManager companyId={company.id} />
+        </TabsContent>
       </Tabs>
 
       <ProductFormDialog
@@ -305,6 +319,7 @@ export default function GestaoProdutos() {
         product={editProduct}
         categories={categories}
         companyId={company.id}
+        products={products}
         onSaved={loadData}
       />
       <CategoryFormDialog

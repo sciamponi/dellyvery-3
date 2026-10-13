@@ -8,6 +8,7 @@ import {
   createOrder,
   buildCreateOrderItems,
   countCustomerOrders,
+  countPriorOrders,
   changeOrderStatus,
   cancelOrder,
   editOrder,
@@ -19,6 +20,7 @@ import {
   isRestaurantClosedError,
   linkOrderCustomer,
   linkOrderTable,
+  setComandaName,
 } from './orders.js';
 
 // Mock fiel ao supabase-js v2: channel() devolve a MESMA instância por tópico
@@ -63,6 +65,8 @@ function createMockClient({ tables = {}, rpcs = {} } = {}) {
     const chain = {
       select: () => chain,
       eq: () => chain,
+      neq: () => chain,
+      in: () => chain,
       order: () => chain,
       limit: () => chain,
       insert: (p) => chain,
@@ -187,6 +191,19 @@ describe('orders — escrita via RPC (nunca direta)', () => {
     assert.deepEqual(buildCreateOrderItems(null), []);
   });
 
+  it('buildCreateOrderItems leva config V2 sanitizada (sem ela, legado)', () => {
+    const v2 = { steps: [{ step_id: 's1', items: [{ option_id: 'o1', quantity: 1 }, { option_id: '', quantity: 2 }] }] };
+    const out = buildCreateOrderItems([
+      { product_id: 'acai', quantity: 1, complements: [{ group_name: 'T', option_name: 'M', price: 2, quantity: 1 }], notes: '', config: v2 },
+      { product_id: 'fritas', quantity: 2 },
+    ]);
+    assert.deepEqual(out[0].config, { steps: [{ step_id: 's1', items: [{ option_id: 'o1', quantity: 1 }] }] });
+    assert.equal('config' in out[1], false);
+    // Vazias/malformadas não viajam.
+    assert.equal('config' in buildCreateOrderItems([{ product_id: 'p', quantity: 1, config: { steps: [] } }])[0], false);
+    assert.equal('config' in buildCreateOrderItems([{ product_id: 'p', quantity: 1, config: { steps: [{ step_id: '', items: [] }] } }])[0], false);
+  });
+
   it('countCustomerOrders conta anteriores (sem cancelados, sem o atual)', async () => {
     const calls = [];
     const chain = {
@@ -205,6 +222,31 @@ describe('orders — escrita via RPC (nunca direta)', () => {
     await assert.rejects(() => countCustomerOrders(client, '', 'k1'), /Empresa/);
   });
 
+  it('countPriorOrders: 1 consulta em lote por empresa/clientes', async () => {
+    const calls = [];
+    const rows = [
+      { id: 'a', customer_id: 'k1' },
+      { id: 'b', customer_id: 'k1' },
+      { id: 'c', customer_id: 'k2' },
+    ];
+    const chain = {
+      select: () => chain,
+      eq: (k, v) => { calls.push(['eq', k, v]); return chain; },
+      in: (k, v) => { calls.push(['in', k, v]); return chain; },
+      neq: (k, v) => { calls.push(['neq', k, v]); return chain; },
+      then: (resolve) => resolve({ data: rows, error: null }),
+    };
+    const client = { from: () => chain };
+    const m = await countPriorOrders(client, 'c1', ['k1', 'k2', 'k1', null]);
+    assert.equal(m.get('k1'), 2);
+    assert.equal(m.get('k2'), 1);
+    assert.ok(calls.some(([op, k, v]) => op === 'eq' && k === 'company_id' && v === 'c1'));
+    assert.ok(calls.some(([op, k]) => op === 'in' && k === 'customer_id'));
+    assert.ok(calls.some(([op, k, v]) => op === 'neq' && k === 'status' && v === 'cancelado'));
+    assert.deepEqual(await countPriorOrders(client, 'c1', []), new Map());
+    await assert.rejects(() => countPriorOrders(client, '', ['k1']), /Empresa/);
+  });
+
   it('changeOrderStatus/cancel/edit usam manage_order', async () => {
     const row = { id: 'o', company_id: 'c', status: 'confirmado', subtotal: 0, customer_data: {}, delivery_address: {}, created_at: '' };
     const client = createMockClient({ rpcs: { manage_order: { data: row, error: null } } });
@@ -215,6 +257,16 @@ describe('orders — escrita via RPC (nunca direta)', () => {
     await assert.rejects(() => cancelOrder(client, 'o', '  '), /Motivo/);
     await editOrder(client, 'o', { discount: 2 });
     assert.equal(client.calls.rpc[2].args.p_discount, 2);
+  });
+
+  it('editOrder leva config V2 dos itens (comanda PDV)', async () => {
+    const row = { id: 'o', company_id: 'c', status: 'confirmado', subtotal: 0, customer_data: {}, delivery_address: {}, created_at: '' };
+    const client = createMockClient({ rpcs: { manage_order: { data: row, error: null } } });
+    const cfg = { steps: [{ step_id: 's1', items: [{ option_id: 'o1', quantity: 1 }] }] };
+    await editOrder(client, 'o', { items: [{ product_id: 'p', quantity: 1, complements: [], notes: '', config: cfg }] });
+    assert.deepEqual(client.calls.rpc[0].args.p_items, [
+      { product_id: 'p', quantity: 1, complements: [], notes: '', config: cfg },
+    ]);
   });
 
   it('getOrderByToken usa RPC (nunca SELECT anon)', async () => {
@@ -489,5 +541,178 @@ describe('orders — FASE 2 aberto/fechado (source + erro de fechado)', () => {
     assert.equal(isRestaurantClosedError(new Error('Seu carrinho está vazio')), false);
     assert.equal(isRestaurantClosedError(null), false);
     assert.equal(isRestaurantClosedError('RESTAURANTE FECHADO'), true);
+  });
+});
+
+describe('orders - setComandaName (sem criar cliente)', () => {
+  function comandaMock({ orderRow } = {}) {
+    const writes = { updates: [], inserts: [] };
+    const row = orderRow || {
+      id: 'o1', company_id: 'c1', status: 'confirmado',
+      order_type: 'retirada', customer_id: null,
+      customer_data: { name: '', phone: '', email: '' },
+    };
+    const forTable = (tname) => {
+      const chain = {
+        select: () => chain,
+        eq: () => chain,
+        maybeSingle: async () => ({ data: tname === 'orders' ? row : null, error: null }),
+        update: (p) => { writes.updates.push({ table: tname, payload: p }); return chain; },
+        insert: (p) => { writes.inserts.push({ table: tname, payload: p }); return chain; },
+        then: (resolve) => { resolve({ data: null, error: null }); },
+      };
+      return chain;
+    };
+    return {
+      writes,
+      from: (name) => forTable(name),
+      auth: { getSession: async () => ({ data: { session: null } }) },
+    };
+  }
+
+  it('salva nome no snapshot sem tocar em customers', async () => {
+    const client = comandaMock();
+    const out = await setComandaName(client, 'o1', 'c1', '  André ');
+    assert.equal(out, 'André');
+    const orderUpdates = client.writes.updates.filter((w) => w.table === 'orders');
+    assert.equal(orderUpdates.length, 1);
+    assert.deepEqual(Object.keys(orderUpdates[0].payload), ['customer_data']);
+    assert.deepEqual(orderUpdates[0].payload.customer_data, { name: 'André', phone: '', email: '' });
+    assert.ok(client.writes.inserts.every((w) => w.table !== 'customers'));
+    assert.ok(!client.writes.updates.some((w) => w.table === 'customers'));
+  });
+
+  it('vazio remove o nome (volta a Avulso)', async () => {
+    const client = comandaMock({ orderRow: {
+      id: 'o1', company_id: 'c1', status: 'em_preparo',
+      order_type: 'retirada', customer_id: null,
+      customer_data: { name: 'João', phone: '', email: '' },
+    } });
+    const out = await setComandaName(client, 'o1', 'c1', '   ');
+    assert.equal(out, '');
+    assert.equal(client.writes.updates.find((w) => w.table === 'orders').payload.customer_data.name, '');
+  });
+
+  it('recusa delivery, com cliente e terminal', async () => {
+    const base = { id: 'o1', company_id: 'c1', status: 'confirmado', customer_id: null, customer_data: {} };
+    await assert.rejects(
+      setComandaName(comandaMock({ orderRow: { ...base, order_type: 'delivery' } }), 'o1', 'c1', 'X'),
+      /balcão\/retirada/,
+    );
+    await assert.rejects(
+      setComandaName(comandaMock({ orderRow: { ...base, order_type: 'retirada', customer_id: 'c9' } }), 'o1', 'c1', 'X'),
+      /cliente vinculado/,
+    );
+    await assert.rejects(
+      setComandaName(comandaMock({ orderRow: { ...base, order_type: 'retirada', status: 'finalizado' } }), 'o1', 'c1', 'X'),
+      /finalizado\/cancelado/,
+    );
+  });
+});
+
+describe('orders — dependências entre produtos (Gate 3, servidor é autoridade)', () => {
+  // O frontend valida por UX; estes testes garantem que o adapter envia
+  // product_id/quantity íntegros (o que o servidor valida) e que a rejeição
+  // do servidor (chamada direta/bypass) chega clara ao chamador, sem o
+  // adapter remover ou alterar itens.
+  const depReject = { data: null, error: { message: 'Batata frita exige Lanche ou Combo no pedido' } };
+
+  it('bypass direto no create_order: servidor rejeita e mensagem chega intacta', async () => {
+    const client = createMockClient({ rpcs: { create_order: depReject } });
+    await assert.rejects(
+      createOrder(client, {
+        companySlug: 'loja', orderType: 'retirada',
+        items: [{ product_id: 'batata', quantity: 1 }],
+        customer: { name: 'Z', phone: '119' },
+      }),
+      /Batata frita exige Lanche ou Combo no pedido/,
+    );
+    // O payload enviado continha exatamente o item violador (sem mutação).
+    assert.deepEqual(client.calls.rpc[0].args.p_items, [
+      { product_id: 'batata', quantity: 1, complements: [], notes: '' },
+    ]);
+  });
+
+  it('pedido válido com dependência satisfeita segue para a RPC com todos os itens', async () => {
+    const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o', order_number: 7, tracking_token: 't' }, error: null } } });
+    const out = await createOrder(client, {
+      companySlug: 'loja', orderType: 'retirada',
+      items: [
+        { product_id: 'batata', quantity: 1 },
+        { product_id: 'lanche', quantity: 2 },
+      ],
+      customer: { name: 'Z', phone: '119' },
+    });
+    assert.equal(out.order_number, 7);
+    assert.equal(client.calls.rpc[0].args.p_items.length, 2);
+  });
+
+  it('edição com itens incompatíveis: manage_order rejeita e edição é preservada', async () => {
+    const client = createMockClient({ rpcs: { manage_order: depReject } });
+    const items = [
+      { product_id: 'batata', quantity: 1, complements: [], notes: '' },
+    ];
+    await assert.rejects(
+      editOrder(client, 'o1', { items }),
+      /Batata frita exige/,
+    );
+    // Adapter não removeu nada: o chamador mantém `items` para corrigir.
+    assert.deepEqual(items, [{ product_id: 'batata', quantity: 1, complements: [], notes: '' }]);
+    assert.equal(client.calls.rpc[0].args.p_action, 'edit');
+  });
+
+  it('remoção do exigido via edit: servidor barra o conjunto resultante', async () => {
+    const client = createMockClient({ rpcs: { manage_order: depReject } });
+    await assert.rejects(
+      editOrder(client, 'o1', { items: [{ product_id: 'batata', quantity: 1 }] }),
+      /exige/,
+    );
+  });
+
+  it('isolamento por empresa: slug da empresa sempre no escopo; cross-tenant barrado', async () => {
+    const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
+    await createOrder(client, {
+      companySlug: 'loja-a', items: [{ product_id: 'p', quantity: 1 }], customer: {},
+    });
+    assert.equal(client.calls.rpc[0].args.p_company_slug, 'loja-a');
+    // Sem slug, nem há chamada (falha local antes da rede).
+    await assert.rejects(
+      createOrder(createMockClient({}), { companySlug: '', items: [{ product_id: 'p', quantity: 1 }], customer: {} }),
+      /Empresa não identificada/,
+    );
+    // Servidor rejeita pedido de outra empresa com mensagem clara.
+    const cross = createMockClient({ rpcs: { manage_order: { data: null, error: { message: 'Pedido não encontrado ou sem permissão' } } } });
+    await assert.rejects(editOrder(cross, 'outra-empresa', { items: [] }), /sem permissão/);
+  });
+
+  it('compatibilidade: legado (complements) e V2 (config) preservam product_id para a checagem', async () => {
+    const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
+    await createOrder(client, {
+      companySlug: 'loja',
+      items: [
+        { product_id: 'batata', quantity: 1, complements: [{ group_name: 'G', option_name: 'O', price: 2, quantity: 1 }] },
+        { product_id: 'monte', quantity: 1, config: { steps: [{ step_id: 's', items: [{ option_id: 'o', quantity: 1 }] }] } },
+        { product_id: 'lanche', quantity: 1 },
+      ],
+      customer: {},
+    });
+    const sent = client.calls.rpc[0].args.p_items;
+    assert.deepEqual(sent.map((i) => i.product_id), ['batata', 'monte', 'lanche']);
+    assert.deepEqual(sent[0].complements, [{ group_name: 'G', option_name: 'O', price: 2, quantity: 1 }]);
+    assert.deepEqual(sent[1].config, { steps: [{ step_id: 's', items: [{ option_id: 'o', quantity: 1 }] }] });
+  });
+
+  it('regra inativa / produto indisponível: erros do servidor propagam sem mascarar', async () => {
+    const unavailable = createMockClient({ rpcs: { create_order: { data: null, error: { message: 'Produto indisponível: Lanche' } } } });
+    await assert.rejects(
+      createOrder(unavailable, { companySlug: 'loja', items: [{ product_id: 'lanche', quantity: 1 }], customer: {} }),
+      /indisponível/,
+    );
+    // Regra inativa não gera erro: pedido passa (servidor só lê active=true).
+    const ok = createMockClient({ rpcs: { create_order: { data: { order_id: 'o', order_number: 1 }, error: null } } });
+    const out = await createOrder(ok, {
+      companySlug: 'loja', items: [{ product_id: 'coca', quantity: 1 }], customer: {},
+    });
+    assert.equal(out.order_number, 1);
   });
 });

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { createOrder as sbCreateOrder, buildCreateOrderItems } from '@/api/orders';
+import { checkCartDependencies, buildDepRulesFromProducts } from '@/lib/productDependencies';
 import { getStorefrontBySlug } from '@/api/storefront';
 import { useCart } from '@/lib/CartContext';
 import { saveResume } from '@/lib/orderResume';
@@ -57,6 +58,14 @@ export default function Checkout() {
   const upsellSteps = useMemo(
     () => suggestUpsellSteps({ products, categories, cartItems: items }),
     [products, categories, items],
+  );
+
+  // Gate 3: aviso reativo na revisão (o submit continua barrando; o
+  // servidor é a autoridade — aqui nada é removido silenciosamente).
+  // Antes de qualquer return antecipado (regras dos Hooks).
+  const reviewDepErrors = useMemo(
+    () => checkCartDependencies(items, buildDepRulesFromProducts(products)),
+    [items, products],
   );
 
   // Check for ?mesa= query param (QR Code: token validado no servidor).
@@ -190,6 +199,14 @@ export default function Checkout() {
     // Idempotência no cliente: ignora cliques repetidos com envio em curso.
     // Em falha, o carrinho é preservado e uma nova tentativa é permitida.
     if (submitRef.current) return;
+    // Dependências entre produtos (regras da loja): mensagem clara antes
+    // da rede; o servidor revalida de qualquer forma.
+    const depRules = buildDepRulesFromProducts(products);
+    const depErrors = checkCartDependencies(items, depRules);
+    if (depErrors.length > 0) {
+      setError(depErrors[0].message);
+      return;
+    }
     submitRef.current = true;
     setSubmitting(true);
     setError('');
@@ -416,6 +433,14 @@ export default function Checkout() {
         {step === 4 && (
           <div className="space-y-4">
             <h2 className="font-heading text-lg font-bold">Revisar pedido</h2>
+
+            {reviewDepErrors.length > 0 && (
+              <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800" role="alert">
+                {reviewDepErrors.map((e) => (
+                  <p key={e.productId}>⚠️ {e.message}</p>
+                ))}
+              </div>
+            )}
 
             {/* Items */}
             <div className="rounded-xl border border-border bg-card p-4 space-y-3">

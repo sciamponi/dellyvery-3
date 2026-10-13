@@ -22,6 +22,10 @@ import { buildWhatsAppUrl } from '@/lib/menuShare';
 import TableSelectModal, { MergeConfirmModal, TableMergePicker } from '@/components/pdv/TableSelectModal';
 import OrderModal from '@/components/orders/OrderModal';
 import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
+import ProductModal from '@/components/menu/ProductModal';
+import { CartProvider } from '@/lib/CartContext';
+import { getProductConfig, listDependenciesWithNames } from '@/api/configurator';
+import { checkCartDependencies } from '@/lib/productDependencies';
 import { Plus, Minus, Trash2, Search, Package, CheckCircle, Bike, Store, Table2, User, Printer, MessageCircle, Tag } from 'lucide-react';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -55,6 +59,11 @@ export default function Pdv() {
   const [filterCat, setFilterCat] = useState('all');
 
   const [items, setItems] = useState([]);
+  // Dependências entre produtos (regras da empresa, 1 carga).
+  const [depRules, setDepRules] = useState([]);
+  // Montagem V2 por linha (ProductModal) + cache de config por produto.
+  const [configuring, setConfiguring] = useState(null);
+  const [configCache, setConfigCache] = useState({});
   // Balcão (retirada) é o padrão: finalizar sem escolher tipo nunca
   // deve cobrar mesa.
   const [orderType, setOrderType] = useState('retirada');
@@ -109,6 +118,7 @@ export default function Pdv() {
         setCustomers(custs);
         setZones(zn);
         listTables(supabase, company.id, { onlyActive: true }).then(setRegisteredTables).catch(() => {});
+        listDependenciesWithNames(supabase, company.id).then(setDepRules).catch(() => {});
         listDrivers(supabase, company.id).then((list) => {
           setDrivers((list || []).filter((d) => d.status === 'ativo'));
         }).catch(() => {});
@@ -183,32 +193,126 @@ export default function Pdv() {
     return customers.filter(c => c.name?.toLowerCase().includes(q) || c.phone?.includes(q)).slice(0, 5);
   }, [customers, customerSearch]);
 
+  // Gate 3: aviso reativo (não remove nada). Ex.: remover o lanche deixa
+  // a batata órfã — o submit e o servidor barram; aqui só avisamos.
+  const depErrors = useMemo(
+    () => checkCartDependencies(items, depRules),
+    [items, depRules],
+  );
+
   const addItem = (product) => {
+    // Busca a config (com cache) para decidir: com etapa obrigatória abre
+    // o Montar; senão adiciona a linha avulsa direto.
+    void (async () => {
+      try {
+        if (await ensureRequiredConfig(product, true)) addPlainItem(product);
+      } catch {
+        addPlainItem(product);
+      }
+    })();
+  };
+
+  const ensureRequiredConfig = async (product, openWhenRequired) => {
+    let cfg = configCache[product.id];
+    if (cfg === undefined && company) {
+      try {
+        cfg = await getProductConfig(supabase, company.id, product.id);
+        setConfigCache((prev) => ({ ...prev, [product.id]: cfg }));
+      } catch {
+        cfg = null;
+      }
+    }
+    const steps = cfg?.steps || [];
+    const needsConfig = steps.some((s) => s.required || (Number(s.min_select) || 0) > 0);
+    if (needsConfig && openWhenRequired) {
+      toast({ title: 'Montagem obrigatória', description: 'Escolha as opções para adicionar.' });
+      openConfigure(product);
+      return false;
+    }
+    return true;
+  };
+
+  const addPlainItem = (product) => {
     const unit = product.promotional_price != null ? product.promotional_price : product.price;
     setItems(prev => {
-      const i = prev.findIndex(x => x.product_id === product.id);
+      // Só mescla em linha avulsa (sem config); configuradas têm identidade própria.
+      const i = prev.findIndex(x => x.product_id === product.id && !x.config);
       if (i >= 0) {
         const next = [...prev];
         next[i] = { ...next[i], quantity: next[i].quantity + 1 };
         return next;
       }
       return [...prev, {
+        id: product.id,
         product_id: product.id, name: product.name, image_url: product.image_url,
         unit_price: unit, quantity: 1, complements: [], notes: '',
       }];
     });
   };
 
-  const changeQty = (productId, delta) => {
+  // Linha configurada (V2): mescla por produto+complementos+notas+config.
+  const addConfiguredLine = (product, quantity, complements, notes, config) => {
+    const unit = product.promotional_price != null ? product.promotional_price : product.price;
+    const key = (c) => JSON.stringify(c || null);
+    setItems(prev => {
+      const i = prev.findIndex(x =>
+        x.product_id === product.id &&
+        JSON.stringify(x.complements || []) === JSON.stringify(complements || []) &&
+        (x.notes || '') === (notes || '') &&
+        key(x.config) === key(config));
+      if (i >= 0) {
+        const next = [...prev];
+        next[i] = { ...next[i], quantity: next[i].quantity + quantity };
+        return next;
+      }
+      return [...prev, {
+        id: `${product.id}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        product_id: product.id, name: product.name, image_url: product.image_url,
+        unit_price: unit, quantity, complements: complements || [], notes: notes || '',
+        ...(config ? { config } : {}),
+      }];
+    });
+  };
+
+  // Abre a montagem V2 do produto (config sob demanda, com cache).
+  const openConfigure = async (lineOrProduct) => {
+    const productId = lineOrProduct.product_id || lineOrProduct.id;
+    const base = products.find((p) => p.id === productId) || lineOrProduct;
+    if (!company) return;
+    try {
+      let cfg = configCache[productId];
+      if (!cfg) {
+        cfg = await getProductConfig(supabase, company.id, productId);
+        setConfigCache((prev) => ({ ...prev, [productId]: cfg }));
+      }
+      if (!cfg || (cfg.steps || []).length === 0) {
+        toast({ title: 'Sem montagem', description: 'Este produto não tem grupos de complementos.' });
+        return;
+      }
+      setConfiguring({
+        ...base,
+        config: {
+          steps: (cfg.steps || []).map((s) => ({
+            ...s,
+            options: (cfg.options || []).filter((o) => o.step_id === s.id),
+          })),
+        },
+      });
+    } catch (err) {
+      toast({ title: 'Erro ao carregar montagem', description: err?.message, variant: 'destructive' });
+    }
+  };
+
+  const changeQty = (lineId, delta) => {
     setItems(prev => prev
-      .map(x => x.product_id === productId ? { ...x, quantity: x.quantity + delta } : x)
+      .map(x => x.id === lineId ? { ...x, quantity: x.quantity + delta } : x)
       .filter(x => x.quantity > 0));
   };
 
-  const removeItem = (productId) => setItems(prev => prev.filter(x => x.product_id !== productId));
+  const removeItem = (lineId) => setItems(prev => prev.filter(x => x.id !== lineId));
 
-  const setItemNotes = (productId, notes) => {
-    setItems(prev => prev.map(x => x.product_id === productId ? { ...x, notes } : x));
+  const setItemNotes = (lineId, notes) => {
+    setItems(prev => prev.map(x => x.id === lineId ? { ...x, notes } : x));
   };
 
   const zone = zones.find(z => z.id === deliveryZoneId);
@@ -369,6 +473,12 @@ export default function Pdv() {
     });
     if (invalid) {
       toast({ title: invalid.title, description: invalid.description, variant: 'destructive' });
+      return;
+    }
+    // Dependências entre produtos (regra da loja; servidor revalida).
+    const depErrors = checkCartDependencies(items, depRules);
+    if (depErrors.length > 0) {
+      toast({ title: 'Item incompatível', description: depErrors[0].message, variant: 'destructive' });
       return;
     }
     const changeForValue = paymentMethod === 'Dinheiro' && String(changeFor).trim() !== ''
@@ -713,38 +823,59 @@ export default function Pdv() {
               {items.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4 shrink-0">Toque em Adicionar nos produtos.</p>
               ) : (
-                <div className="space-y-2 max-h-64 lg:max-h-none overflow-y-auto lg:overflow-visible pr-1">
+                                <div className="space-y-2 max-h-64 lg:max-h-none overflow-y-auto lg:overflow-visible pr-1">
                   {items.map(x => (
-                    <div key={x.product_id} className="rounded-xl border border-border p-2 min-w-0">
+                    <div key={x.id || x.product_id} className="rounded-xl border border-border p-2 min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium truncate">{x.name}</p>
                           <p className="text-xs text-muted-foreground">{fmtCurrency(x.unit_price)} cada</p>
+                          {(x.complements || []).length > 0 && (
+                            <p className="text-[11px] text-muted-foreground truncate">
+                              + {x.complements.map(c => `${c.quantity > 1 ? `${c.quantity}x ` : ''}${c.option_name || c.name}`).join(', ')}
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
-                          <button type="button" aria-label="Diminuir" onClick={() => changeQty(x.product_id, -1)} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted"><Minus className="h-3.5 w-3.5" /></button>
+                          <button type="button" aria-label="Diminuir" onClick={() => changeQty(x.id || x.product_id, -1)} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted"><Minus className="h-3.5 w-3.5" /></button>
                           <span className="w-6 text-center text-sm font-medium">{x.quantity}</span>
-                          <button type="button" aria-label="Aumentar" onClick={() => changeQty(x.product_id, 1)} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted"><Plus className="h-3.5 w-3.5" /></button>
-                          <button type="button" aria-label={`Remover ${x.name}`} onClick={() => removeItem(x.product_id)} className="flex h-8 w-8 items-center justify-center rounded-md text-destructive hover:bg-destructive/10"><Trash2 className="h-4 w-4" /></button>
+                          <button type="button" aria-label="Aumentar" onClick={() => changeQty(x.id || x.product_id, 1)} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted"><Plus className="h-3.5 w-3.5" /></button>
+                          <button type="button" aria-label={`Remover ${x.name}`} onClick={() => removeItem(x.id || x.product_id)} className="flex h-8 w-8 items-center justify-center rounded-md text-destructive hover:bg-destructive/10"><Trash2 className="h-4 w-4" /></button>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setNoteOpenId(noteOpenId === x.product_id ? null : x.product_id)}
-                        className="mt-1 text-[11px] text-muted-foreground hover:text-foreground"
-                      >
-                        {x.notes ? `📝 ${x.notes}` : '+ obs do item'}
-                      </button>
-                      {noteOpenId === x.product_id && (
+                      <div className="mt-1 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openConfigure(x)}
+                          className="text-[11px] font-medium text-primary hover:underline"
+                        >
+                          ⚙️ Montar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNoteOpenId(noteOpenId === (x.id || x.product_id) ? null : (x.id || x.product_id))}
+                          className="text-[11px] text-muted-foreground hover:text-foreground"
+                        >
+                          {x.notes ? `📝 ${x.notes}` : '+ obs do item'}
+                        </button>
+                      </div>
+                      {noteOpenId === (x.id || x.product_id) && (
                         <Input
                           value={x.notes || ''}
-                          onChange={e => setItemNotes(x.product_id, e.target.value)}
+                          onChange={e => setItemNotes(x.id || x.product_id, e.target.value)}
                           placeholder="Ex.: sem cebola, ponto da carne..."
                           className="mt-1 h-8 text-xs"
                           aria-label={`Observação de ${x.name}`}
                         />
                       )}
                     </div>
+                  ))}
+                </div>
+              )}
+              {depErrors.length > 0 && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-800" role="alert">
+                  {depErrors.map((e) => (
+                    <p key={e.productId}>⚠️ {e.message}</p>
                   ))}
                 </div>
               )}
@@ -870,6 +1001,21 @@ export default function Pdv() {
           refreshMesaOrders();
         }}
       />
+      {/* Montagem V2 da linha (mesmo ProductModal do cardápio; carrinho
+          próprio vazio — só usa company/is_open; o destino é o rascunho). */}
+      {configuring && (
+        <CartProvider>
+          <ProductModal
+            product={configuring}
+            primaryColor={company?.primary_color}
+            isOpen={!!configuring}
+            onClose={() => setConfiguring(null)}
+            onAddToCart={(product, quantity, complements, notes, config) =>
+              addConfiguredLine(product, quantity, complements, notes, config)
+            }
+          />
+        </CartProvider>
+      )}
     </div>
   );
 }

@@ -232,6 +232,11 @@ export default function Menu() {
                   {product.description && (
                     <p className="text-[13px] leading-snug text-muted-foreground mt-1 line-clamp-2">{product.description}</p>
                   )}
+                  {Array.isArray(product.requires) && product.requires.length > 0 && (
+                    <p className="text-[11px] leading-snug text-amber-700 mt-1">
+                      Exige {product.requires.map((r) => r.name).join(' ou ')} no pedido
+                    </p>
+                  )}
                   <div className="flex items-baseline gap-2 mt-1.5">
                     <p className="font-heading text-xl font-extrabold leading-none" style={{ color: primaryColor }}>
                       {fmtCurrency(product.promotional_price ?? product.price)}
@@ -296,7 +301,7 @@ export default function Menu() {
       />
 
       {/* Cart drawer */}
-      <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
+      <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} products={products} />
     </div>
   );
 }

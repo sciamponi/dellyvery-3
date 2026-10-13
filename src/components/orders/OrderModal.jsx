@@ -6,7 +6,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Image } from '@/components/ui/image';
-import { Bike, Store, Table2, Phone, MapPin, Receipt, Clock, XCircle, Pencil, X, Check, ArrowRight, ArrowLeft, Undo2, Package, Plus, Search, ShoppingBag, UtensilsCrossed, Printer } from 'lucide-react';
+import { Bike, Store, Table2, Phone, MapPin, Receipt, Clock, Pencil, X, Check, ArrowRight, ArrowLeft, Undo2, Package, Plus, Search, ShoppingBag, UtensilsCrossed, Printer, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import RouteModal from '@/components/orders/RouteModal';
 import PrintPromptModal from '@/components/orders/PrintPromptModal';
 import { normalizePrintSettings, markPrinted } from '@/lib/printSettings';
@@ -17,8 +18,13 @@ import { assignDriver as sbAssignDriver } from '@/api/orders';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listCustomers as sbListCustomers } from '@/api/customers';
-import { editOrder as sbEditOrder, getOrderDetail as sbGetOrderDetail, listOrdersWithItems as sbListOrdersWithItems, linkOrderCustomer as sbLinkCustomer, linkOrderTable as sbLinkTable } from '@/api/orders';
+import { editOrder as sbEditOrder, getOrderDetail as sbGetOrderDetail, listOrdersWithItems as sbListOrdersWithItems, linkOrderCustomer as sbLinkCustomer, linkOrderTable as sbLinkTable, setComandaName as sbSetComanda } from '@/api/orders';
+import { isComandaEditable, resolveComandaName } from '@/lib/comanda';
+import { filterLinkCustomers, resolveCustomerEnter } from '@/lib/linkEnter';
+import { createLinkOpTracker } from '@/lib/linkOp';
 import { listProducts as sbListProducts } from '@/api/catalog';
+import { listDependenciesWithNames as sbListDependencies } from '@/api/configurator';
+import { checkCartDependencies } from '@/lib/productDependencies';
 import { getCompanySettings as sbGetSettings } from '@/api/company';
 import { useToast } from '@/components/ui/use-toast';
 import { changeOrderStatus, getAvailableActions, getNextStatus, STATUS_LABELS } from '@/lib/orderStatusFlow';
@@ -63,6 +69,9 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const [menuProducts, setMenuProducts] = useState([]);
   const [menuSearch, setMenuSearch] = useState('');
   const [menuLoading, setMenuLoading] = useState(false);
+  // Gate 3: regras de dependência da empresa (validação UX antes do
+  // servidor; o servidor continua sendo a autoridade final).
+  const [depRules, setDepRules] = useState([]);
   // FASE 5.4 UX: modal de rota (só delivery, endereço clicável).
   const [routeOpen, setRouteOpen] = useState(false);
   // FASE 5.5-B3: passo de atribuição de entregador (delivery → saiu_entrega).
@@ -75,7 +84,13 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   // UX Kanban: gerenciar entregador direto no pedido (alterar/remover).
   const [managingDriver, setManagingDriver] = useState(false);
   // Vínculos de balcão: cliente e mesa (sem recriar o pedido).
+  // Nome da comanda: texto livre p/ retirada sem cliente (sem cadastro).
   const [linking, setLinking] = useState(null);
+  // Identidade de operação dos vínculos (condição de corrida): uma
+  // operação antiga nunca fecha seção aberta depois (ver linkOp.js).
+  const linkOpRef = useRef(null);
+  const linkOp = () => linkOpRef.current || (linkOpRef.current = createLinkOpTracker());
+  const [comandaDraft, setComandaDraft] = useState('');
   const [custQuery, setCustQuery] = useState('');
   const [custResults, setCustResults] = useState([]);
   const [custSelected, setCustSelected] = useState('');
@@ -97,6 +112,9 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const [manageSelected, setManageSelected] = useState('');
   const [manageBusy, setManageBusy] = useState(false);
 
+  // Histórico do pedido: recolhido por padrão (expande/recolhe sem perder dados).
+  const [historyOpen, setHistoryOpen] = useState(false);
+
   // Fotos dos produtos + histórico do cliente (2 consultas, com cancelamento).
   useEffect(() => {
     if (!order || !isOpen) return;
@@ -106,11 +124,14 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setKeepStep(null);
     setManagingDriver(false);
     setLinking(null);
+    linkOp().reset();
     setCustQuery('');
     setCustResults([]);
     setTableList([]);
     setStatusAction(null);
     setPrintPrompt(null);
+    setComandaDraft('');
+    setHistoryOpen(false);
     statusBusyRef.current = false;
     setPhotoMap({});
     setCustHistory([]);
@@ -161,7 +182,9 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   }, [order?.id, isOpen]);
 
   // Vínculos: recarrega o detalhe (itens/totais preservados pela API).
-  const reloadAfterLink = async (okMsg) => {
+  // Fecha a seção SOMENTE se nenhuma navegação ocorreu desde o início da
+  // operação (opId); dados e toast sempre aplicam.
+  const reloadAfterLink = async (okMsg, opId) => {
     try {
       const detail = await sbGetOrderDetail(supabase, order.company_id, order.id);
       onOrderUpdated(detail || order);
@@ -169,12 +192,13 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
       onOrderUpdated(order);
     }
     toast({ title: okMsg });
-    setLinking(null);
+    if (opId === undefined || linkOp().shouldClose(opId)) setLinking(null);
   };
 
   const openLinkCustomer = async () => {
     setCustQuery('');
     setCustSelected(order.customer_id || '');
+    linkOp().userNavigated();
     try {
       const list = await sbListCustomers(supabase, order.company_id);
       setCustResults(list || []);
@@ -186,6 +210,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
 
   const openLinkTable = async () => {
     setTableSelected(order.table_id || '');
+    linkOp().userNavigated();
     try {
       const { data } = await supabase.from('dining_tables')
         .select('id,name,active').eq('company_id', order.company_id).eq('active', true)
@@ -195,6 +220,55 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
       setTableList([]);
     }
     setLinking('table');
+  };
+
+  // Confirmação do vínculo de cliente (botão + Enter): validações do fluxo
+  // (escolha na lista + confirmação explícita). Guarda anti-duplo.
+  const confirmLinkCustomer = async () => {
+    if (linkBusy) return;
+    const opId = linkOp().beginOp();
+    setLinkBusy(true);
+    try {
+      const chosen = custResults.find((c) => c.id === custSelected);
+      if (!chosen) throw new Error('Escolha um cliente da lista');
+      if (!window.confirm(`Vincular "${chosen.name || 'sem nome'}" a este pedido?`)) return;
+      await sbLinkCustomer(supabase, order.id, order.company_id, chosen.id);
+      await reloadAfterLink('Cliente vinculado!', opId);
+    } catch (err) {
+      toast({ title: 'Erro ao vincular', description: err?.message, variant: 'destructive' });
+    } finally {
+      setLinkBusy(false);
+    }
+  };
+
+  // Enter na busca: confirma o destacado ou seleciona o único inequívoco
+  // (só destaca; salvar passa pelas validações do Confirmar vínculo).
+  const handleCustomerSearchEnter = () => {
+    if (linkBusy) return;
+    const r = resolveCustomerEnter({ results: custResults, query: custQuery, custSelected, busy: linkBusy });
+    if (r.action === 'select') {
+      setCustSelected(r.id);
+      return;
+    }
+    if (r.action === 'confirm') {
+      void confirmLinkCustomer();
+    }
+  };
+
+  // Salvamento do nome da comanda (botão + Enter): texto livre no snapshot
+  // do pedido; nunca toca em customers. Guarda anti-duplo.
+  const saveComandaName = async () => {
+    if (linkBusy) return;
+    const opId = linkOp().beginOp();
+    setLinkBusy(true);
+    try {
+      await sbSetComanda(supabase, order.id, order.company_id, comandaDraft);
+      await reloadAfterLink(comandaDraft.trim() ? 'Nome da comanda salvo!' : 'Nome da comanda removido.', opId);
+    } catch (err) {
+      toast({ title: 'Erro ao salvar', description: err?.message, variant: 'destructive' });
+    } finally {
+      setLinkBusy(false);
+    }
   };
 
   // Motoboy padrão + config de impressão + stages reais da empresa (selo
@@ -391,6 +465,8 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
       .then(list => setMenuProducts((list || []).filter(p => p.available && !p.out_of_stock)))
       .catch(() => setMenuProducts([]))
       .finally(() => setMenuLoading(false));
+    // Dependências da mesma empresa (falha silenciosa: servidor revalida).
+    sbListDependencies(supabase, order.company_id).then(setDepRules).catch(() => setDepRules([]));
     setEditMode(true);
   };
 
@@ -421,6 +497,13 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const saveEdit = async () => {
     setSaving(true);
     try {
+      // Gate 3: mensagem clara antes da rede, sem descartar a edição.
+      // O servidor (manage_order) revalida de qualquer forma.
+      const depErrors = checkCartDependencies(editData.items, depRules);
+      if (depErrors.length > 0) {
+        toast({ title: 'Item incompatível', description: depErrors[0].message, variant: 'destructive' });
+        return;
+      }
       await sbEditOrder(supabase, order.id, {
         items: editData.items.map(i => ({
           product_id: i.product_id,
@@ -544,7 +627,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                       )}
                     </p>
                     {linking ? (
-                      <Button variant="ghost" size="sm" onClick={() => setLinking(null)} disabled={linkBusy}>
+                      <Button variant="ghost" size="sm" onClick={() => { linkOp().userNavigated(); setLinking(null); }} disabled={linkBusy}>
                         Fechar
                       </Button>
                     ) : (
@@ -565,18 +648,18 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                         <Input
                           value={custQuery}
                           onChange={(e) => setCustQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleCustomerSearchEnter();
+                            }
+                          }}
                           placeholder="Buscar cliente por nome ou telefone..."
                           className="pl-8 h-9 text-sm"
                         />
                       </div>
                       <div className="max-h-40 overflow-y-auto rounded-lg border border-border divide-y divide-border">
-                        {custResults
-                          .filter((c) => {
-                            const q = custQuery.trim().toLowerCase();
-                            if (!q) return true;
-                            return (c.name || '').toLowerCase().includes(q) || (c.phone || '').includes(q);
-                          })
-                          .slice(0, 8)
+                        {filterLinkCustomers(custResults, custQuery)
                           .map((c) => (
                             <button
                               key={c.id}
@@ -596,20 +679,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                         size="sm"
                         className="w-full"
                         disabled={!custSelected || linkBusy}
-                        onClick={async () => {
-                          setLinkBusy(true);
-                          try {
-                            const chosen = custResults.find((c) => c.id === custSelected);
-                            if (!chosen) throw new Error('Escolha um cliente da lista');
-                            if (!window.confirm(`Vincular "${chosen.name || 'sem nome'}" a este pedido?`)) return;
-                            await sbLinkCustomer(supabase, order.id, order.company_id, chosen.id);
-                            await reloadAfterLink('Cliente vinculado!');
-                          } catch (err) {
-                            toast({ title: 'Erro ao vincular', description: err?.message, variant: 'destructive' });
-                          } finally {
-                            setLinkBusy(false);
-                          }
-                        }}
+                        onClick={confirmLinkCustomer}
                       >
                         {linkBusy ? 'Salvando...' : 'Confirmar vínculo'}
                       </Button>
@@ -633,13 +703,15 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                         className="w-full"
                         disabled={!tableSelected || linkBusy}
                         onClick={async () => {
+                          if (linkBusy) return;
+                          const opId = linkOp().beginOp();
                           setLinkBusy(true);
                           try {
                             const chosen = tableList.find((t) => t.id === tableSelected);
                             if (!chosen) throw new Error('Escolha uma mesa válida');
                             if (!window.confirm(`Vincular este pedido à Mesa ${chosen.name}?`)) return;
                             await sbLinkTable(supabase, order.id, order.company_id, chosen.id);
-                            await reloadAfterLink('Mesa vinculada!');
+                            await reloadAfterLink('Mesa vinculada!', opId);
                           } catch (err) {
                             toast({ title: 'Erro ao vincular', description: err?.message, variant: 'destructive' });
                           } finally {
@@ -649,6 +721,59 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                       >
                         {linkBusy ? 'Salvando...' : 'Confirmar mesa'}
                       </Button>
+                    </div>
+                  )}
+                  {isComandaEditable(order) && (
+                    <div className="space-y-2 border-t border-border pt-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm text-muted-foreground truncate">
+                          Comanda: <span className="font-medium text-foreground">{resolveComandaName(order) || '—'}</span>
+                        </p>
+                        {linking === 'comanda' ? (
+                          <Button variant="ghost" size="sm" onClick={() => { linkOp().userNavigated(); setLinking(null); }} disabled={linkBusy}>
+                            Fechar
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            onClick={() => { setComandaDraft(resolveComandaName(order)); linkOp().userNavigated(); setLinking('comanda'); }}
+                          >
+                            {resolveComandaName(order) ? 'Alterar' : 'Nomear'}
+                          </Button>
+                        )}
+                      </div>
+                      {linking === 'comanda' && (
+                        <div className="space-y-2">
+                          <Label htmlFor="comanda-nome">Nome da comanda</Label>
+                          <Input
+                            id="comanda-nome"
+                            value={comandaDraft}
+                            onChange={(e) => setComandaDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                void saveComandaName();
+                              }
+                            }}
+                            placeholder="Ex.: André, João, Mesa 3"
+                            maxLength={40}
+                            className="h-9 text-sm"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Texto livre, sem cadastrar cliente. Vazio remove o nome (volta a “Avulso”).
+                          </p>
+                          <Button
+                            size="sm"
+                            className="w-full"
+                            disabled={linkBusy}
+                            onClick={saveComandaName}
+                          >
+                            {linkBusy ? 'Salvando...' : 'Salvar nome'}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -827,11 +952,26 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
               </div>
             )}
 
-            {/* Order history: somente eventos DESTE pedido, sem repetir consecutivos */}
+            {/* Order history: somente eventos DESTE pedido, sem repetir consecutivos.
+                Recolhido por padrão; expande/recolhe sem perder informações. */}
             {order.status_history && order.status_history.length > 0 && (
               <div className="pt-1">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Histórico do pedido</p>
-                <div className="rounded-2xl border border-border divide-y divide-border">
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen((v) => !v)}
+                  aria-expanded={historyOpen}
+                  aria-label={historyOpen ? 'Recolher histórico do pedido' : 'Expandir histórico do pedido'}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Histórico do pedido</span>
+                  {historyOpen ? (
+                    <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  )}
+                </button>
+                {historyOpen && (
+                <div className="rounded-2xl border border-border divide-y divide-border mt-1">
                   {collapseConsecutiveStatuses(order.status_history).map((h, i) => (
                     <div key={i} className="flex items-center justify-between gap-2 px-3 py-2">
                       <span className="flex items-center gap-2 text-sm font-medium text-foreground min-w-0">
@@ -844,6 +984,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                     </div>
                   ))}
                 </div>
+                )}
               </div>
             )}
 
@@ -953,44 +1094,84 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                     </div>
                   </div>
                 )}
+                {/* Barra de ações: icon-only. Mesmos handlers/validações;
+                    só apresentação muda. Regresso também icon-only. */}
                 <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+                  <TooltipProvider>
                   {regressAction && (
-                    <Button
-                      variant="outline"
-                      className="w-full sm:w-auto sm:min-w-32 min-h-11"
-                      onClick={() => runStatusAction(regressAction)}
-                      disabled={busy}
-                    >
-                      <Undo2 className="h-4 w-4" /> {statusAction === 'regress' ? 'Voltando...' : regressAction.label}
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className="h-11 w-full sm:w-11 p-0 shrink-0"
+                          onClick={() => runStatusAction(regressAction)}
+                          disabled={busy}
+                          aria-label={regressAction.label}
+                        >
+                          {statusAction === 'regress' ? (
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                          ) : (
+                            <Undo2 className="h-5 w-5" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{regressAction.label}</TooltipContent>
+                    </Tooltip>
                   )}
-                  {cancelAction && (
-                    <Button variant="destructive" className="w-full sm:w-auto sm:min-w-32 min-h-11" onClick={onCancel} disabled={busy}>
-                      <XCircle className="h-4 w-4" /> Cancelar
-                    </Button>
-                  )}
-                  {primaryAction && (
-                    <Button
-                      className="w-full sm:w-auto sm:min-w-32 min-h-11"
-                      onClick={() => handleStatusAction(primaryAction)}
-                      disabled={busy}
-                    >
-                      {statusAction ? 'Atualizando...' : (
-                        <>{primaryAction.id === 'accept' ? <Check className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />} {primaryAction.label}</>
-                      )}
-                    </Button>
-                  )}
-                  {order.status !== 'cancelado' && order.status !== 'finalizado' && (
-                    <Button
-                      variant="outline"
-                      className="w-full sm:w-auto sm:min-w-32 min-h-11"
-                      onClick={handleManualPrint}
-                      disabled={busy}
-                      aria-label={`Imprimir pedido ${order.order_number || ''}`}
-                    >
-                      <Printer className="h-4 w-4" /> Imprimir pedido
-                    </Button>
-                  )}
+                    {cancelAction && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="destructive"
+                            className="h-11 w-full sm:w-11 p-0 shrink-0"
+                            onClick={onCancel}
+                            disabled={busy}
+                            aria-label="Cancelar pedido"
+                          >
+                            <X className="h-5 w-5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Cancelar pedido</TooltipContent>
+                      </Tooltip>
+                    )}
+                    {primaryAction && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            className="h-11 w-full sm:w-11 p-0 shrink-0 bg-green-600 hover:bg-green-700 text-white"
+                            onClick={() => handleStatusAction(primaryAction)}
+                            disabled={busy}
+                            aria-label={primaryAction.label}
+                          >
+                            {statusAction ? (
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                            ) : primaryAction.id === 'accept' ? (
+                              <Check className="h-5 w-5" />
+                            ) : (
+                              <ArrowRight className="h-5 w-5" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{primaryAction.label}</TooltipContent>
+                      </Tooltip>
+                    )}
+                    {order.status !== 'cancelado' && order.status !== 'finalizado' && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="outline"
+                            className="h-11 w-full sm:w-11 p-0 shrink-0"
+                            onClick={handleManualPrint}
+                            disabled={busy}
+                            aria-label={`Imprimir pedido ${order.order_number || ''}`}
+                          >
+                            <Printer className="h-5 w-5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Imprimir pedido</TooltipContent>
+                      </Tooltip>
+                    )}
+                  </TooltipProvider>
                 </div>
                 {order.status !== 'cancelado' && order.status !== 'finalizado' && onRequestPayment && (
                   <Button variant="outline" className="w-full mt-2" onClick={() => onRequestPayment(order)} disabled={busy}>
@@ -1032,6 +1213,11 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                     <X className="h-4 w-4" />
                   </button>
                 </div>
+              ))}
+              {checkCartDependencies(editData.items, depRules).map((e) => (
+                <p key={e.productId} className="text-xs text-amber-700 rounded-lg border border-amber-300 bg-amber-50 p-2.5" role="alert">
+                  ⚠️ {e.message}
+                </p>
               ))}
             </div>
 

@@ -34,13 +34,15 @@ export function CartProvider({ children }) {
     return unitPrice * quantity + complementsTotal;
   };
 
-  const addItem = useCallback((product, quantity, complements, notes) => {
+  const addItem = useCallback((product, quantity, complements, notes, config) => {
+    const normConfig = config && Array.isArray(config.steps) && config.steps.length > 0 ? config : undefined;
     setItems(prev => {
-      // Check if identical item already exists (same product + same complements + same notes)
+      // Check if identical item already exists (same product + same complements + same notes + same V2 config)
       const existingIndex = prev.findIndex(item =>
         item.product_id === product.id &&
         JSON.stringify(item.complements || []) === JSON.stringify(complements || []) &&
-        (item.notes || '') === (notes || '')
+        (item.notes || '') === (notes || '') &&
+        JSON.stringify(item.config || null) === JSON.stringify(normConfig || null)
       );
 
       if (existingIndex >= 0) {
@@ -63,6 +65,7 @@ export function CartProvider({ children }) {
         quantity,
         complements: complements || [],
         notes: notes || '',
+        ...(normConfig ? { config: normConfig } : {}),
         image_url: product.image_url,
         line_total: calcLineTotal(unitPrice, quantity, complements)
       }];

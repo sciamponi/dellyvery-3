@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
 import { Image } from '@/components/ui/image';
+import ConfigStepsEditor from '@/components/products/ConfigStepsEditor';
 import { Upload, Loader2, X, Package } from 'lucide-react';
 
 const MAX_IMAGE_MB = 5;
@@ -26,14 +27,14 @@ function Section({ title, children }) {
 
 function FlagRow({ label, checked, onChange }) {
   return (
-    <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-      <Label className="cursor-pointer text-sm">{label}</Label>
-      <Switch checked={!!checked} onCheckedChange={onChange} />
-    </div>
+    <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5">
+      <Switch checked={!!checked} onCheckedChange={onChange} className="shrink-0" />
+      <span className="text-[13px] leading-tight">{label}</span>
+    </label>
   );
 }
 
-export default function ProductFormDialog({ open, onOpenChange, product, categories, companyId, onSaved }) {
+export default function ProductFormDialog({ open, onOpenChange, product, categories, companyId, onSaved, products = [] }) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -99,6 +100,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
         company_id: companyId,
         price: Number(form.price) || 0,
         promotional_price: form.promotional_price ? Number(form.promotional_price) : null,
+        // Tempo de preparo saiu da interface (coluna preservada no banco).
         preparation_time: Number(form.preparation_time) || 15,
         sort_order: Number(form.sort_order) || 0,
         stock: Number(form.stock) ?? -1,
@@ -130,64 +132,58 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-          <Section title="Foto">
-            <div className="flex items-center gap-3">
-              {form.image_url ? (
-                <div className="relative shrink-0">
-                  <div className="h-16 w-16 rounded-lg overflow-hidden bg-muted border border-border">
-                    <Image src={form.image_url} fittingType="fill" className="h-full w-full" alt="Preview" />
+          {/* Topo compacto: foto + nome/categoria (lado a lado no desktop). */}
+          <Section title="Produto">
+            <div className="flex gap-3">
+              <div className="shrink-0">
+                {form.image_url ? (
+                  <div className="relative">
+                    <div className="h-16 w-16 rounded-lg overflow-hidden bg-muted border border-border">
+                      <Image src={form.image_url} fittingType="fill" className="h-full w-full" alt="Preview" />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => update('image_url', '')}
+                      aria-label="Remover imagem"
+                      className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => update('image_url', '')}
-                    aria-label="Remover imagem"
-                    className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ) : (
-                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted">
-                  <Package className="h-6 w-6 text-muted-foreground/60" />
-                </div>
-              )}
-              <div className="min-w-0">
-                <Label htmlFor="product-image" className="cursor-pointer inline-block">
-                  <span className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 h-9 text-sm font-medium hover:bg-muted transition-colors">
-                    {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                    {uploading ? 'Enviando...' : form.image_url ? 'Alterar foto' : 'Enviar foto'}
+                ) : (
+                  <div className="flex h-16 w-16 items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted">
+                    <Package className="h-6 w-6 text-muted-foreground/60" />
+                  </div>
+                )}
+                <Label htmlFor="product-image" className="cursor-pointer">
+                  <span className="mt-1.5 inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs font-medium hover:bg-muted transition-colors">
+                    {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                    {uploading ? 'Enviando...' : form.image_url ? 'Alterar' : 'Foto'}
                   </span>
                 </Label>
                 <Input id="product-image" type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleUpload} disabled={uploading} />
-                <p className="text-xs text-muted-foreground mt-1">JPG, PNG, WebP até 5MB</p>
+              </div>
+              <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-5">
+                <div className="space-y-1.5 sm:col-span-3">
+                  <Label>Nome *</Label>
+                  <Input value={form.name || ''} onChange={e => update('name', e.target.value)} placeholder="Ex: Hão Burger Clássico" />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>Categoria</Label>
+                  <Select value={form.category_id || ''} onValueChange={v => update('category_id', v)}>
+                    <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                    <SelectContent>
+                      {categories.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5 sm:col-span-5">
+                  <Label>Descrição</Label>
+                  <Textarea value={form.description || ''} onChange={e => update('description', e.target.value)} placeholder="Descrição do produto..." rows={2} />
+                </div>
               </div>
             </div>
-          </Section>
-
-          <Section title="Informações básicas">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label>Nome *</Label>
-                <Input value={form.name || ''} onChange={e => update('name', e.target.value)} placeholder="Ex: Hão Burger Clássico" />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label>Descrição</Label>
-                <Textarea value={form.description || ''} onChange={e => update('description', e.target.value)} placeholder="Descrição do produto..." rows={2} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Categoria</Label>
-                <Select value={form.category_id || ''} onValueChange={v => update('category_id', v)}>
-                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent>
-                    {categories.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Tempo de preparo (min)</Label>
-                <Input type="number" min="1" value={form.preparation_time ?? 15} onChange={e => update('preparation_time', e.target.value)} />
-              </div>
-            </div>
+            <p className="text-[11px] text-muted-foreground mt-1.5">JPG, PNG, WebP até 5MB</p>
           </Section>
 
           <Section title="Preço">
@@ -212,17 +208,28 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
           </Section>
 
           <Section title="Disponibilidade">
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
               <FlagRow label="Disponível" checked={form.available} onChange={v => update('available', v)} />
               <FlagRow label="Em destaque" checked={form.is_featured} onChange={v => update('is_featured', v)} />
               <FlagRow label="Mais vendido" checked={form.is_bestseller} onChange={v => update('is_bestseller', v)} />
               <FlagRow label="Sob encomenda" checked={form.is_made_to_order} onChange={v => update('is_made_to_order', v)} />
               <FlagRow label="Fora de estoque" checked={form.out_of_stock} onChange={v => update('out_of_stock', v)} />
-              <div className="space-y-1.5">
-                <Label>Ordem de exibição</Label>
-                <Input type="number" value={form.sort_order ?? 0} onChange={e => update('sort_order', e.target.value)} />
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5">
+                <Label className="shrink-0 text-[13px]">Ordem</Label>
+                <Input type="number" value={form.sort_order ?? 0} onChange={e => update('sort_order', e.target.value)} className="h-7 border-0 bg-transparent p-0 text-[13px]" aria-label="Ordem de exibição" />
               </div>
             </div>
+          </Section>
+
+          <Section title="Montagem (complementos V2)">
+            {product?.id ? (
+              <ConfigStepsEditor companyId={companyId} productId={product.id} products={products} />
+            ) : (
+              <p className="text-xs text-muted-foreground">Salve o produto antes de montar grupos de complementos.</p>
+            )}
+            <p className="text-[11px] text-muted-foreground mt-2">
+              Grupos reutilizáveis por seleção (ingredientes na aba Complementos). Não afeta pedidos já registrados.
+            </p>
           </Section>
 
           <Section title="Informações adicionais">

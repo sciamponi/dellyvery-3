@@ -1,4 +1,5 @@
 import { supabase as defaultClient } from './supabaseClient.js';
+import { buildComandaPatch, normalizeComandaName } from '../lib/comanda.js';
 
 // DELLVERY 3 — Adapter Supabase Orders (FASE 5.4 ETAPA B4)
 // Escrita SEMPRE via RPCs server-side (preços/totais nunca do frontend).
@@ -171,13 +172,37 @@ export async function listOrdersWithItems(client, companyId, limit = 100) {
 // complementos, observações e ids de TODAS as linhas; sem totais do cliente).
 // Mesma função usada pelo Checkout público e pelo PDV: o que o backend
 // valida e persiste é exatamente o que estava no carrinho.
+// V2 (Gate 2): item com config {steps:[{step_id, items:[{option_id,
+// quantity}]}]} segue junto; o servidor valida contra product_config_* e
+// precifica com valores oficiais. Sem config => legado intacto.
+export function sanitizeV2Config(config) {
+  if (!config || typeof config !== 'object') return undefined;
+  const steps = Array.isArray(config.steps) ? config.steps : [];
+  const clean = steps
+    .filter((s) => s && typeof s.step_id === 'string' && s.step_id)
+    .map((s) => ({
+      step_id: s.step_id,
+      items: (Array.isArray(s.items) ? s.items : [])
+        .filter((i) => i && typeof i.option_id === 'string' && i.option_id)
+        .map((i) => ({ option_id: i.option_id, quantity: Math.max(1, Math.floor(Number(i.quantity) || 1)) })),
+    }))
+    .filter((s) => s.items.length > 0);
+  if (clean.length === 0) return undefined;
+  return { steps: clean };
+}
+
 export function buildCreateOrderItems(cartItems) {
-  return (cartItems || []).map((i) => ({
-    product_id: i.product_id,
-    quantity: i.quantity,
-    complements: i.complements || [],
-    notes: i.notes || '',
-  }));
+  return (cartItems || []).map((i) => {
+    const out = {
+      product_id: i.product_id,
+      quantity: i.quantity,
+      complements: i.complements || [],
+      notes: i.notes || '',
+    };
+    const config = sanitizeV2Config(i.config);
+    if (config) out.config = config;
+    return out;
+  });
 }
 
 export async function createOrder(client, {
@@ -251,12 +276,17 @@ export async function editOrder(client, orderId, { items, discount, address, not
     p_order_id: orderId,
     p_action: 'edit',
     p_items: items !== undefined
-      ? items.map((i) => ({
-        product_id: i.product_id,
-        quantity: i.quantity,
-        complements: i.complements || [],
-        notes: i.notes || '',
-      }))
+      ? items.map((i) => {
+          const line = {
+            product_id: i.product_id,
+            quantity: i.quantity,
+            complements: i.complements || [],
+            notes: i.notes || '',
+          };
+          const config = sanitizeV2Config(i.config);
+          if (config) line.config = config;
+          return line;
+        })
       : null,
     p_discount: discount !== undefined ? Number(discount) : null,
     p_address: address !== undefined ? address : null,
@@ -283,6 +313,28 @@ export async function countCustomerOrders(client, companyId, customerId, exclude
   const { count, error } = await q;
   if (error) rpcError(error);
   return count || 0;
+}
+
+// Lote único para o selo (1 consulta para N pedidos, sem N+1):
+// Map(customer_id => nº de pedidos não-cancelados). Inclui os próprios
+// pedidos (o chamador subtrai 1 por pedido não-cancelado).
+export async function countPriorOrders(client, companyId, customerIds) {
+  const c = mustBeConfigured(client);
+  const cid = requireCompanyId(companyId);
+  const ids = [...new Set((Array.isArray(customerIds) ? customerIds : []).filter(Boolean))];
+  const out = new Map();
+  if (ids.length === 0) return out;
+  const { data, error } = await c.from('orders')
+    .select('id,customer_id')
+    .eq('company_id', cid)
+    .in('customer_id', ids)
+    .neq('status', 'cancelado');
+  if (error) rpcError(error);
+  for (const row of data || []) {
+    if (!row?.customer_id) continue;
+    out.set(row.customer_id, (out.get(row.customer_id) || 0) + 1);
+  }
+  return out;
 }
 
 // ---------- Atribuição de entregador (FASE 5.5-B3) ----------
@@ -424,6 +476,43 @@ export async function linkOrderTable(client, orderId, companyId, tableId) {
     table_id: table.id,
   });
   return true;
+}
+
+// ---------- Nome da comanda (balcão/retirada, sem cliente) ----------
+// Salva texto livre no snapshot próprio do pedido (customer_data.name),
+// SEMPRE com customer_id null: nenhum registro em customers é criado,
+// nenhum cadastro é alterado. Vazio remove o nome (volta a "Avulso").
+// Escopo rígido: só retirada sem cliente vinculado (delivery usa o
+// cadastro; mesa tem identidade própria). Pedido terminal não muda.
+export async function setComandaName(client, orderId, companyId, name) {
+  const c = mustBeConfigured(client);
+  const cid = requireCompanyId(companyId);
+  if (!orderId) throw new Error('Pedido não identificado');
+  const { data: order, error: ordErr } = await c
+    .from('orders')
+    .select('id,company_id,status,order_type,customer_id,customer_data')
+    .eq('id', orderId)
+    .eq('company_id', cid)
+    .maybeSingle();
+  if (ordErr) rpcError(ordErr);
+  if (!order) throw new Error('Pedido não encontrado ou sem permissão');
+  if (TERMINAL_FOR_ASSIGN.includes(order.status)) {
+    throw new Error('Pedido finalizado/cancelado não pode ser alterado');
+  }
+  if (order.order_type !== 'retirada') {
+    throw new Error('Nome da comanda só para pedidos de balcão/retirada');
+  }
+  if (order.customer_id) {
+    throw new Error('Pedido com cliente vinculado usa o cadastro');
+  }
+  const clean = normalizeComandaName(name);
+  const { error: updErr } = await c.from('orders').update({
+    customer_data: buildComandaPatch(order.customer_data, clean),
+  }).eq('id', orderId);
+  if (updErr) rpcError(updErr);
+  await logOrderLink(c, cid, order, 'set_comanda',
+    clean ? `Nome da comanda: ${clean}` : 'Nome da comanda removido', {});
+  return clean;
 }
 
 // ---------- Tracking público (anon via RPC; nunca SELECT direto) ----------

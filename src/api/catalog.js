@@ -189,6 +189,7 @@ export const DEFAULT_CATEGORIES = [
   { slug: 'sobremesas', name: 'Sobremesas', icon: '🍦', description: 'Doces e sobremesas', sort_order: 2 },
   { slug: 'bebidas', name: 'Bebidas', icon: '🍷', description: 'Bebidas e refrigerantes', sort_order: 3 },
   { slug: 'combos', name: 'Combos', icon: '📦', description: 'Combos e promoções', sort_order: 4 },
+  { slug: 'extras', name: 'Extras', icon: '➕', description: 'Ingredientes e adicionais reutilizáveis', sort_order: 5 },
 ];
 
 // Garante as 5 padrão sem duplicar (upsert por company_id+slug) e sem

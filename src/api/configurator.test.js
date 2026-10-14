@@ -42,7 +42,19 @@ describe('configurator — ingredientes', () => {
     assert.equal(ins.table, 'ingredients');
     assert.equal(ins.payload.company_id, 'c1');
     assert.equal(ins.payload.name, 'Bacon');
+    assert.equal(ins.payload.image_url, null);
     await assert.rejects(createIngredient(client, '', { name: 'X' }), /Empresa/);
+  });
+
+  it('foto opcional mapeada na leitura e no patch', async () => {
+    const client = createMockClient({
+      rows: { ingredients: { list: { data: [{ id: 'i1', name: 'Bacon', image_url: 'http://img/x.jpg' }], error: null }, single: { data: { id: 'i1' }, error: null } } },
+    });
+    assert.equal((await listIngredients(client, 'c1'))[0].image_url, 'http://img/x.jpg');
+    await updateIngredient(client, 'i1', { image_url: 'http://img/y.jpg' });
+    assert.equal(client.calls[0].payload.image_url, 'http://img/y.jpg');
+    await updateIngredient(client, 'i1', { image_url: '' });
+    assert.equal(client.calls[1].payload.image_url, null);
   });
 
   it('update parcial; delete traduz FK em uso', async () => {

@@ -39,7 +39,8 @@ export async function listIngredients(client, companyId) {
   if (error) rpcError(error);
   return (data || []).map((r) => ({
     id: r.id, company_id: r.company_id, name: r.name || '',
-    description: r.description || '', active: r.active !== false,
+    description: r.description || '', image_url: r.image_url || '',
+    active: r.active !== false,
     sort_order: r.sort_order ?? 0,
   }));
 }
@@ -53,6 +54,7 @@ export async function createIngredient(client, companyId, data) {
     company_id: cid,
     name: String(data.name).trim(),
     description: data.description ? String(data.description).trim() : null,
+    image_url: data.image_url ? String(data.image_url).trim() : null,
     active: data.active !== false,
     sort_order: data.sort_order === '' || data.sort_order == null ? 0 : Number(data.sort_order),
   };
@@ -69,6 +71,7 @@ export async function updateIngredient(client, id, data) {
   const patch = {};
   if (data.name !== undefined) patch.name = String(data.name).trim();
   if (data.description !== undefined) patch.description = data.description ? String(data.description).trim() : null;
+  if (data.image_url !== undefined) patch.image_url = data.image_url ? String(data.image_url).trim() : null;
   if (data.active !== undefined) patch.active = !!data.active;
   if (data.sort_order !== undefined) patch.sort_order = Number(data.sort_order) || 0;
   if (patch.name !== undefined && patch.name === '') throw new Error('Nome do ingrediente é obrigatório');

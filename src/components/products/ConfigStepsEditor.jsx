@@ -22,7 +22,7 @@ import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, X, Check } from 'lucide-r
 // redigitar, sem duplicar). Escopo categoria = modelo reutilizável
 // herdado pelos produtos (use_category_steps); passos próprios somam.
 // Não toca em pedidos, RPCs ou legado products.options.
-export default function ConfigStepsEditor({ companyId, productId, categoryId, products = [] }) {
+export default function ConfigStepsEditor({ companyId, productId, categoryId, products = [], refreshKey = 0 }) {
   const { toast } = useToast();
   // Escopo efetivo: categoria quando categoryId presente, senão produto.
   const scope = categoryId ? { kind: 'category', id: categoryId } : { kind: 'product', id: productId };
@@ -70,7 +70,7 @@ export default function ConfigStepsEditor({ companyId, productId, categoryId, pr
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [companyId, productId, categoryId]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [companyId, productId, categoryId, refreshKey]);
 
   const refreshOptions = async (stepId) => {
     try {

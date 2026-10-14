@@ -15,6 +15,7 @@ import IngredientsManager from '@/components/products/IngredientsManager';
 import DependenciesManager from '@/components/products/DependenciesManager';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Image } from '@/components/ui/image';
@@ -49,6 +50,21 @@ export default function GestaoProdutos() {
   const [editCategory, setEditCategory] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [restoringDefaults, setRestoringDefaults] = useState(false);
+  // Modal de Extras: gerencia a biblioteca de ingredientes reutilizáveis
+  // sem sair do Cardápio e sem redirecionar para cadastro de produto.
+  const [ingredientsOpen, setIngredientsOpen] = useState(false);
+
+  // Clique no card: Extras abre o modal de ingredientes; demais
+  // categorias abrem a listagem de produtos filtrada.
+  const openCategory = (cat) => {
+    if (cat?.slug === 'extras') {
+      setIngredientsOpen(true);
+      return;
+    }
+    setFilterCat(cat.id);
+    setSearch('');
+    setTab('produtos');
+  };
 
   const loadData = async () => {
     const comp = sbActive ? sbCompany : null;
@@ -302,12 +318,20 @@ export default function GestaoProdutos() {
               {categories.map(cat => {
                 const count = products.filter(p => p.category_id === cat.id).length;
                 return (
-                  <div key={cat.id} className="rounded-2xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
+                  <div
+                    key={cat.id}
+                    role="button"
+                    tabIndex={0}
+                    title={cat.slug === 'extras' ? 'Gerenciar ingredientes' : `Ver produtos de ${cat.name}`}
+                    onClick={() => openCategory(cat)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCategory(cat); } }}
+                    className="rounded-2xl border border-border bg-card p-4 cursor-pointer transition-all hover:shadow-md hover:border-primary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
                     <div className="flex items-start justify-between">
                       <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-2xl overflow-hidden">
                         {cat.image_url ? <Image src={cat.image_url} fittingType="fill" className="h-12 w-12 rounded-xl" alt={cat.name} /> : (cat.icon || '📦')}
                       </div>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                         <Button variant="ghost" size="icon" onClick={() => { setEditCategory(cat); setCategoryDialog(true); }}>
                           <Pencil className="h-4 w-4 text-muted-foreground" />
                         </Button>
@@ -320,8 +344,12 @@ export default function GestaoProdutos() {
                       {cat.name}
                       {cat.slug && <span className="ml-1.5 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary align-middle">Padrão</span>}
                     </h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">{count} {count === 1 ? 'produto' : 'produtos'}</p>
-                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {cat.slug === 'extras'
+                        ? 'Biblioteca de ingredientes — clique para gerenciar'
+                        : `${count} ${count === 1 ? 'produto' : 'produtos'} — clique para ver`}
+                    </p>
+                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border" onClick={(e) => e.stopPropagation()}>
                       <Switch checked={!!cat.active} onCheckedChange={() => toggleCategoryActive(cat)} />
                       <span className="text-xs text-muted-foreground">{cat.active ? 'Ativa' : 'Inativa'}</span>
                     </div>
@@ -366,6 +394,16 @@ export default function GestaoProdutos() {
         description={deleteTarget ? `Deseja realmente excluir "${deleteTarget.name}"? Esta ação é irreversível.` : ''}
         onConfirm={handleDelete}
       />
+      {/* Modal Extras: biblioteca de ingredientes (criar, buscar, editar,
+          ativar/inativar). Salva por ação; fechar não perde dados. */}
+      <Dialog open={ingredientsOpen} onOpenChange={setIngredientsOpen}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Extras — ingredientes reutilizáveis</DialogTitle>
+          </DialogHeader>
+          <IngredientsManager companyId={company.id} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

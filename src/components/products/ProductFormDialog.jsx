@@ -12,7 +12,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/components/ui/use-toast';
 import { Image } from '@/components/ui/image';
 import ConfigStepsEditor from '@/components/products/ConfigStepsEditor';
-import { Upload, Loader2, X, Package } from 'lucide-react';
+import {
+  listSteps as sbListSteps, createStep as sbCreateStep,
+  listOptions as sbListOptions, createOption as sbCreateOption,
+  updateOption as sbUpdateOption, deleteOption as sbDeleteOption,
+  listIngredients as sbListIngredients,
+} from '@/api/configurator';
+import { QUICK_GROUP_TITLE, findQuickStep, buildQuickRows } from '@/lib/quickExtras';
+import { Upload, Loader2, X, Package, Search } from 'lucide-react';
 
 const MAX_IMAGE_MB = 5;
 
@@ -62,6 +69,106 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
   }, [product, open, categories]);
 
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
+
+  // Seleção rápida de extras: associa ingredientes existentes ao grupo
+  // "Extras" DESTE produto (checkbox por associação; independente por
+  // produto). Regras finas continuam na Montagem abaixo.
+  const [quickIngredients, setQuickIngredients] = useState([]);
+  const [quickStep, setQuickStep] = useState(null);
+  const [quickOptions, setQuickOptions] = useState([]);
+  const [quickSearch, setQuickSearch] = useState('');
+  const [quickBusy, setQuickBusy] = useState(false);
+  const [priceDraft, setPriceDraft] = useState({});
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const loadQuick = async () => {
+    if (!open || !companyId || !product?.id) {
+      setQuickIngredients([]);
+      setQuickStep(null);
+      setQuickOptions([]);
+      return;
+    }
+    try {
+      const [ings, steps] = await Promise.all([
+        sbListIngredients(supabase, companyId).catch(() => []),
+        sbListSteps(supabase, companyId, product.id).catch(() => []),
+      ]);
+      setQuickIngredients(ings);
+      const qs = findQuickStep(steps);
+      setQuickStep(qs);
+      setQuickOptions(qs ? await sbListOptions(supabase, qs.id).catch(() => []) : []);
+    } catch {
+      // Biblioteca indisponível: seção exibe aviso, sem quebrar o diálogo.
+    }
+  };
+
+  useEffect(() => { loadQuick(); setQuickSearch(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [open, product?.id, companyId]);
+
+  const ensureQuickStep = async () => {
+    if (quickStep) return quickStep;
+    const created = await sbCreateStep(supabase, companyId, product.id, {
+      title: QUICK_GROUP_TITLE, description: 'Seleção rápida de ingredientes',
+      select_mode: 'multi', min_select: 0, max_select: 20, free_qty: 0,
+      required: false, active: true,
+    });
+    setQuickStep(created);
+    return created;
+  };
+
+  const toggleQuick = async (ing, row) => {
+    if (!product?.id || quickBusy) return;
+    setQuickBusy(true);
+    try {
+      if (row.option) {
+        await sbDeleteOption(supabase, row.option.id);
+        toast({ title: `"${ing.name}" removido deste produto` });
+      } else {
+        const step = await ensureQuickStep();
+        const price = Number(priceDraft[ing.id] ?? 0) || 0;
+        await sbCreateOption(supabase, {
+          step_id: step.id, ingredient_id: ing.id, product_id: null,
+          name: ing.name, description: ing.description || '', price, active: true, sort_order: 0,
+        });
+        toast({ title: `"${ing.name}" ativado neste produto!` });
+      }
+      setPriceDraft((prev) => {
+        const next = { ...prev };
+        delete next[ing.id];
+        return next;
+      });
+      await loadQuick();
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      toast({ title: 'Erro ao associar', description: err?.message, variant: 'destructive' });
+    } finally {
+      setQuickBusy(false);
+    }
+  };
+
+  const saveQuickPrice = async (row, value) => {
+    if (!row.option || quickBusy) return;
+    const price = Number(value);
+    if (!Number.isFinite(price) || price < 0) {
+      toast({ title: 'Preço inválido', variant: 'destructive' });
+      return;
+    }
+    setQuickBusy(true);
+    try {
+      await sbUpdateOption(supabase, row.option.id, { price });
+      await loadQuick();
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      toast({ title: 'Erro ao salvar preço', description: err?.message, variant: 'destructive' });
+    } finally {
+      setQuickBusy(false);
+    }
+  };
+
+  const quickRows = buildQuickRows(quickIngredients, quickOptions)
+    .filter((r) => {
+      const q = quickSearch.trim().toLowerCase();
+      return !q || (r.ingredient.name || '').toLowerCase().includes(q);
+    });
 
   // Imagem no bucket catalog (pasta da empresa).
   const handleUpload = async (e) => {
@@ -222,6 +329,73 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
             </div>
           </Section>
 
+          <Section title="Ingredientes e extras disponíveis">
+            {!product?.id ? (
+              <p className="text-xs text-muted-foreground">Salve o produto para selecionar ingredientes.</p>
+            ) : quickRows.length === 0 && !quickSearch ? (
+              <p className="text-xs text-muted-foreground">
+                Nenhum ingrediente ativo na biblioteca. Cadastre em Cardápio → clique em Extras.
+              </p>
+            ) : (
+              <>
+                <div className="relative mb-2">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  <Input value={quickSearch} onChange={(e) => setQuickSearch(e.target.value)} placeholder="Buscar ingrediente..." className="pl-9 h-9 text-sm" />
+                </div>
+                <div className="max-h-52 overflow-y-auto rounded-xl border border-border divide-y divide-border">
+                  {quickRows.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-4">Nenhum ingrediente encontrado.</p>
+                  ) : quickRows.map((row) => {
+                    const on = !!row.option;
+                    return (
+                      <div key={row.ingredient.id} className="flex items-center gap-2.5 px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleQuick(row.ingredient, row)}
+                          disabled={quickBusy}
+                          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                          aria-pressed={on}
+                        >
+                          <span
+                            aria-hidden
+                            className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] font-bold ${on ? 'bg-primary border-primary text-primary-foreground' : 'border-primary/40 bg-transparent'}`}
+                          >
+                            {on ? '✓' : ''}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-sm">{row.ingredient.name}</span>
+                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <span className="text-[11px] text-muted-foreground">R$</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            className="h-8 w-20 text-right text-xs"
+                            aria-label={`Adicional de ${row.ingredient.name}`}
+                            value={row.option ? (row.option.price ?? 0) : (priceDraft[row.ingredient.id] ?? '')}
+                            placeholder="0,00"
+                            disabled={quickBusy}
+                            onChange={(e) => {
+                              if (row.option) {
+                                setQuickOptions((prev) => prev.map((o) => (o.id === row.option.id ? { ...o, price: e.target.value } : o)));
+                              } else {
+                                setPriceDraft((prev) => ({ ...prev, [row.ingredient.id]: e.target.value }));
+                              }
+                            }}
+                            onBlur={(e) => { if (row.option) saveQuickPrice(row, e.target.value); }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  Ativação por produto: marcar aqui não altera outros produtos. Regras finas na Montagem abaixo.
+                </p>
+              </>
+            )}
+          </Section>
+
           <Section title="Montagem (complementos V2)">
             {/* Exceção individual: desliga a herança dos grupos da categoria. */}
             <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5 mb-2">
@@ -229,7 +403,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
               <span className="min-w-0 flex-1 text-[13px] leading-tight">Usar grupos da categoria</span>
             </label>
             {product?.id ? (
-              <ConfigStepsEditor companyId={companyId} productId={product.id} products={products} />
+              <ConfigStepsEditor companyId={companyId} productId={product.id} products={products} refreshKey={refreshKey} />
             ) : (
               <p className="text-xs text-muted-foreground">Salve o produto antes de montar grupos de complementos.</p>
             )}

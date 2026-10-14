@@ -175,12 +175,12 @@ describe('catalog — produtos CRUD', () => {
 });
 
 describe('catalog — categorias padrão por restaurante', () => {
-  it('conjunto padrão: 5 categorias com slug estável, emoji e ordem', () => {
-    assert.equal(DEFAULT_CATEGORIES.length, 5);
+  it('conjunto padrão: 6 categorias com slug estável, emoji e ordem', () => {
+    assert.equal(DEFAULT_CATEGORIES.length, 6);
     assert.deepEqual(DEFAULT_CATEGORIES.map((c) => c.slug),
-      ['lanches', 'acompanhamentos', 'sobremesas', 'bebidas', 'combos']);
-    assert.deepEqual(DEFAULT_CATEGORIES.map((c) => c.icon), ['🍔', '🍟', '🍦', '🍷', '📦']);
-    assert.deepEqual(DEFAULT_CATEGORIES.map((c) => c.sort_order), [0, 1, 2, 3, 4]);
+      ['lanches', 'acompanhamentos', 'sobremesas', 'bebidas', 'combos', 'extras']);
+    assert.deepEqual(DEFAULT_CATEGORIES.map((c) => c.icon), ['🍔', '🍟', '🍦', '🍷', '📦', '➕']);
+    assert.deepEqual(DEFAULT_CATEGORIES.map((c) => c.sort_order), [0, 1, 2, 3, 4, 5]);
   });
 
   it('slug mapeado na leitura e imutável no patch', () => {
@@ -198,7 +198,7 @@ describe('catalog — categorias padrão por restaurante', () => {
     assert.equal(call.table, 'categories');
     assert.equal(call.op, 'upsert');
     assert.deepEqual(call.opts, { onConflict: 'company_id,slug' });
-    assert.equal(call.payload.length, 5);
+    assert.equal(call.payload.length, 6);
     assert.ok(call.payload.every((r) => r.company_id === 'co' && r.active === true));
     await assert.rejects(() => ensureDefaultCategories(client, ''), /Empresa atual/);
   });

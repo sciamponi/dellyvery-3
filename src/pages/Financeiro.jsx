@@ -6,6 +6,8 @@ import { useCompany } from '@/hooks/useCompany';
 import PageHeader from '@/components/PageHeader';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import DriverPayouts from '@/components/finance/DriverPayouts';
 import { TrendingUp, Receipt, ShoppingBag, XCircle, Ban, Wallet } from 'lucide-react';
 import { PERIODS, getPeriodRange, filterByPeriod, summarizeOrders } from '@/lib/finance';
 
@@ -37,6 +39,7 @@ export default function Financeiro() {
   const [period, setPeriod] = useState('hoje');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
+  const [tab, setTab] = useState('resumo');
 
   // Financeiro Supabase-only (agregações em @/lib/finance, intactas).
   useEffect(() => {
@@ -69,8 +72,15 @@ export default function Financeiro() {
 
   return (
     <div>
-      <PageHeader title="Financeiro" description="Receitas e indicadores por período" />
+      <PageHeader title="Financeiro" description="Receitas, indicadores e taxas dos entregadores" />
 
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="resumo">Resumo</TabsTrigger>
+          <TabsTrigger value="entregadores">Taxas dos entregadores</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="resumo" className="mt-4">
       <div className="flex flex-wrap gap-2 mb-4">
         {PERIODS.map(p => (
           <button
@@ -142,6 +152,12 @@ export default function Financeiro() {
           </div>
         </div>
       </div>
+        </TabsContent>
+
+        <TabsContent value="entregadores" className="mt-4">
+          <DriverPayouts companyId={company.id} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

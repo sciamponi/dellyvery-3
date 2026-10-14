@@ -15,6 +15,7 @@ import {
   fromSupabaseZone,
   listZones,
   createZone,
+  updateZone,
   deleteZone,
 } from './deliveryZones.js';
 
@@ -136,5 +137,26 @@ describe('zones — CRUD', () => {
     const client = createMockClient();
     await deleteZone(client, 'z');
     assert.deepEqual(client.calls[0], { table: 'delivery_zones', op: 'delete' });
+  });
+
+  it('mapeia polygon GeoJSON; inválido vira null', () => {
+    const geo = { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] };
+    assert.deepEqual(fromSupabaseZone({ id: 'z', polygon: geo }).polygon, geo);
+    assert.equal(fromSupabaseZone({ id: 'z', polygon: { type: 'Point' } }).polygon, null);
+    assert.equal(fromSupabaseZone({ id: 'z' }).polygon, null);
+  });
+
+  it('atualiza contorno; rejeita polígono inválido antes da rede', async () => {
+    const geo = { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] };
+    const client = createMockClient({
+      tables: { delivery_zones: { single: { data: { id: 'z', polygon: geo }, error: null } } },
+    });
+    const out = await updateZone(client, 'z', { polygon: geo });
+    assert.deepEqual(out.polygon, geo);
+    assert.deepEqual(client.calls[0].payload, { polygon: geo });
+    await assert.rejects(updateZone(client, '', { polygon: geo }), /identificada/);
+    await assert.rejects(updateZone(client, 'z', { polygon: { type: 'Polygon', coordinates: [] } }), /inválido/);
+    await updateZone(client, 'z', { polygon: null });
+    assert.deepEqual(client.calls[1].payload, { polygon: null });
   });
 });

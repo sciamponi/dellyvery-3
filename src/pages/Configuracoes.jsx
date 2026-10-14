@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
-import { listZones, createZone as sbCreateZone, deleteZone as sbDeleteZone } from '@/api/deliveryZones';
+import { listZones, createZone as sbCreateZone, deleteZone as sbDeleteZone, updateZone as sbUpdateZone } from '@/api/deliveryZones';
 import { updateCompany as sbUpdateCompany, getCompanySettings as sbGetSettings, updateCompanySettings as sbUpdateSettings } from '@/api/company';
 import { listDrivers as sbListDrivers } from '@/api/team';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -17,7 +17,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/use-toast';
 import { Image } from '@/components/ui/image';
-import { Upload, Loader2, Save, Plus, Trash2, X, Check, Link2, QrCode, Share2, Download, Copy, ExternalLink, Megaphone, Printer, Globe } from 'lucide-react';
+import { Upload, Loader2, Save, Plus, Trash2, X, Check, Link2, QrCode, Share2, Download, Copy, ExternalLink, Megaphone, Printer, Globe, Map as MapIcon } from 'lucide-react';
 import { normalizeSlug, isValidSlug, buildMenuUrl, buildShareMessage, buildWhatsAppUrl } from '@/lib/menuShare';
 import { normalizePrintSettings, PRINT_MODES, PRINT_WIDTHS } from '@/lib/printSettings';
 import { listStages as sbListStages, displayStages as buildDisplayStages } from '@/api/orderStages';
@@ -25,6 +25,9 @@ import { listTables as sbListTables } from '@/api/tables';
 import { listProducts as sbListCatalogProducts } from '@/api/catalog';
 import { FLYER_PRINT_CSS } from '@/lib/printCss';
 import { resolvePublicBaseUrl } from '@/lib/tableQr';
+import ZoneMapEditor from '@/components/delivery/ZoneMapEditor';
+import CoverageMap from '@/components/delivery/CoverageMap';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   buildFlyerModel, renderFlyerPng, DEFAULT_TABLE_TITLE, DEFAULT_GENERAL_TITLE,
   DEFAULT_INSTRUCTION,
@@ -51,6 +54,11 @@ export default function Configuracoes() {
   const [form, setForm] = useState(null);
   const [zones, setZones] = useState([]);
   const [newZone, setNewZone] = useState({ name: '', fee: 0, estimated_time: 30 });
+  // Contorno da região no mapa (GeoJSON na zona). Hooks no topo (regras dos Hooks).
+  const [zoneMapId, setZoneMapId] = useState(null);
+  const [zoneSaving, setZoneSaving] = useState(false);
+  // Mapa de cobertura (entorno + verificação de endereço, só leitura).
+  const [coverageOpen, setCoverageOpen] = useState(false);
   const [drivers, setDrivers] = useState([]);
   const [opsSettings, setOpsSettings] = useState({ default_driver_id: '', auto_assign_delivery: false });
   const [opsSaving, setOpsSaving] = useState(false);
@@ -70,6 +78,11 @@ export default function Configuracoes() {
   const [flyPng, setFlyPng] = useState('');
   const [flyBusy, setFlyBusy] = useState(false);
   const [coverUploading, setCoverUploading] = useState(false);
+  // Fundo temporário (só desta impressão): object URL local, nunca salva na
+  // empresa; o global (company.cover_url) permanece intacto.
+  const [flyTempCover, setFlyTempCover] = useState('');
+  // Fotos automáticas: desligado por padrão (sem surpresa); operador opta.
+  const [flyAutoPhotos, setFlyAutoPhotos] = useState(false);
   // PNG dedicado à impressão (WYSIWYG com o download, A4 página única).
   const [printPng, setPrintPng] = useState('');
   // Capa verificada: só conta como aplicada se a imagem carregar de verdade.
@@ -210,23 +223,29 @@ export default function Configuracoes() {
     }
   };
 
+  const flyOrigin = typeof window !== 'undefined' ? resolvePublicBaseUrl(window.location.origin) : '';
+  const flyOriginIsLocal = /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?$/i.test(flyOrigin || '');
+
   const flyerModel = (() => {
     try {
       return buildFlyerModel({
-        company: { ...(form || {}), cover_url: coverStatus === 'ok' ? coverUrl : '' },
+        company: { ...(form || {}), cover_url: flyTempCover || (coverStatus === 'ok' ? coverUrl : '') },
         products: flyProducts,
         table: flyTable,
-        origin: typeof window !== 'undefined' ? resolvePublicBaseUrl(window.location.origin) : '',
+        origin: flyOrigin,
         opts: {
           title: flyTitle.trim() || undefined,
           instruction: flyInstruction.trim() || undefined,
           photoIds: flyPhotoIds,
+          autoPhotos: flyAutoPhotos,
         },
       });
     } catch {
       return null;
     }
   })();
+
+  const flyQrForRef = useRef('');
 
   const refreshFlyerQr = async () => {
     if (!flyerModel) return '';
@@ -241,9 +260,49 @@ export default function Configuracoes() {
     }
   };
 
+  // QR automático: gera ao abrir a aba (modelo pronto, sem QR), sem exigir
+  // clique em "Gerar". Uma tentativa por URL (falha não entra em loop; o
+  // botão manual continua como fallback).
+  useEffect(() => {
+    if (!flyerModel || flyQrUrl) return;
+    if (flyQrForRef.current === flyerModel.qrUrl) return;
+    flyQrForRef.current = flyerModel.qrUrl;
+    void refreshFlyerQr();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+
+  // Revoga object URLs temporários ao trocar/limpar/sair.
+  useEffect(() => () => {
+    if (flyTempCover) { try { URL.revokeObjectURL(flyTempCover); } catch { /* ignore */ } }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const clearFlyTempCover = () => {
+    if (flyTempCover) { try { URL.revokeObjectURL(flyTempCover); } catch { /* ignore */ } }
+    setFlyTempCover('');
+  };
+
+  const handleTempCover = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    clearFlyTempCover();
+    setFlyTempCover(URL.createObjectURL(f));
+    toast({ title: 'Fundo temporário aplicado (só desta vez — a capa salva não muda).' });
+  };
+
+  // Aviso de imagem ausente no PNG (CORS/rede): não bloqueia, informa.
+  const warnFlyerMissing = (m) => {
+    const parts = [];
+    if (m?.cover) parts.push('a capa');
+    if (m?.photos > 0) parts.push(`${m.photos} foto(s)`);
+    if (parts.length === 0) return;
+    toast({ title: 'Material gerado sem imagens', description: `${parts.join(' e ')} não carregaram (rede/CORS) e ficaram em branco no PNG.` });
+  };
+
   const downloadFlyer = async () => {
     if (!flyerModel) return;
-    if (coverUrl && coverStatus !== 'ok') {
+    if (!flyTempCover && coverUrl && coverStatus !== 'ok') {
       toast({ title: 'Capa indisponível', description: 'A imagem da capa não carregou. Verifique o upload e tente de novo.', variant: 'destructive' });
       return;
     }
@@ -251,7 +310,7 @@ export default function Configuracoes() {
     try {
       const qr = flyQrUrl || (await refreshFlyerQr());
       if (!qr) throw new Error('Não foi possível gerar o QR Code');
-      const png = await renderFlyerPng(flyerModel, { qrDataUrl: qr });
+      const png = await renderFlyerPng(flyerModel, { qrDataUrl: qr, onMissing: warnFlyerMissing });
       setFlyPng(png);
       const a = document.createElement('a');
       a.href = png;
@@ -266,9 +325,10 @@ export default function Configuracoes() {
 
   // Impressão A4: renderiza o MESMO PNG do download e abre o diálogo.
   // Sem PNG válido não há impressão (nunca papel em branco).
+  // Configuração válida e confirmada => imprime direto, sem re-perguntar.
   const printFlyer = async () => {
     if (!flyerModel) return;
-    if (coverUrl && coverStatus !== 'ok') {
+    if (!flyTempCover && coverUrl && coverStatus !== 'ok') {
       toast({ title: 'Capa indisponível', description: 'A imagem da capa não carregou. Verifique o upload e tente de novo.', variant: 'destructive' });
       return;
     }
@@ -276,7 +336,7 @@ export default function Configuracoes() {
     try {
       const qr = flyQrUrl || (await refreshFlyerQr());
       if (!qr) throw new Error('Não foi possível gerar o QR Code');
-      const png = await renderFlyerPng(flyerModel, { qrDataUrl: qr });
+      const png = await renderFlyerPng(flyerModel, { qrDataUrl: qr, onMissing: warnFlyerMissing });
       setPrintPng(png);
       setTimeout(() => window.print(), 150);
     } catch (err) {
@@ -351,6 +411,35 @@ export default function Configuracoes() {
       await sbDeleteZone(supabase, id);
       setZones(prev => prev.filter(z => z.id !== id));
     } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }
+  };
+
+  // Contorno da região no mapa (GeoJSON na coluna polygon da zona).
+  const zoneEditing = zones.find(z => z.id === zoneMapId) || null;
+
+  const saveZoneBoundary = async (geo) => {
+    if (!zoneEditing) return;
+    setZoneSaving(true);
+    try {
+      const updated = await sbUpdateZone(supabase, zoneEditing.id, { polygon: geo });
+      setZones(prev => prev.map(z => z.id === updated.id ? updated : z));
+      toast({ title: 'Região salva!' });
+      setZoneMapId(null);
+    } catch (err) {
+      toast({ title: 'Erro ao salvar região', description: err?.message, variant: 'destructive' });
+    } finally {
+      setZoneSaving(false);
+    }
+  };
+
+  const clearZoneBoundary = async (zone) => {
+    if (!window.confirm(`Remover o contorno de "${zone.name}"? A taxa e o nome são mantidos.`)) return;
+    try {
+      const updated = await sbUpdateZone(supabase, zone.id, { polygon: null });
+      setZones(prev => prev.map(z => z.id === updated.id ? updated : z));
+      toast({ title: 'Contorno removido!' });
+    } catch (err) {
+      toast({ title: 'Erro ao remover', description: err?.message, variant: 'destructive' });
+    }
   };
 
   return (
@@ -564,12 +653,30 @@ export default function Configuracoes() {
             <div className="space-y-2"><Label>Raio de entrega (km)</Label><Input type="number" min="0" value={form.delivery_radius || 0} onChange={e => update('delivery_radius', e.target.value)} /></div>
             <div>
               <Label className="mb-3 block">Zonas de entrega</Label>
+              <div className="mb-2 flex justify-end">
+                <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setCoverageOpen(true)}>
+                  <MapIcon className="h-3.5 w-3.5" /> Ver cobertura no mapa
+                </Button>
+              </div>
               <div className="space-y-2">
                 {zones.map(z => (
                   <div key={z.id} className="flex items-center gap-3 rounded-xl border border-border p-3">
-                    <div className="flex-1"><p className="font-medium text-foreground text-sm">{z.name}</p></div>
-                    <span className="text-sm text-muted-foreground">R$ {Number(z.fee).toFixed(2)}</span>
-                    <span className="text-sm text-muted-foreground">{z.estimated_time}min</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-foreground text-sm truncate">{z.name}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {z.polygon ? '🗺️ com área desenhada' : 'sem área desenhada'}
+                      </p>
+                    </div>
+                    <span className="text-sm text-muted-foreground shrink-0">R$ {Number(z.fee).toFixed(2)}</span>
+                    <span className="text-sm text-muted-foreground shrink-0">{z.estimated_time}min</span>
+                    <Button variant="outline" size="sm" className="h-8 shrink-0 text-xs" onClick={() => setZoneMapId(z.id)} aria-label={`Desenhar área de ${z.name}`}>
+                      <MapIcon className="h-3.5 w-3.5" /> Área
+                    </Button>
+                    {z.polygon && (
+                      <Button variant="ghost" size="sm" className="h-8 shrink-0 text-xs text-muted-foreground" onClick={() => clearZoneBoundary(z)} aria-label={`Remover contorno de ${z.name}`}>
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                     <Button variant="ghost" size="icon" onClick={() => deleteZone(z.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                   </div>
                 ))}
@@ -715,14 +822,25 @@ export default function Configuracoes() {
               </div>
               <div className="space-y-1.5">
                 <Label>Capa (fundo)</Label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Input id="fly-cover" type="file" accept="image/*" className="hidden" onChange={handleCoverUpload} />
                   <Button variant="outline" size="sm" asChild disabled={coverUploading}>
                     <label htmlFor="fly-cover" className="cursor-pointer">
                       {coverUploading ? 'Enviando...' : (form?.cover_url ? 'Trocar capa' : 'Enviar capa')}
                     </label>
                   </Button>
-                  {coverStatus === 'ok' && <span className="text-xs text-green-600">Capa aplicada ✓</span>}
+                  <Input id="fly-temp-cover" type="file" accept="image/*" className="hidden" onChange={handleTempCover} />
+                  <Button variant="ghost" size="sm" asChild>
+                    <label htmlFor="fly-temp-cover" className="cursor-pointer">
+                      {flyTempCover ? 'Trocar fundo temporário' : 'Fundo só desta vez'}
+                    </label>
+                  </Button>
+                  {coverStatus === 'ok' && !flyTempCover && <span className="text-xs text-green-600">Capa aplicada ✓</span>}
+                  {flyTempCover && (
+                    <span className="text-xs text-green-600">
+                      Fundo temporário ✓ <button type="button" onClick={clearFlyTempCover} className="underline">remover</button>
+                    </span>
+                  )}
                   {coverStatus === 'checking' && <span className="text-xs text-muted-foreground">Verificando imagem...</span>}
                   {coverStatus === 'error' && (
                     <span className="text-xs text-destructive">A capa não carregou — tente outro arquivo.</span>
@@ -735,7 +853,7 @@ export default function Configuracoes() {
               <Textarea value={flyInstruction} onChange={(e) => setFlyInstruction(e.target.value)} rows={2} placeholder={DEFAULT_INSTRUCTION} />
             </div>
             <div className="space-y-1.5">
-              <Label>Fotos (até 3, automático)</Label>
+              <Label>Fotos (até 3, manuais)</Label>
               <div className="flex flex-wrap gap-2">
                 {flyProducts.filter((p) => p.image_url).slice(0, 9).map((p) => {
                   const on = flyPhotoIds.includes(p.id);
@@ -755,6 +873,16 @@ export default function Configuracoes() {
                   <p className="text-xs text-muted-foreground">Sem fotos nos produtos ainda.</p>
                 )}
               </div>
+              {flyProducts.some((p) => p.image_url) && !flyAutoPhotos && (
+                <Button variant="ghost" size="sm" onClick={() => setFlyAutoPhotos(true)}>
+                  Completar automaticamente com fotos dos produtos
+                </Button>
+              )}
+              {flyAutoPhotos && (
+                <p className="text-xs text-muted-foreground">
+                  Completo automático ativo. <button type="button" onClick={() => setFlyAutoPhotos(false)} className="underline">Usar só manuais</button>
+                </p>
+              )}
             </div>
           </div>
 
@@ -821,9 +949,46 @@ export default function Configuracoes() {
             <p className="text-xs text-muted-foreground">
               A impressão usa a janela do navegador. {flyTable ? `QR exclusivo da ${flyTable.name} (não muda ao renomear).` : 'QR geral, sem mesa vinculada.'}
             </p>
+            {flyerModel && flyOriginIsLocal && (
+              <p className="text-xs text-amber-700 rounded-xl border border-amber-300 bg-amber-50 p-2.5">
+                Este QR aponta para localhost — abre só neste computador. Para o celular ler,
+                configure VITE_PUBLIC_URL (veja .env.example).
+              </p>
+            )}
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Editor da área de entrega (polígono GeoJSON na zona) */}
+      <Dialog open={!!zoneMapId} onOpenChange={(v) => { if (!v) setZoneMapId(null); }}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl max-h-[92vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Área de entrega{zoneEditing ? ` — ${zoneEditing.name}` : ''}</DialogTitle>
+          </DialogHeader>
+          {zoneEditing && (
+            <ZoneMapEditor
+              key={zoneEditing.id}
+              initialGeo={zoneEditing.polygon}
+              zoneName={zoneEditing.name}
+              onSave={saveZoneBoundary}
+              saving={zoneSaving}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Mapa de cobertura: entorno, zonas e verificação de endereço */}
+      <Dialog open={coverageOpen} onOpenChange={setCoverageOpen}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl max-h-[92vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Cobertura de entrega</DialogTitle>
+          </DialogHeader>
+          <CoverageMap
+            zones={zones}
+            companyAddress={{ address: form?.address || '', city: form?.city || '' }}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -28,6 +28,8 @@ export function fromSupabaseZone(row) {
     minimum_order: row.minimum_order != null ? Number(row.minimum_order) : 0,
     estimated_time: row.estimated_time ?? 30,
     active: row.active ?? true,
+    // Contorno GeoJSON da área de entrega (ou null quando só taxa/nome).
+    polygon: row.polygon && row.polygon.type === 'Polygon' ? row.polygon : null,
   };
 }
 
@@ -38,6 +40,15 @@ export function toSupabaseZonePatch(data) {
   if (data.minimum_order !== undefined) out.minimum_order = Number(data.minimum_order) || 0;
   if (data.estimated_time !== undefined) out.estimated_time = Number(data.estimated_time) || 30;
   if (data.active !== undefined) out.active = !!data.active;
+  if (data.polygon !== undefined) {
+    out.polygon = data.polygon === null ? null : data.polygon;
+    if (out.polygon !== null) {
+      const ring = out.polygon.coordinates && out.polygon.coordinates[0];
+      if (!out.polygon || out.polygon.type !== 'Polygon' || !Array.isArray(ring) || ring.length < 4) {
+        throw new Error('Contorno da região inválido');
+      }
+    }
+  }
   return out;
 }
 
@@ -68,4 +79,17 @@ export async function deleteZone(client, id) {
   const c = mustBeConfigured(client);
   const { error } = await c.from('delivery_zones').delete().eq('id', id);
   if (error) throw error;
+}
+
+export async function updateZone(client, id, data) {
+  const c = mustBeConfigured(client);
+  if (!id) throw new Error('Região não identificada');
+  const { data: row, error } = await c
+    .from('delivery_zones')
+    .update(toSupabaseZonePatch(data || {}))
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return fromSupabaseZone(row);
 }

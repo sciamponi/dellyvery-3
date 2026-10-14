@@ -1,5 +1,6 @@
 import { supabase as defaultClient } from './supabaseClient.js';
 import { validateIngredient, validateConfigStep, validateConfigOption } from '../lib/configEditor.js';
+import { assertCategoryOfCompany } from './catalog.js';
 
 // DELLVERY 3 — Gestão de complementos V2 (ingredientes + passos + opções).
 // RLS + triggers de tenant fazem a barreira real (OWNER/ADMIN/MANAGER
@@ -161,12 +162,16 @@ export async function deleteStep(client, id) {
 }
 
 // Reordena trocando position com o vizinho (up/down); unique parcial.
+// Funciona nos dois escopos (produto ou categoria): vizinhança decidida
+// pelo próprio passo (product_id ou category_id).
 export async function moveStep(client, stepId, dir) {
   const c = mustBeConfigured(client);
   const step = await getStep(client, stepId);
-  const { data: siblings, error } = await c.from('product_config_steps')
-    .select('id,position').eq('company_id', step.company_id).eq('product_id', step.product_id)
-    .order('position', { ascending: true });
+  const scope = step.product_id ? { col: 'product_id', id: step.product_id } : { col: 'category_id', id: step.category_id };
+  const q = c.from('product_config_steps')
+    .select('id,position').eq('company_id', step.company_id);
+  const scoped = scope.id ? q.eq(scope.col, scope.id) : q;
+  const { data: siblings, error } = await scoped.order('position', { ascending: true });
   if (error) rpcError(error);
   const idx = (siblings || []).findIndex((s) => s.id === stepId);
   const j = dir > 0 ? idx + 1 : idx - 1;
@@ -185,18 +190,82 @@ export async function moveStep(client, stepId, dir) {
   return true;
 }
 
+// ---------- Grupos por categoria (modelos reutilizáveis) ----------
+// Mesma tabela de passos, escopo categoria (product_id NULL; trigger
+// garante mesma empresa). Produtos herdam por padrão (use_category_steps);
+// passos próprios somam. Opções continuam por step (sem mudança).
+
+export async function listCategorySteps(client, companyId, categoryId) {
+  const c = mustBeConfigured(client);
+  const { data, error } = await c.from('product_config_steps')
+    .select('*').eq('company_id', requireCompanyId(companyId)).eq('category_id', categoryId)
+    .order('position', { ascending: true });
+  if (error) rpcError(error);
+  return data || [];
+}
+
+export async function createCategoryStep(client, companyId, categoryId, data) {
+  const c = mustBeConfigured(client);
+  const cid = requireCompanyId(companyId);
+  if (!categoryId) throw new Error('Categoria não identificada');
+  await assertCategoryOfCompany(c, cid, categoryId);
+  const err = validateConfigStep(data || {});
+  if (err) throw new Error(err);
+  const { data: siblings } = await c.from('product_config_steps')
+    .select('position').eq('company_id', cid).eq('category_id', categoryId)
+    .order('position', { ascending: false }).limit(1);
+  const nextPos = siblings && siblings.length > 0 ? (Number(siblings[0].position) || 0) + 1 : 0;
+  const payload = {
+    company_id: cid,
+    product_id: null,
+    category_id: categoryId,
+    position: nextPos,
+    title: String(data.title).trim(),
+    description: data.description ? String(data.description).trim() : null,
+    select_mode: data.select_mode === 'single' ? 'single' : 'multi',
+    min_select: Number(data.min_select) || 0,
+    max_select: Number(data.max_select) || 1,
+    free_qty: Number(data.free_qty) || 0,
+    required: !!data.required,
+    active: data.active !== false,
+  };
+  const { data: row, error } = await c.from('product_config_steps').insert(payload).select().single();
+  if (error) rpcError(error);
+  return row;
+}
+
 // ---------- Config completa de um produto (cardápio/PDV) ----------
 // Passos ativos + opções ativas com origem (para o motor productConfig).
-// Leitura por membro (RLS); público usa o storefront (com config inclusa).
+// União: passos herdados da categoria (quando use_category_steps) +
+// passos próprios. Leitura por membro (RLS); público usa o storefront.
 export async function getProductConfig(client, companyId, productId) {
   const c = mustBeConfigured(client);
   const cid = requireCompanyId(companyId);
   if (!productId) throw new Error('Produto não identificado');
-  const { data: steps, error: stepErr } = await c.from('product_config_steps')
-    .select('*').eq('company_id', cid).eq('product_id', productId).eq('active', true)
-    .order('position', { ascending: true });
-  if (stepErr) rpcError(stepErr);
-  const stepIds = (steps || []).map((s) => s.id);
+  // Herança: passos da categoria (opt-in por produto) + passos próprios.
+  let categoryId = null;
+  let useCategory = true;
+  try {
+    const { data: prod } = await c.from('products')
+      .select('category_id,use_category_steps').eq('id', productId).maybeSingle();
+    categoryId = prod?.category_id || null;
+    useCategory = prod?.use_category_steps !== false;
+  } catch {
+    // Sem leitura do produto: segue só com passos próprios.
+  }
+  const fetchSteps = (q) => q.order('position', { ascending: true });
+  const { data: ownSteps, error: ownErr } = await fetchSteps(c.from('product_config_steps')
+    .select('*').eq('company_id', cid).eq('product_id', productId).eq('active', true));
+  if (ownErr) rpcError(ownErr);
+  let inheritedSteps = [];
+  if (useCategory && categoryId) {
+    const { data: catSteps, error: catErr } = await fetchSteps(c.from('product_config_steps')
+      .select('*').eq('company_id', cid).eq('category_id', categoryId).eq('active', true));
+    if (catErr) rpcError(catErr);
+    inheritedSteps = (catSteps || []).map((s) => ({ ...s, inherited: true }));
+  }
+  const steps = [...inheritedSteps, ...(ownSteps || [])];
+  const stepIds = steps.map((s) => s.id);
   let options = [];
   if (stepIds.length > 0) {
     const { data, error: optErr } = await c.from('product_config_options')

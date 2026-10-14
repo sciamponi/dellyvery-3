@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkCartDependencies, rulesForProducts, buildDepRulesFromProducts } from './productDependencies.js';
+import { checkCartDependencies, rulesForProducts, buildDepRulesFromProducts, buildDepModesFromProducts } from './productDependencies.js';
 
 const BATATA = 'batata';
 const BURGUER = 'lanche';
@@ -148,6 +148,42 @@ describe('productDependencies — montagem do pedido (Gate 3)', () => {
         multi,
       ),
       [],
+    );
+  });
+});
+
+describe('productDependencies — modo all (combos)', () => {
+  const comboRules = [
+    { product_id: 'combo', product_name: 'Combo Hambúrguer', requires_product_id: BURGUER, requires_name: 'Lanche', active: true },
+    { product_id: 'combo', product_name: 'Combo Hambúrguer', requires_product_id: 'bebida', requires_name: 'Bebida', active: true },
+  ];
+  const cart1 = [{ product_id: 'combo', quantity: 1 }, { product_id: BURGUER, quantity: 1 }];
+
+  it('any (padrão): um exigido basta; all: faltando um falha', () => {
+    assert.deepEqual(checkCartDependencies(cart1, comboRules), []);
+    assert.deepEqual(checkCartDependencies(cart1, comboRules, {}), []);
+    const errs = checkCartDependencies(cart1, comboRules, { combo: 'all' });
+    assert.equal(errs.length, 1);
+    assert.equal(errs[0].mode, 'all');
+    assert.match(errs[0].message, /Combo Hambúrguer exige Bebida no pedido/);
+  });
+
+  it('all satisfeito quando todos presentes; mensagem lista faltantes', () => {
+    const full = [...cart1, { product_id: 'bebida', quantity: 1 }];
+    assert.deepEqual(checkCartDependencies(full, comboRules, { combo: 'all' }), []);
+    const none = checkCartDependencies([{ product_id: 'combo', quantity: 1 }], comboRules, { combo: 'all' });
+    assert.match(none[0].message, /Lanche, Bebida/);
+  });
+
+  it('buildDepModesFromProducts: só all explícito entra no mapa', () => {
+    assert.deepEqual(buildDepModesFromProducts(null), {});
+    assert.deepEqual(
+      buildDepModesFromProducts([
+        { id: 'combo', dependency_mode: 'all' },
+        { id: BATATA, dependency_mode: 'any' },
+        { id: COCA },
+      ]),
+      { combo: 'all' },
     );
   });
 });

@@ -5,6 +5,7 @@ import {
   setDependencyActive, deleteDependency,
 } from '@/api/configurator';
 import { listProducts } from '@/api/catalog';
+import { updateProduct as sbUpdateProduct } from '@/api/catalog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -100,11 +101,26 @@ export default function DependenciesManager({ companyId }) {
   const grouped = useMemo(() => {
     const map = new Map();
     for (const r of rules) {
-      if (!map.has(r.product_id)) map.set(r.product_id, { name: r.product_name || 'Produto', items: [] });
+      if (!map.has(r.product_id)) map.set(r.product_id, { product_id: r.product_id, name: r.product_name || 'Produto', items: [] });
       map.get(r.product_id).items.push(r);
     }
     return [...map.values()];
   }, [rules]);
+
+  const modeOf = (productId) =>
+    (products || []).find((p) => p.id === productId)?.dependency_mode === 'all' ? 'all' : 'any';
+
+  // Modo da regra do produto: 'any' (basta um exigido) ou 'all' (todos
+  // exigidos — combos com componentes obrigatórios). Servidor revalida.
+  const handleMode = async (productId, mode) => {
+    try {
+      await sbUpdateProduct(supabase, productId, { dependency_mode: mode });
+      setProducts((prev) => (prev || []).map((p) => (p.id === productId ? { ...p, dependency_mode: mode } : p)));
+      toast({ title: mode === 'all' ? 'Exige todos os itens!' : 'Basta um dos itens!' });
+    } catch (err) {
+      toast({ title: 'Erro ao alterar modo', description: err?.message, variant: 'destructive' });
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -173,11 +189,22 @@ export default function DependenciesManager({ companyId }) {
         ) : grouped.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-6">Nenhuma regra — todos os produtos vendem sozinhos.</p>
         ) : grouped.map((g) => (
-          <div key={g.name} className="rounded-xl border border-border bg-card p-3">
-            <p className="text-sm font-medium">
-              {g.name} <span className="text-muted-foreground font-normal">exige</span>{' '}
-              {g.items.filter((r) => r.active !== false).map((r) => r.requires_name || '?').join(' ou ') || '—'}
-            </p>
+          <div key={g.product_id} className="rounded-xl border border-border bg-card p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium min-w-0 flex-1">
+                {g.name} <span className="text-muted-foreground font-normal">exige</span>{' '}
+                {g.items.filter((r) => r.active !== false).map((r) => r.requires_name || '?').join(modeOf(g.product_id) === 'all' ? ', ' : ' ou ') || '—'}
+              </p>
+              <Select value={modeOf(g.product_id)} onValueChange={(v) => handleMode(g.product_id, v)}>
+                <SelectTrigger className="h-7 w-32 shrink-0 text-[11px]" aria-label="Modo da regra">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="any">Qualquer um</SelectItem>
+                  <SelectItem value="all">Todos</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="mt-2 space-y-1.5">
               {g.items.map((r) => (
                 <div key={r.id} className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${r.active === false ? 'opacity-60 border-border' : 'border-border'}`}>

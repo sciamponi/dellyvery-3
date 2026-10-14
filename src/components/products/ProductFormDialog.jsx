@@ -27,9 +27,9 @@ function Section({ title, children }) {
 
 function FlagRow({ label, checked, onChange }) {
   return (
-    <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5">
+    <label className="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5">
       <Switch checked={!!checked} onCheckedChange={onChange} className="shrink-0" />
-      <span className="text-[13px] leading-tight">{label}</span>
+      <span className="min-w-0 flex-1 text-[13px] leading-tight">{label}</span>
     </label>
   );
 }
@@ -49,6 +49,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
         preparation_time: product.preparation_time ?? 15,
         sort_order: product.sort_order ?? 0,
         stock: product.stock ?? -1,
+        use_category_steps: product.use_category_steps !== false,
       });
     } else {
       setForm({
@@ -138,7 +139,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
               <div className="shrink-0">
                 {form.image_url ? (
                   <div className="relative">
-                    <div className="h-16 w-16 rounded-lg overflow-hidden bg-muted border border-border">
+                    <div className="h-20 w-20 sm:h-24 sm:w-24 rounded-xl overflow-hidden bg-muted border border-border">
                       <Image src={form.image_url} fittingType="fill" className="h-full w-full" alt="Preview" />
                     </div>
                     <button
@@ -151,8 +152,8 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
                     </button>
                   </div>
                 ) : (
-                  <div className="flex h-16 w-16 items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted">
-                    <Package className="h-6 w-6 text-muted-foreground/60" />
+                  <div className="flex h-20 w-20 sm:h-24 sm:w-24 items-center justify-center rounded-xl border-2 border-dashed border-border bg-muted">
+                    <Package className="h-7 w-7 text-muted-foreground/60" />
                   </div>
                 )}
                 <Label htmlFor="product-image" className="cursor-pointer">
@@ -214,14 +215,19 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
               <FlagRow label="Mais vendido" checked={form.is_bestseller} onChange={v => update('is_bestseller', v)} />
               <FlagRow label="Sob encomenda" checked={form.is_made_to_order} onChange={v => update('is_made_to_order', v)} />
               <FlagRow label="Fora de estoque" checked={form.out_of_stock} onChange={v => update('out_of_stock', v)} />
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5">
+              <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5">
                 <Label className="shrink-0 text-[13px]">Ordem</Label>
-                <Input type="number" value={form.sort_order ?? 0} onChange={e => update('sort_order', e.target.value)} className="h-7 border-0 bg-transparent p-0 text-[13px]" aria-label="Ordem de exibição" />
+                <Input type="number" value={form.sort_order ?? 0} onChange={e => update('sort_order', e.target.value)} className="h-7 min-w-0 flex-1 border-0 bg-transparent p-0 text-[13px]" aria-label="Ordem de exibição" />
               </div>
             </div>
           </Section>
 
           <Section title="Montagem (complementos V2)">
+            {/* Exceção individual: desliga a herança dos grupos da categoria. */}
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5 mb-2">
+              <Switch checked={form.use_category_steps !== false} onCheckedChange={v => update('use_category_steps', v)} className="shrink-0" />
+              <span className="min-w-0 flex-1 text-[13px] leading-tight">Usar grupos da categoria</span>
+            </label>
             {product?.id ? (
               <ConfigStepsEditor companyId={companyId} productId={product.id} products={products} />
             ) : (
@@ -236,7 +242,8 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
             <div className="grid gap-3">
               <div className="space-y-1.5">
                 <Label>Ingredientes</Label>
-                <Textarea value={form.ingredients || ''} onChange={e => update('ingredients', e.target.value)} placeholder="Lista de ingredientes..." rows={2} />
+                <Textarea value={form.ingredients || ''} onChange={e => update('ingredients', e.target.value)} placeholder="Alface, Tomate, Cebola..." rows={2} />
+                <p className="text-[11px] text-muted-foreground">Separe os itens por vírgula.</p>
               </div>
               <div className="space-y-1.5">
                 <Label>Informações nutricionais (opcional)</Label>

@@ -25,7 +25,7 @@ import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
 import ProductModal from '@/components/menu/ProductModal';
 import { CartProvider } from '@/lib/CartContext';
 import { getProductConfig, listDependenciesWithNames } from '@/api/configurator';
-import { checkCartDependencies } from '@/lib/productDependencies';
+import { checkCartDependencies, buildDepModesFromProducts } from '@/lib/productDependencies';
 import { Plus, Minus, Trash2, Search, Package, CheckCircle, Bike, Store, Table2, User, Printer, MessageCircle, Tag } from 'lucide-react';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -196,8 +196,8 @@ export default function Pdv() {
   // Gate 3: aviso reativo (não remove nada). Ex.: remover o lanche deixa
   // a batata órfã — o submit e o servidor barram; aqui só avisamos.
   const depErrors = useMemo(
-    () => checkCartDependencies(items, depRules),
-    [items, depRules],
+    () => checkCartDependencies(items, depRules, buildDepModesFromProducts(products)),
+    [items, depRules, products],
   );
 
   const addItem = (product) => {
@@ -476,7 +476,7 @@ export default function Pdv() {
       return;
     }
     // Dependências entre produtos (regra da loja; servidor revalida).
-    const depErrors = checkCartDependencies(items, depRules);
+    const depErrors = checkCartDependencies(items, depRules, buildDepModesFromProducts(products));
     if (depErrors.length > 0) {
       toast({ title: 'Item incompatível', description: depErrors[0].message, variant: 'destructive' });
       return;

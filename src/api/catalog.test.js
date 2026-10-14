@@ -15,6 +15,8 @@ import {
   updateProduct,
   deleteProduct,
   assertCategoryOfCompany,
+  DEFAULT_CATEGORIES,
+  ensureDefaultCategories,
 } from './catalog.js';
 
 // Mock sem rede: terminais single()/maybeSingle() e await direto resolvem
@@ -37,6 +39,10 @@ function createMockClient({ tables = {} } = {}) {
       },
       delete: () => {
         calls.push({ table: name, op: 'delete' });
+        return chain;
+      },
+      upsert: (payload, opts) => {
+        calls.push({ table: name, op: 'upsert', payload, opts });
         return chain;
       },
       single: async () => cfg.single || { data: null, error: null },
@@ -89,7 +95,7 @@ describe('catalog — categorias CRUD', () => {
       tables: { categories: { list: { data: [{ id: 'c1', company_id: 'co', name: 'A', sort_order: 1 }], error: null } } },
     });
     const cats = await listCategories(client, 'co');
-    assert.deepEqual(cats, [{ id: 'c1', company_id: 'co', name: 'A', description: undefined, icon: undefined, image_url: undefined, active: undefined, order: 1 }]);
+    assert.deepEqual(cats, [{ id: 'c1', company_id: 'co', name: 'A', description: undefined, icon: undefined, image_url: undefined, active: undefined, order: 1, slug: null }]);
   });
 
   it('criar exige nome e força company_id do contexto', async () => {
@@ -165,5 +171,52 @@ describe('catalog — produtos CRUD', () => {
   it('assertCategoryOfCompany rejeita categoria inexistente', async () => {
     const client = createMockClient({ tables: { categories: { maybeSingle: { data: null, error: null } } } });
     await assert.rejects(() => assertCategoryOfCompany(client, 'coA', 'nope'), /não encontrada/);
+  });
+});
+
+describe('catalog — categorias padrão por restaurante', () => {
+  it('conjunto padrão: 5 categorias com slug estável, emoji e ordem', () => {
+    assert.equal(DEFAULT_CATEGORIES.length, 5);
+    assert.deepEqual(DEFAULT_CATEGORIES.map((c) => c.slug),
+      ['lanches', 'acompanhamentos', 'sobremesas', 'bebidas', 'combos']);
+    assert.deepEqual(DEFAULT_CATEGORIES.map((c) => c.icon), ['🍔', '🍟', '🍦', '🍷', '📦']);
+    assert.deepEqual(DEFAULT_CATEGORIES.map((c) => c.sort_order), [0, 1, 2, 3, 4]);
+  });
+
+  it('slug mapeado na leitura e imutável no patch', () => {
+    assert.equal(fromSupabaseCategory({ id: '1', slug: 'lanches' }).slug, 'lanches');
+    assert.equal(fromSupabaseCategory({ id: '1' }).slug, null);
+    assert.ok(!('slug' in toSupabaseCategory({ name: 'X', slug: 'outro' })));
+  });
+
+  it('restauração via upsert idempotente (sem duplicar, sem tocar personalizadas)', async () => {
+    const client = createMockClient({
+      tables: { categories: { list: { data: [], error: null } } },
+    });
+    await ensureDefaultCategories(client, 'co');
+    const call = client.calls[0];
+    assert.equal(call.table, 'categories');
+    assert.equal(call.op, 'upsert');
+    assert.deepEqual(call.opts, { onConflict: 'company_id,slug' });
+    assert.equal(call.payload.length, 5);
+    assert.ok(call.payload.every((r) => r.company_id === 'co' && r.active === true));
+    await assert.rejects(() => ensureDefaultCategories(client, ''), /Empresa atual/);
+  });
+});
+
+describe('catalog — herança de categoria e modo de dependência', () => {
+  it('defaults: herda grupos da categoria; dependência OR', () => {
+    const p = fromSupabaseProduct({ id: 'p', company_id: 'c', name: 'N', price: 1 });
+    assert.equal(p.use_category_steps, true);
+    assert.equal(p.dependency_mode, 'any');
+    assert.equal(fromSupabaseProduct({ id: 'p', use_category_steps: false, dependency_mode: 'all' }).use_category_steps, false);
+    assert.equal(fromSupabaseProduct({ id: 'p', dependency_mode: 'all' }).dependency_mode, 'all');
+    assert.equal(fromSupabaseProduct({ id: 'p', dependency_mode: 'x' }).dependency_mode, 'any');
+  });
+
+  it('patch parcial só envia quando definido', () => {
+    assert.deepEqual(toSupabaseProductPatch({ use_category_steps: false }), { use_category_steps: false });
+    assert.deepEqual(toSupabaseProductPatch({ dependency_mode: 'all' }), { dependency_mode: 'all' });
+    assert.deepEqual(toSupabaseProductPatch({ available: false }), { active: false });
   });
 });

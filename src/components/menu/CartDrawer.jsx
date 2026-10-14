@@ -5,7 +5,7 @@ import { Image } from '@/components/ui/image';
 import { Minus, Plus, Trash2, ShoppingCart, Package, X } from 'lucide-react';
 import { useCart } from '@/lib/CartContext';
 import { useNavigate } from 'react-router-dom';
-import { buildDepRulesFromProducts, checkCartDependencies } from '@/lib/productDependencies';
+import { buildDepRulesFromProducts, buildDepModesFromProducts, checkCartDependencies } from '@/lib/productDependencies';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -17,7 +17,7 @@ export default function CartDrawer({ open, onClose, products = [] }) {
   // Gate 3: aviso reativo (não remove nada). Ex.: remover o lanche deixa
   // a batata órfã — o checkout/servidor barram; aqui só avisamos.
   const depErrors = useMemo(
-    () => checkCartDependencies(items, buildDepRulesFromProducts(products)),
+    () => checkCartDependencies(items, buildDepRulesFromProducts(products), buildDepModesFromProducts(products)),
     [items, products],
   );
 

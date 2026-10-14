@@ -24,7 +24,7 @@ import { filterLinkCustomers, resolveCustomerEnter } from '@/lib/linkEnter';
 import { createLinkOpTracker } from '@/lib/linkOp';
 import { listProducts as sbListProducts } from '@/api/catalog';
 import { listDependenciesWithNames as sbListDependencies } from '@/api/configurator';
-import { checkCartDependencies } from '@/lib/productDependencies';
+import { checkCartDependencies, buildDepModesFromProducts } from '@/lib/productDependencies';
 import { getCompanySettings as sbGetSettings } from '@/api/company';
 import { useToast } from '@/components/ui/use-toast';
 import { changeOrderStatus, getAvailableActions, getNextStatus, STATUS_LABELS } from '@/lib/orderStatusFlow';
@@ -499,7 +499,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     try {
       // Gate 3: mensagem clara antes da rede, sem descartar a edição.
       // O servidor (manage_order) revalida de qualquer forma.
-      const depErrors = checkCartDependencies(editData.items, depRules);
+      const depErrors = checkCartDependencies(editData.items, depRules, buildDepModesFromProducts(menuProducts));
       if (depErrors.length > 0) {
         toast({ title: 'Item incompatível', description: depErrors[0].message, variant: 'destructive' });
         return;
@@ -1214,7 +1214,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                   </button>
                 </div>
               ))}
-              {checkCartDependencies(editData.items, depRules).map((e) => (
+              {checkCartDependencies(editData.items, depRules, buildDepModesFromProducts(menuProducts)).map((e) => (
                 <p key={e.productId} className="text-xs text-amber-700 rounded-lg border border-amber-300 bg-amber-50 p-2.5" role="alert">
                   ⚠️ {e.message}
                 </p>

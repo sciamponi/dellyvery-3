@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/components/ui/use-toast';
 import { Image } from '@/components/ui/image';
+import ConfigStepsEditor from '@/components/products/ConfigStepsEditor';
 import { Upload, Loader2, X } from 'lucide-react';
 
 export default function CategoryFormDialog({ open, onOpenChange, category, companyId, onSaved }) {
@@ -75,7 +76,7 @@ export default function CategoryFormDialog({ open, onOpenChange, category, compa
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="w-[calc(100%-1rem)] max-w-lg max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{category ? 'Editar categoria' : 'Nova categoria'}</DialogTitle>
         </DialogHeader>
@@ -125,6 +126,17 @@ export default function CategoryFormDialog({ open, onOpenChange, category, compa
               <Switch checked={!!form.active} onCheckedChange={v => update('active', v)} />
             </div>
           </div>
+          {/* Grupos da categoria: modelo reutilizável herdado pelos produtos. */}
+          {category?.id ? (
+            <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-3">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Grupos de complementos
+              </h3>
+              <ConfigStepsEditor companyId={companyId} categoryId={category.id} />
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Salve a categoria para configurar os grupos de complementos.</p>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import {
   listSteps, createStep, updateStep, deleteStep, moveStep,
+  listCategorySteps, createCategoryStep,
   listOptions, createOption, updateOption, deleteOption,
   listIngredients,
 } from '@/api/configurator';
@@ -16,11 +17,15 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/components/ui/use-toast';
 import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, X, Check } from 'lucide-react';
 
-// Montagem V2 por produto: grupos (steps) + opções associadas por seleção
-// (ingrediente ou produto existente — sem redigitar, sem duplicar).
+// Montagem V2 por produto OU por categoria: grupos (steps) + opções
+// associadas por seleção (ingrediente ou produto existente — sem
+// redigitar, sem duplicar). Escopo categoria = modelo reutilizável
+// herdado pelos produtos (use_category_steps); passos próprios somam.
 // Não toca em pedidos, RPCs ou legado products.options.
-export default function ConfigStepsEditor({ companyId, productId, products = [] }) {
+export default function ConfigStepsEditor({ companyId, productId, categoryId, products = [] }) {
   const { toast } = useToast();
+  // Escopo efetivo: categoria quando categoryId presente, senão produto.
+  const scope = categoryId ? { kind: 'category', id: categoryId } : { kind: 'product', id: productId };
   const [steps, setSteps] = useState([]);
   const [optionsByStep, setOptionsByStep] = useState({});
   const [expanded, setExpanded] = useState(null);
@@ -37,11 +42,13 @@ export default function ConfigStepsEditor({ companyId, productId, products = [] 
   const [optionForm, setOptionForm] = useState(null);
 
   const load = async () => {
-    if (!companyId || !productId) return;
+    if (!companyId || !scope.id) return;
     setLoading(true);
     try {
       const [st, ings] = await Promise.all([
-        listSteps(supabase, companyId, productId),
+        scope.kind === 'category'
+          ? listCategorySteps(supabase, companyId, scope.id)
+          : listSteps(supabase, companyId, scope.id),
         listIngredients(supabase, companyId).catch(() => []),
       ]);
       setSteps(st);
@@ -63,7 +70,7 @@ export default function ConfigStepsEditor({ companyId, productId, products = [] 
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [companyId, productId]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [companyId, productId, categoryId]);
 
   const refreshOptions = async (stepId) => {
     try {
@@ -94,7 +101,8 @@ export default function ConfigStepsEditor({ companyId, productId, products = [] 
     setBusy(true);
     try {
       if (editingStep) await updateStep(supabase, editingStep.id, stepForm);
-      else await createStep(supabase, companyId, productId, stepForm);
+      else if (scope.kind === 'category') await createCategoryStep(supabase, companyId, scope.id, stepForm);
+      else await createStep(supabase, companyId, scope.id, stepForm);
       toast({ title: editingStep ? 'Grupo atualizado!' : 'Grupo criado!' });
       setEditingStep(null);
       setStepForm(null);
@@ -228,6 +236,11 @@ export default function ConfigStepsEditor({ companyId, productId, products = [] 
 
   return (
     <div className="space-y-3">
+      {scope.kind === 'category' && (
+        <p className="text-[11px] text-muted-foreground">
+          Modelo da categoria: vale para os produtos que herdam os grupos. Exceções individuais no cadastro do produto.
+        </p>
+      )}
       {steps.length === 0 && !stepForm && (
         <p className="text-xs text-muted-foreground">Nenhum grupo ainda. Crie o primeiro abaixo (ex.: Tamanhos, Molhos).</p>
       )}
@@ -369,9 +382,11 @@ export default function ConfigStepsEditor({ companyId, productId, products = [] 
 
       {/* Novo/editar grupo */}
       {!stepForm ? (
-        <Button variant="outline" className="w-full min-h-11" onClick={openNewStep}>
-          <Plus className="h-4 w-4" /> Novo grupo
-        </Button>
+        <div className="flex justify-start pt-1">
+          <Button className="h-10 px-6 text-sm" onClick={openNewStep}>
+            <Plus className="h-4 w-4" /> Novo grupo
+          </Button>
+        </div>
       ) : (
         <div className="rounded-xl border border-border bg-muted/30 p-3 space-y-3">
           <div className="flex items-center justify-between">
@@ -418,7 +433,7 @@ export default function ConfigStepsEditor({ companyId, productId, products = [] 
             <Label className="text-sm">Ativo</Label>
             <Switch checked={stepForm.active !== false} onCheckedChange={(v) => setStepForm((p) => ({ ...p, active: v }))} />
           </div>
-          <Button onClick={handleSaveStep} disabled={busy} className="w-full min-h-11">
+          <Button onClick={handleSaveStep} disabled={busy} className="h-10 px-6 text-sm w-full sm:w-auto sm:min-w-44">
             {busy ? 'Salvando...' : (editingStep ? 'Salvar grupo' : 'Criar grupo')}
           </Button>
         </div>

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { createOrder as sbCreateOrder, buildCreateOrderItems } from '@/api/orders';
-import { checkCartDependencies, buildDepRulesFromProducts } from '@/lib/productDependencies';
+import { checkCartDependencies, buildDepRulesFromProducts, buildDepModesFromProducts } from '@/lib/productDependencies';
 import { getStorefrontBySlug } from '@/api/storefront';
 import { useCart } from '@/lib/CartContext';
 import { saveResume } from '@/lib/orderResume';
@@ -64,7 +64,7 @@ export default function Checkout() {
   // servidor é a autoridade — aqui nada é removido silenciosamente).
   // Antes de qualquer return antecipado (regras dos Hooks).
   const reviewDepErrors = useMemo(
-    () => checkCartDependencies(items, buildDepRulesFromProducts(products)),
+    () => checkCartDependencies(items, buildDepRulesFromProducts(products), buildDepModesFromProducts(products)),
     [items, products],
   );
 
@@ -202,7 +202,7 @@ export default function Checkout() {
     // Dependências entre produtos (regras da loja): mensagem clara antes
     // da rede; o servidor revalida de qualquer forma.
     const depRules = buildDepRulesFromProducts(products);
-    const depErrors = checkCartDependencies(items, depRules);
+    const depErrors = checkCartDependencies(items, depRules, buildDepModesFromProducts(products));
     if (depErrors.length > 0) {
       setError(depErrors[0].message);
       return;

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   listIngredients, createIngredient, updateIngredient, deleteIngredient,
   listSteps, createStep, updateStep, deleteStep, moveStep,
+  listCategorySteps, createCategoryStep,
+  getProductConfig,
   listOptions, createOption, updateOption, deleteOption,
   listDependencies, listDependenciesWithNames, createDependency,
   setDependencyActive, deleteDependency,
@@ -153,5 +155,89 @@ describe('configurator — dependências entre produtos', () => {
     await deleteDependency(client, 'd1');
     await assert.rejects(setDependencyActive(client, '', true), /identificada/);
     await assert.rejects(deleteDependency(client, ''), /identificada/);
+  });
+});
+
+describe('configurator — grupos por categoria (modelos reutilizáveis)', () => {
+  it('lista passos da categoria (escopo isolado do produto)', async () => {
+    const client = createMockClient({
+      rows: {
+        product_config_steps: { list: { data: [{ id: 's1', category_id: 'cat1', product_id: null }], error: null } },
+      },
+    });
+    assert.deepEqual(await listCategorySteps(client, 'c1', 'cat1'), [{ id: 's1', category_id: 'cat1', product_id: null }]);
+    await assert.rejects(listCategorySteps(client, '', 'cat1'), /Empresa/);
+  });
+
+  it('cria no fim da ordem da categoria + valida categoria da empresa', async () => {
+    const cat = { id: 'cat1', company_id: 'c1' };
+    const client = createMockClient({
+      rows: {
+        categories: { maybeSingle: { data: cat, error: null } },
+        product_config_steps: {
+          list: { data: [{ position: 1 }], error: null },
+          single: { data: { id: 's9' }, error: null },
+        },
+      },
+    });
+    await assert.rejects(createCategoryStep(client, 'c1', '', { title: 'G' }), /Categoria/);
+    await assert.rejects(createCategoryStep(client, 'c1', 'cat1', { title: '' }), /obrigatório/);
+    const row = await createCategoryStep(client, 'c1', 'cat1', { title: 'Molhos', max_select: 2 });
+    assert.equal(row.id, 's9');
+    const ins = client.calls.find((c) => c.op === 'insert');
+    assert.equal(ins.table, 'product_config_steps');
+    assert.equal(ins.payload.category_id, 'cat1');
+    assert.equal(ins.payload.product_id, null);
+    assert.equal(ins.payload.position, 2);
+    const other = createMockClient({
+      rows: { categories: { maybeSingle: { data: { id: 'cat1', company_id: 'outra' }, error: null } } },
+    });
+    await assert.rejects(createCategoryStep(other, 'c1', 'cat1', { title: 'G' }), /outra empresa/);
+  });
+
+  it('moveStep funciona no escopo categoria (vizinhança por category_id)', async () => {
+    const steps = [
+      { id: 's1', position: 0, company_id: 'c1', product_id: null, category_id: 'cat1', title: 'A', min_select: 0, max_select: 2 },
+      { id: 's2', position: 1, company_id: 'c1', product_id: null, category_id: 'cat1', title: 'B', min_select: 0, max_select: 2 },
+    ];
+    const client = createMockClient({
+      rows: {
+        product_config_steps: {
+          list: { data: steps, error: null },
+          single: { data: steps[0], error: null },
+          maybeSingle: { data: steps[0], error: null },
+        },
+      },
+    });
+    assert.equal(await moveStep(client, 's1', +1), true);
+    assert.equal(await moveStep(client, 's2', +1), false);
+  });
+
+  it('getProductConfig une herdados (categoria) + próprios', async () => {
+    const client = createMockClient({
+      rows: {
+        products: { maybeSingle: { data: { category_id: 'cat1', use_category_steps: true }, error: null } },
+        product_config_steps: {
+          list: { data: [{ id: 's1', title: 'Herdado' }], error: null },
+          single: { data: { id: 's1' }, error: null },
+        },
+        product_config_options: { list: { data: [], error: null } },
+      },
+    });
+    const cfg = await getProductConfig(client, 'c1', 'p1');
+    assert.ok(cfg.steps.length >= 1);
+    assert.ok(cfg.steps.every((s) => s.inherited === true || s.inherited === undefined));
+  });
+
+  it('getProductConfig sem herança quando produto opt-out', async () => {
+    const base = createMockClient({
+      rows: {
+        products: { maybeSingle: { data: { category_id: 'cat1', use_category_steps: false }, error: null } },
+        product_config_steps: { list: { data: [{ id: 'sp', title: 'Próprio' }], error: null } },
+        product_config_options: { list: { data: [], error: null } },
+      },
+    });
+    const cfg = await getProductConfig(base, 'c1', 'p1');
+    assert.deepEqual(cfg.steps.map((s) => s.id), ['sp']);
   });
 });

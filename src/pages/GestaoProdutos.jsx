@@ -4,7 +4,7 @@ import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import {
   listCategories, listProducts, deleteCategory as sbDeleteCategory,
   deleteProduct as sbDeleteProduct, updateCategory as sbUpdateCategory,
-  updateProduct as sbUpdateProduct,
+  updateProduct as sbUpdateProduct, ensureDefaultCategories as sbEnsureDefaults,
 } from '@/api/catalog';
 import { useCompany } from '@/hooks/useCompany';
 import PageHeader from '@/components/PageHeader';
@@ -48,6 +48,7 @@ export default function GestaoProdutos() {
   const [editProduct, setEditProduct] = useState(null);
   const [editCategory, setEditCategory] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [restoringDefaults, setRestoringDefaults] = useState(false);
 
   const loadData = async () => {
     const comp = sbActive ? sbCompany : null;
@@ -114,9 +115,25 @@ export default function GestaoProdutos() {
   const toggleCategoryActive = async (cat) => {
     try {
       await sbUpdateCategory(supabase, cat.id, { active: !cat.active });
-      setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, active: !c.active } : c));
+      setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, active: !cat.active } : c));
     } catch (err) {
       toast({ title: 'Erro', variant: 'destructive' });
+    }
+  };
+
+  // Categorias padrão (Lanches, Acompanhamentos, ...): restaura as 5 sem
+  // duplicar (upsert por slug) e sem tocar nas personalizadas.
+  const handleRestoreDefaults = async () => {
+    if (!company?.id || restoringDefaults) return;
+    setRestoringDefaults(true);
+    try {
+      await sbEnsureDefaults(supabase, company.id);
+      await loadData();
+      toast({ title: 'Categorias padrão restauradas!' });
+    } catch (err) {
+      toast({ title: 'Erro ao restaurar', description: err?.message, variant: 'destructive' });
+    } finally {
+      setRestoringDefaults(false);
     }
   };
 
@@ -259,6 +276,16 @@ export default function GestaoProdutos() {
 
         {/* Categories tab */}
         <TabsContent value="categorias" className="mt-6">
+          {categories.length > 0 && (
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <p className="text-xs text-muted-foreground">
+                {categories.some(c => c.slug) ? 'Inclui categorias padrão da plataforma.' : 'Sem categorias padrão.'}
+              </p>
+              <Button variant="outline" size="sm" className="h-8 text-xs shrink-0" onClick={handleRestoreDefaults} disabled={restoringDefaults}>
+                {restoringDefaults ? 'Restaurando...' : 'Restaurar padrão'}
+              </Button>
+            </div>
+          )}
           {categories.length === 0 ? (
             <div className="text-center py-16">
               <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
@@ -289,7 +316,10 @@ export default function GestaoProdutos() {
                         </Button>
                       </div>
                     </div>
-                    <h3 className="font-heading font-semibold text-foreground mt-3">{cat.name}</h3>
+                    <h3 className="font-heading font-semibold text-foreground mt-3">
+                      {cat.name}
+                      {cat.slug && <span className="ml-1.5 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary align-middle">Padrão</span>}
+                    </h3>
                     <p className="text-xs text-muted-foreground mt-0.5">{count} {count === 1 ? 'produto' : 'produtos'}</p>
                     <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
                       <Switch checked={!!cat.active} onCheckedChange={() => toggleCategoryActive(cat)} />

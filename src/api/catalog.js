@@ -37,6 +37,7 @@ export function fromSupabaseCategory(row) {
     image_url: row.image_url,
     active: row.active,
     order: row.sort_order ?? 0,
+    slug: row.slug || null,
   };
 }
 
@@ -82,6 +83,8 @@ export function fromSupabaseProduct(row) {
     ingredients: row.ingredients,
     nutritional_info: row.nutritional_info,
     complements: Array.isArray(row.options) ? row.options : [],
+    use_category_steps: row.use_category_steps !== false,
+    dependency_mode: row.dependency_mode === 'all' ? 'all' : 'any',
   };
 }
 
@@ -119,6 +122,8 @@ export function toSupabaseProductPatch(data) {
   if (data.sort_order !== undefined) out.sort_order = data.sort_order === '' ? 0 : Number(data.sort_order);
   if (data.ingredients !== undefined) out.ingredients = data.ingredients || null;
   if (data.nutritional_info !== undefined) out.nutritional_info = data.nutritional_info || null;
+  if (data.use_category_steps !== undefined) out.use_category_steps = data.use_category_steps !== false;
+  if (data.dependency_mode !== undefined) out.dependency_mode = data.dependency_mode === 'all' ? 'all' : 'any';
   if (data.complements !== undefined) out.options = Array.isArray(data.complements) ? data.complements : [];
   else if (data.options !== undefined) out.options = Array.isArray(data.options) ? data.options : [];
   return out;
@@ -171,6 +176,40 @@ export async function deleteCategory(client, id) {
   const c = mustBeConfigured(client);
   const { error } = await c.from('categories').delete().eq('id', id);
   if (error) throw error;
+}
+
+// ---------- Categorias padrão ----------
+
+// Conjunto padrão por restaurante (isolado por empresa; slug estável para
+// idempotência). Mesmos nomes/emojis da identidade Dellyvery. O banco
+// semeia via trigger + backfill; aqui: restauração manual sob demanda.
+export const DEFAULT_CATEGORIES = [
+  { slug: 'lanches', name: 'Lanches', icon: '🍔', description: 'Hambúrgueres e sanduíches', sort_order: 0 },
+  { slug: 'acompanhamentos', name: 'Acompanhamentos', icon: '🍟', description: 'Porções e acompanhamentos', sort_order: 1 },
+  { slug: 'sobremesas', name: 'Sobremesas', icon: '🍦', description: 'Doces e sobremesas', sort_order: 2 },
+  { slug: 'bebidas', name: 'Bebidas', icon: '🍷', description: 'Bebidas e refrigerantes', sort_order: 3 },
+  { slug: 'combos', name: 'Combos', icon: '📦', description: 'Combos e promoções', sort_order: 4 },
+];
+
+// Garante as 5 padrão sem duplicar (upsert por company_id+slug) e sem
+// tocar em personalizadas. RLS de escrita (papel) continua valendo.
+export async function ensureDefaultCategories(client, companyId) {
+  const c = mustBeConfigured(client);
+  const cid = requireCompanyId(companyId);
+  const payload = DEFAULT_CATEGORIES.map((d) => ({
+    company_id: cid,
+    name: d.name,
+    icon: d.icon,
+    description: d.description,
+    sort_order: d.sort_order,
+    active: true,
+    slug: d.slug,
+  }));
+  const { data, error } = await c.from('categories')
+    .upsert(payload, { onConflict: 'company_id,slug' })
+    .select();
+  if (error) throw error;
+  return (data || []).map(fromSupabaseCategory);
 }
 
 // ---------- Produtos ----------

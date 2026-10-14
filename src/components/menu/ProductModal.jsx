@@ -177,6 +177,7 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
     const errs = checkCartDependencies(
       [...(cartItems || []), { product_id: product.id, quantity }],
       rules,
+      product.dependency_mode === 'all' ? { [product.id]: 'all' } : undefined,
     );
     return errs.length > 0 ? errs[0].message : '';
   }, [product, quantity, cartItems]);

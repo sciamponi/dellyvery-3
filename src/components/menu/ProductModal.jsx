@@ -8,6 +8,7 @@ import { Minus, Plus, ShoppingCart, Package, Check } from 'lucide-react';
 import { useCart } from '@/lib/CartContext';
 import { validateProductConfig } from '@/lib/productConfig';
 import { checkCartDependencies } from '@/lib/productDependencies';
+import { v2selFromItemConfig, legacySelFromComplements } from '@/lib/cartEdit';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -43,10 +44,12 @@ function v2PreviewLines(snapshot) {
   return lines;
 }
 
-export default function ProductModal({ product, primaryColor, isOpen, onClose, onAddToCart }) {
+export default function ProductModal({ product, primaryColor, isOpen, onClose, onAddToCart, initialItem }) {
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState('');
   const [selectedComplements, setSelectedComplements] = useState({});
+  // Edição de linha do carrinho: isEdit muda rótulos; nada é removido aqui.
+  const isEdit = !!initialItem;
   // V2: { [step_id]: { [option_id]: qty } }.
   const [v2sel, setV2sel] = useState({});
   // V2: passos vindos do storefront (config = ARRAY de steps) ou do PDV
@@ -61,13 +64,18 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
   const { company: cartCompany, items: cartItems } = useCart();
   const storeClosed = cartCompany?.is_open === false;
 
-  // Reset state when product changes
+  // Reset state when product changes (ou inicia edição de uma linha).
   React.useEffect(() => {
     if (isOpen) {
-      setQuantity(1);
-      setNotes('');
-      setSelectedComplements({});
-      setV2sel({});
+      setQuantity(Math.max(1, Number(initialItem?.quantity) || 1));
+      setNotes(initialItem?.notes || '');
+      if (v2config && initialItem?.config) {
+        setSelectedComplements({});
+        setV2sel(v2selFromItemConfig(initialItem.config));
+      } else {
+        setSelectedComplements(legacySelFromComplements(product, initialItem?.complements));
+        setV2sel({});
+      }
     }
   }, [isOpen, product?.id]);
 
@@ -187,20 +195,22 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent
-        className="max-w-lg max-h-[90vh] overflow-y-auto"
+        className="max-w-lg max-h-[92vh] p-0 gap-0 flex flex-col overflow-hidden"
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <DialogHeader>
           <DialogTitle className="sr-only">{product.name}</DialogTitle>
         </DialogHeader>
 
+        {/* Conteúdo com rolagem independente; rodapé fixo abaixo. */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 pb-4">
         {/* Product image */}
         {product.image_url ? (
-          <div className="relative -mx-6 -mt-6 h-48 overflow-hidden rounded-t-lg">
+          <div className="relative -mx-4 sm:-mx-6 h-44 overflow-hidden">
             <Image src={product.image_url} fittingType="fill" className="w-full h-full" alt={product.name} />
           </div>
         ) : (
-          <div className="flex h-40 items-center justify-center rounded-xl bg-muted -mt-2">
+          <div className="flex h-32 items-center justify-center rounded-xl bg-muted mt-2">
             <Package className="h-12 w-12 text-muted-foreground" />
           </div>
         )}
@@ -276,11 +286,11 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
                             <div className="flex shrink-0 items-center gap-2">
                               {checked && step.allow_repeat ? (
                                 <>
-                                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => stepV2OptionQty(step, opt, -1)} aria-label="Diminuir">
+                                  <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => stepV2OptionQty(step, opt, -1)} aria-label="Diminuir">
                                     <Minus className="h-3.5 w-3.5" />
                                   </Button>
                                   <span className="w-6 text-center text-sm font-medium">{qty}</span>
-                                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => stepV2OptionQty(step, opt, +1)} aria-label="Aumentar">
+                                  <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => stepV2OptionQty(step, opt, +1)} aria-label="Aumentar">
                                     <Plus className="h-3.5 w-3.5" />
                                   </Button>
                                 </>
@@ -359,19 +369,24 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
             />
           </div>
 
-          {/* Quantity + Add button */}
+          {/* Quantity + Add button (fixo no rodapé) */}
           {storeClosed && (
             <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               🔴 Restaurante fechado no momento — você pode ver o cardápio, mas não é possível adicionar itens agora.
             </div>
           )}
+        </div>
+        </div>
+        <div className="shrink-0 border-t border-border bg-card px-4 sm:px-6 py-3">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
                 size="icon"
+                className="h-11 w-11"
                 onClick={() => setQuantity(q => Math.max(1, q - 1))}
                 disabled={storeClosed}
+                aria-label="Diminuir quantidade"
               >
                 <Minus className="h-4 w-4" />
               </Button>
@@ -379,14 +394,16 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
               <Button
                 variant="outline"
                 size="icon"
+                className="h-11 w-11"
                 onClick={() => setQuantity(q => Math.min(99, q + 1))}
                 disabled={storeClosed}
+                aria-label="Aumentar quantidade"
               >
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
             <Button
-              className="flex-1"
+              className="flex-1 min-h-11"
               style={{ backgroundColor: primaryColor }}
               disabled={storeClosed || !!(v2config && v2calc?.error)}
               onClick={() => {
@@ -400,7 +417,7 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
               }}
             >
               <ShoppingCart className="h-4 w-4" />
-              {storeClosed ? 'Fechado agora' : `Adicionar • ${fmtCurrency(lineTotal)}`}
+              {storeClosed ? 'Fechado agora' : `${isEdit ? 'Atualizar' : 'Adicionar'} • ${fmtCurrency(lineTotal)}`}
             </Button>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { getStorefrontBySlug } from '@/api/storefront';
@@ -8,15 +8,18 @@ import { getOrderByToken } from '@/api/orders';
 import { loadResume, clearResume, isActiveOrderStatus } from '@/lib/orderResume';
 import { Button } from '@/components/ui/button';
 import { Image } from '@/components/ui/image';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ShoppingCart, Phone, MapPin, Clock, ArrowLeft, Package, Plus } from 'lucide-react';
 import ProductModal from '@/components/menu/ProductModal';
 import CartDrawer from '@/components/menu/CartDrawer';
+import { shouldSuggestSideDish, listOfferItems, prioritizeOfferItems, filterOfferByCart, productHasOptions } from '@/lib/sideDish';
+import { buildDepRulesFromProducts, buildDepModesFromProducts } from '@/lib/productDependencies';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
 export default function Menu() {
   const { slug } = useParams();
-  const { setCartCompany, addItem, getTotalItems, getSubtotal } = useCart();
+  const { setCartCompany, addItem, removeItem, items, getTotalItems, getSubtotal } = useCart();
   const [loading, setLoading] = useState(true);
   const [company, setCompany] = useState(null);
   const [categories, setCategories] = useState([]);
@@ -25,11 +28,87 @@ export default function Menu() {
   const [notFound, setNotFound] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [cartOpen, setCartOpen] = useState(false);
+  // Edição de linha do carrinho: guarda o id; nada é removido até confirmar.
+  const [editingId, setEditingId] = useState(null);
+  const editingItem = editingId ? items.find((i) => i.id === editingId) || null : null;
+  // Etapa opcional pós-lanche: oferece acompanhamentos sem obrigar.
+  const [sideOpen, setSideOpen] = useState(false);
+  const [sideProduct, setSideProduct] = useState(null);
+
+  const handleEditItem = (item) => {
+    const product = products.find((p) => p.id === item.product_id);
+    if (!product) return;
+    setEditingId(item.id);
+    setSelectedProduct(product);
+    setCartOpen(false);
+  };
+
+  const handleAddToCart = (product, quantity, complements, notes, config) => {
+    const wasEdit = !!editingId;
+    if (wasEdit) {
+      removeItem(editingId);
+      setEditingId(null);
+    }
+    addItem(product, quantity, complements, notes, config);
+    // Pós-lanche (novo item, nunca edição): sugere ofertas se houver.
+    // Avalia com o carrinho JÁ incluindo o lanche (senão a própria
+    // dependência recém-satisfeita esconderia a batata). Bebida/
+    // acompanhamento/sobremesa nunca disparam (sem repetição).
+    if (!wasEdit && shouldSuggestSideDish(product, categories)) {
+      const cartAfter = [...items, { product_id: product.id, quantity }];
+      const offers = filterOfferByCart(
+        prioritizeOfferItems(listOfferItems(products, categories)),
+        cartAfter,
+        buildDepRulesFromProducts(products),
+        buildDepModesFromProducts(products),
+      );
+      if (offers.length > 0) {
+        setSideProduct(null);
+        setSideOpen(true);
+      }
+    }
+  };
+
+  const handlePickSide = (product) => {
+    if (productHasOptions(product)) {
+      setSideProduct(product);
+    } else {
+      addItem(product, 1, [], '');
+    }
+  };
+
+  const handleCloseSide = () => {
+    setSideProduct(null);
+    setSideOpen(false);
+  };
+
+  const handleCloseModal = () => {
+    setSelectedProduct(null);
+    setEditingId(null);
+  };
   const [resumedOrder, setResumedOrder] = useState(null);
   // Mesa via QR Code (?mesa=token): validada no servidor; banner + trava
   // seguem no checkout. Token inválido: aviso + cardápio sem mesa.
   const [tableBanner, setTableBanner] = useState(null);
   const [tableError, setTableError] = useState('');
+
+  // Navegação mobile-first: só categorias com produtos (sem vazias).
+  // Antes de qualquer return antecipado (regras dos Hooks).
+  const visibleCategories = useMemo(
+    () => (categories || []).filter((c) => products.some((p) => p.category_id === c.id)),
+    [categories, products],
+  );
+  const sideDishes = useMemo(() => {
+    const cands = prioritizeOfferItems(listOfferItems(products, categories));
+    // Oculta das OFERTAS o item inválido sem o exigido (ex.: batata sem
+    // lanche). O cardápio completo continua exibindo tudo.
+    return filterOfferByCart(
+      cands,
+      items,
+      buildDepRulesFromProducts(products),
+      buildDepModesFromProducts(products),
+    );
+  }, [products, categories, items]);
 
   // Cardápio público Supabase-only via RPC pública (sem SELECT anon direto).
   useEffect(() => {
@@ -161,7 +240,7 @@ export default function Menu() {
         </div>
       )}
 
-      {/* Info bar */}
+      {/* Info bar + categorias: fixos no topo durante a rolagem. */}
       <div className="border-b border-border bg-card sticky top-0 z-10">
         <div className="mx-auto max-w-4xl px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
           <span className={`flex items-center gap-1.5 font-medium ${company.is_open ? 'text-green-600' : 'text-red-600'}`}>
@@ -174,37 +253,37 @@ export default function Menu() {
           )}
           {company.address && <span className="flex items-center gap-1.5"><MapPin className="h-4 w-4" /> {company.address}</span>}
         </div>
-      </div>
-
-      {/* Category tabs */}
-      {categories.length > 0 && (
-        <div className="border-b border-border bg-card overflow-x-auto">
-          <div className="mx-auto max-w-4xl px-4 flex gap-2 py-3">
-            <button
-              onClick={() => setActiveCategory('all')}
-              className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-                activeCategory === 'all' ? 'text-white' : 'bg-muted text-muted-foreground hover:text-foreground'
-              }`}
-              style={activeCategory === 'all' ? { backgroundColor: primaryColor } : {}}
-            >
-              🍽️ Todos
-            </button>
-            {categories.map(cat => (
+        {/* Category tabs */}
+        {visibleCategories.length > 0 && (
+          <div className="overflow-x-auto">
+            <div className="mx-auto max-w-4xl px-4 flex gap-2 pb-3">
               <button
-                key={cat.id}
-                onClick={() => setActiveCategory(cat.id)}
-                title={cat.name}
+                onClick={() => setActiveCategory('all')}
                 className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-                  activeCategory === cat.id ? 'text-white' : 'bg-muted text-muted-foreground hover:text-foreground'
+                  activeCategory === 'all' ? 'text-white' : 'bg-muted text-muted-foreground hover:text-foreground'
                 }`}
-                style={activeCategory === cat.id ? { backgroundColor: primaryColor } : {}}
+                style={activeCategory === 'all' ? { backgroundColor: primaryColor } : {}}
               >
-                {cat.icon ? `${cat.icon} ` : '🏷️ '}{cat.name}
+                🍽️ Todos
               </button>
-            ))}
+              {visibleCategories.map(cat => (
+                <button
+                  key={cat.id}
+                  onClick={() => setActiveCategory(cat.id)}
+                  title={cat.name}
+                  aria-pressed={activeCategory === cat.id}
+                  className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+                    activeCategory === cat.id ? 'text-white' : 'bg-muted text-muted-foreground hover:text-foreground'
+                  }`}
+                  style={activeCategory === cat.id ? { backgroundColor: primaryColor } : {}}
+                >
+                  {cat.icon ? `${cat.icon} ` : '🏷️ '}{cat.name}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Products */}
       <div className="mx-auto max-w-4xl px-4 py-8">
@@ -220,6 +299,11 @@ export default function Menu() {
           <div className="grid gap-3 sm:grid-cols-2">
             {filteredProducts.map(product => {
               const cat = categories.find(c => c.id === product.category_id);
+              const v2steps = Array.isArray(product.config) ? product.config : product.config?.steps;
+              const hasCustom = (Array.isArray(v2steps) && v2steps.length > 0)
+                || (Array.isArray(product.complements) && product.complements.length > 0);
+              const hasRequired = Array.isArray(v2steps)
+                && v2steps.some((s) => s.required || (Number(s.min_select) || 0) > 0);
               return (
               <button
                 key={product.id}
@@ -231,6 +315,14 @@ export default function Menu() {
                   {cat && <p className="text-xs text-muted-foreground mt-0.5 truncate">{cat.icon ? `${cat.icon} ` : ''}{cat.name}</p>}
                   {product.description && (
                     <p className="text-[13px] leading-snug text-muted-foreground mt-1 line-clamp-2">{product.description}</p>
+                  )}
+                  {hasCustom && (
+                    <p className="mt-1 flex flex-wrap items-center gap-1">
+                      <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">Personalizável</span>
+                      {hasRequired && (
+                        <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold text-amber-800">escolha obrigatória</span>
+                      )}
+                    </p>
                   )}
                   {Array.isArray(product.requires) && product.requires.length > 0 && (
                     <p className="text-[11px] leading-snug text-amber-700 mt-1">
@@ -248,9 +340,9 @@ export default function Menu() {
                 </div>
                 <div className="relative shrink-0 self-start">
                   {product.image_url ? (
-                    <Image src={product.image_url} fittingType="fill" className="h-28 w-28 sm:h-24 sm:w-24 rounded-xl" alt={product.name} />
+                    <Image src={product.image_url} fittingType="fill" className="h-24 w-24 rounded-xl" alt={product.name} />
                   ) : (
-                    <div className="flex h-28 w-28 sm:h-24 sm:w-24 items-center justify-center rounded-xl bg-muted">
+                    <div className="flex h-24 w-24 items-center justify-center rounded-xl bg-muted">
                       <Package className="h-8 w-8 text-muted-foreground" />
                     </div>
                   )}
@@ -293,15 +385,73 @@ export default function Menu() {
 
       {/* Product modal */}
       <ProductModal
+        key={editingId || 'new'}
         product={selectedProduct}
         primaryColor={primaryColor}
         isOpen={!!selectedProduct}
-        onClose={() => setSelectedProduct(null)}
-        onAddToCart={addItem}
+        onClose={handleCloseModal}
+        onAddToCart={handleAddToCart}
+        initialItem={editingItem}
       />
 
       {/* Cart drawer */}
-      <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} products={products} />
+      <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} products={products} onEditItem={handleEditItem} />
+
+      {/* Etapa opcional: que tal completar seu pedido? (só após lanche novo) */}
+      <Dialog open={sideOpen} onOpenChange={(v) => { if (!v) handleCloseSide(); }}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Que tal completar seu pedido?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground -mt-1">Opcional — seu lanche já está no carrinho.</p>
+          <div className="grid gap-3 sm:grid-cols-2 mt-3">
+            {sideDishes.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => handlePickSide(p)}
+                className="flex gap-3 rounded-2xl border border-border bg-card p-3 text-left hover:shadow-md transition-shadow"
+              >
+                {p.image_url ? (
+                  <Image src={p.image_url} fittingType="fill" className="h-16 w-16 rounded-xl shrink-0" alt={p.name} />
+                ) : (
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-muted">
+                    <Package className="h-6 w-6 text-muted-foreground" />
+                  </div>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-heading font-semibold text-sm">{p.name}</span>
+                  {p.description && (
+                    <span className="block text-xs text-muted-foreground line-clamp-2 mt-0.5">{p.description}</span>
+                  )}
+                  <span className="block font-heading font-bold text-sm mt-1" style={{ color: primaryColor }}>
+                    {fmtCurrency(p.promotional_price ?? p.price)}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2 mt-4">
+            <Button variant="outline" className="flex-1 min-h-11" onClick={handleCloseSide}>
+              Continuar sem adicionais
+            </Button>
+            <Button className="flex-1 min-h-11" style={{ backgroundColor: primaryColor }} onClick={handleCloseSide}>
+              Continuar pedido
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Personalização do acompanhamento (volta à lista ao fechar) */}
+      <ProductModal
+        key={sideProduct ? `side-${sideProduct.id}` : 'side-none'}
+        product={sideProduct}
+        primaryColor={primaryColor}
+        isOpen={!!sideProduct}
+        onClose={() => setSideProduct(null)}
+        onAddToCart={handleAddToCart}
+        initialItem={null}
+      />
     </div>
   );
 }

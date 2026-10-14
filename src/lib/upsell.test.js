@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeName, isAvailableProduct, hasConfigurableOptions, suggestUpsell,
-  UPSELL_STEP_ORDER, suggestUpsellSteps,
+  UPSELL_STEP_ORDER, suggestUpsellSteps, guideMessageFor,
 } from './upsell.js';
 
 const cats = [
@@ -132,5 +132,14 @@ describe('upsell — jornada por etapas (Fase B)', () => {
       cartItems: [],
     });
     assert.deepEqual(steps.map((s) => s.id), ['drinks']);
+  });
+});
+
+describe('upsell — guideMessageFor', () => {
+  it('mensagens curtas por secao', () => {
+    assert.equal(guideMessageFor('drinks'), 'Que tal uma bebida para acompanhar?');
+    assert.equal(guideMessageFor('desserts'), 'Deseja incluir uma sobremesa, como açaí?');
+    assert.equal(guideMessageFor('related', 'Combinam'), 'Combinam');
+    assert.equal(guideMessageFor('unknown'), 'Que tal completar seu pedido?');
   });
 });

@@ -120,3 +120,11 @@ export function suggestUpsellSteps({ products = [], categories = [], cartItems =
   }
   return steps;
 }
+
+// Mensagem conversacional da orientação no checkout (pura, testável).
+// Curta, contextual e não invasiva; dispensa não bloqueia o fluxo.
+export function guideMessageFor(sectionId, fallbackTitle) {
+  if (sectionId === 'drinks') return 'Que tal uma bebida para acompanhar?';
+  if (sectionId === 'desserts') return 'Deseja incluir uma sobremesa, como açaí?';
+  return fallbackTitle || 'Que tal completar seu pedido?';
+}

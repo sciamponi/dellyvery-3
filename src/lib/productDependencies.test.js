@@ -152,6 +152,59 @@ describe('productDependencies — montagem do pedido (Gate 3)', () => {
   });
 });
 
+describe('productDependencies — regressão: Burguer XD × Batata média (IDs reais)', () => {
+  // Regra configurada: Batata média (540cf78c) exige Burguer (10671f40).
+  // Burguer XD (9bbd5779) é OUTRO produto: não satisfaz a regra.
+  // Enfraquecer o matching (nome/categoria) mudaria o sentido de regras
+  // já configuradas — por isso o ID exato é preservado aqui e no servidor.
+  const BATATA_ID = '540cf78c-426f-4845-a4df-0302ffacce99';
+  const BURGUER_ID = '10671f40-3e2e-4bae-976f-7b593374399b';
+  const XD_ID = '9bbd5779-2f29-4d8c-92ab-54bc182c5f8a';
+  const realRules = [
+    { product_id: BATATA_ID, product_name: 'Batata média', requires_product_id: BURGUER_ID, requires_name: 'Burguer', active: true },
+  ];
+
+  it('2 Burguer XD + Batata: bloqueia com a mensagem exata do servidor', () => {
+    const errs = checkCartDependencies(
+      [{ product_id: XD_ID, quantity: 2 }, { product_id: BATATA_ID, quantity: 1 }],
+      realRules,
+    );
+    assert.equal(errs.length, 1);
+    assert.equal(errs[0].message, 'Batata média exige Burguer no pedido');
+  });
+
+  it('Burguer (o configurado) + Batata: permite sem aviso, qualquer quantidade', () => {
+    assert.deepEqual(checkCartDependencies(
+      [{ product_id: BURGUER_ID, quantity: 2 }, { product_id: BATATA_ID, quantity: 1 }],
+      realRules,
+    ), []);
+    assert.deepEqual(checkCartDependencies(
+      [{ product_id: BURGUER_ID, quantity: 1 }, { product_id: BATATA_ID, quantity: 3 }],
+      realRules,
+    ), []);
+  });
+
+  it('remoção do Burguer revalida a Batata órfã (sem remover nada)', () => {
+    const cart = [
+      { product_id: BURGUER_ID, quantity: 1 },
+      { product_id: BATATA_ID, quantity: 1 },
+    ];
+    assert.deepEqual(checkCartDependencies(cart, realRules), []);
+    const snapshot = JSON.parse(JSON.stringify(cart));
+    const afterRemove = [cart[1]];
+    assert.equal(checkCartDependencies(afterRemove, realRules).length, 1);
+    assert.deepEqual(cart, snapshot);
+  });
+
+  it('regra inativa não bloqueia nem o cenário do screenshot', () => {
+    const off = [{ ...realRules[0], active: false }];
+    assert.deepEqual(checkCartDependencies(
+      [{ product_id: XD_ID, quantity: 2 }, { product_id: BATATA_ID, quantity: 1 }],
+      off,
+    ), []);
+  });
+});
+
 describe('productDependencies — modo all (combos)', () => {
   const comboRules = [
     { product_id: 'combo', product_name: 'Combo Hambúrguer', requires_product_id: BURGUER, requires_name: 'Lanche', active: true },

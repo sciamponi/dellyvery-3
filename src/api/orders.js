@@ -208,10 +208,14 @@ export function buildCreateOrderItems(cartItems) {
 export async function createOrder(client, {
   companySlug, orderType = 'delivery', tableNumber = '', tableId = null, tableToken = null, items = [],
   customer = {}, deliveryZoneId = null, paymentMethod = '', notes = '',
-  source = 'online', changeFor = null,
+  source = 'online', changeFor = null, latitude = null, longitude = null,
 }) {
   const c = mustBeConfigured(client);
   if (!companySlug) throw new Error('Empresa não identificada');
+  // Coordenadas (GPS/geocodificação, opcionais): o servidor resolve a zona
+  // pelo polígono e recalcula a taxa — nunca confia em taxa do cliente.
+  const lat = latitude === '' || latitude == null ? null : Number(latitude);
+  const lng = longitude === '' || longitude == null ? null : Number(longitude);
   const { data, error } = await c.rpc('create_order', {
     p_company_slug: companySlug,
     p_order_type: orderType,
@@ -232,6 +236,8 @@ export async function createOrder(client, {
       zip_code: customer.zip_code || '',
     },
     p_delivery_zone_id: deliveryZoneId || null,
+    p_lat: lat,
+    p_lng: lng,
     p_payment_method: paymentMethod || null,
     p_notes: notes || null,
     // FASE 2: origem do pedido. 'balcao' (PDV interno) nunca é bloqueado

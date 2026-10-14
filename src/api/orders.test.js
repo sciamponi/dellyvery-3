@@ -715,4 +715,34 @@ describe('orders — dependências entre produtos (Gate 3, servidor é autoridad
     });
     assert.equal(out.order_number, 1);
   });
+
+  it('coordenadas opcionais seguem para resolução por polígono (sem taxa do cliente)', async () => {
+    const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
+    await createOrder(client, {
+      companySlug: 'loja', orderType: 'delivery',
+      items: [{ product_id: 'p', quantity: 1 }], customer: {},
+      latitude: -23.55, longitude: -46.63,
+    });
+    const args = client.calls.rpc[0].args;
+    assert.equal(args.p_lat, -23.55);
+    assert.equal(args.p_lng, -46.63);
+    assert.ok(!('total' in args) && !('delivery_fee' in args) && !('fee' in args));
+    // Ausentes viram null (fluxo legado por zona manual).
+    const c2 = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
+    await createOrder(c2, { companySlug: 'loja', items: [{ product_id: 'p', quantity: 1 }], customer: {} });
+    assert.equal(c2.calls.rpc[0].args.p_lat, null);
+    assert.equal(c2.calls.rpc[0].args.p_lng, null);
+  });
+
+  it('rejeição de zona do servidor propaga com mensagem clara', async () => {
+    const outside = createMockClient({ rpcs: { create_order: { data: null, error: { message: 'Endereço fora da área de entrega' } } } });
+    await assert.rejects(
+      createOrder(outside, {
+        companySlug: 'loja', orderType: 'delivery',
+        items: [{ product_id: 'p', quantity: 1 }], customer: {},
+        latitude: 0, longitude: 0,
+      }),
+      /fora da área/,
+    );
+  });
 });

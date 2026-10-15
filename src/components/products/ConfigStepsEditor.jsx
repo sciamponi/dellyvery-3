@@ -7,6 +7,7 @@ import {
   listIngredients,
 } from '@/api/configurator';
 import { validateConfigStep, validateConfigOption } from '@/lib/configEditor';
+import { buildDuplicateOption, neighborSwapTargets } from '@/lib/configAssembly';
 import { listProducts as sbListProducts } from '@/api/catalog';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -15,7 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/components/ui/use-toast';
-import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, X, Check } from 'lucide-react';
+import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, X, Check, Copy, ArrowUp, ArrowDown } from 'lucide-react';
 
 // Montagem V2 por produto OU por categoria: grupos (steps) + opções
 // associadas por seleção (ingrediente ou produto existente — sem
@@ -40,6 +41,8 @@ export default function ConfigStepsEditor({ companyId, productId, categoryId, pr
   const [assocDraft, setAssocDraft] = useState(null);
   const [editingOption, setEditingOption] = useState(null);
   const [optionForm, setOptionForm] = useState(null);
+  // Busca dentro do grupo expandido (só filtra a lista associada).
+  const [optQuery, setOptQuery] = useState('');
 
   const load = async () => {
     if (!companyId || !scope.id) return;
@@ -232,6 +235,44 @@ export default function ConfigStepsEditor({ companyId, productId, categoryId, pr
     }
   };
 
+  // Duplica a opção no MESMO grupo com novo id, sem levar vínculos além
+  // da origem (ingredient_id XOR product_id, como na criação). A cópia
+  // nasce inativa para revisão antes de ir ao ar.
+  const handleDuplicateOption = async (stepId, opt, siblings) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const { data, error } = buildDuplicateOption({ ...opt, step_id: stepId }, siblings);
+      if (error) throw new Error(error);
+      await createOption(supabase, data);
+      toast({ title: 'Opção duplicada (inativa para revisão)!' });
+      await refreshOptions(stepId);
+    } catch (e) {
+      toast({ title: 'Erro ao duplicar', description: e?.message, variant: 'destructive' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Reordena opções trocando sort_order com o vizinho (mesmo padrão do
+  // moveStep; falha parcial só recarrega sem corromper a ordem).
+  const handleMoveOption = async (stepId, siblings, index, dir) => {
+    const targets = neighborSwapTargets(siblings, index, dir);
+    if (busy || !targets) return;
+    setBusy(true);
+    try {
+      for (const t of targets) {
+        await updateOption(supabase, t.id, { sort_order: t.sort_order });
+      }
+      await refreshOptions(stepId);
+    } catch (e) {
+      toast({ title: 'Erro ao reordenar', description: e?.message, variant: 'destructive' });
+      await refreshOptions(stepId).catch(() => {});
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (loading) return <p className="text-sm text-muted-foreground text-center py-6">Carregando montagem...</p>;
 
   return (
@@ -257,7 +298,7 @@ export default function ConfigStepsEditor({ companyId, productId, categoryId, pr
                 aria-label={s.active !== false ? `Inativar grupo ${s.title}` : `Ativar grupo ${s.title}`}
                 className="shrink-0"
               />
-              <button type="button" onClick={() => setExpanded(isOpen ? null : s.id)} className="flex flex-1 min-w-0 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg" aria-expanded={isOpen}>
+              <button type="button" onClick={() => { setExpanded(isOpen ? null : s.id); setOptQuery(''); }} className="flex flex-1 min-w-0 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg" aria-expanded={isOpen}>
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium truncate">
                     {s.title}
@@ -281,7 +322,17 @@ export default function ConfigStepsEditor({ companyId, productId, categoryId, pr
               <div className="border-t border-border px-3 py-3 space-y-2">
                 <p className="text-xs text-muted-foreground">Opções do grupo (preço = adicional)</p>
                 {opts.length === 0 && <p className="text-xs text-muted-foreground">Sem opções — associe abaixo.</p>}
-                {opts.map((o) => (
+                {opts.length > 1 && (
+                  <Input value={optQuery} onChange={(e) => setOptQuery(e.target.value)} placeholder="Buscar nesta área..." className="h-8 text-sm" aria-label="Buscar opções do grupo" />
+                )}
+                {opts
+                  .filter((o) => {
+                    const q = optQuery.trim().toLowerCase();
+                    return !q || (o.name || '').toLowerCase().includes(q);
+                  })
+                  .map((o) => {
+                    const visibleIdx = opts.indexOf(o);
+                    return (
                   <div key={o.id} className={`rounded-lg border border-border px-2.5 py-2 ${o.active === false ? 'opacity-60' : ''}`}>
                     {editingOption?.id === o.id ? (
                       <div className="space-y-2">
@@ -309,7 +360,11 @@ export default function ConfigStepsEditor({ companyId, productId, categoryId, pr
                     ) : (
                       <div className="flex items-center gap-2">
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">{o.name} <span className="text-muted-foreground font-normal">+R$ {Number(o.price || 0).toFixed(2)}</span></p>
+                          <p className="text-sm font-medium truncate">{o.name}{' '}
+                            <span className="text-muted-foreground font-normal">
+                              {Number(o.price) > 0 ? `+R$ ${Number(o.price).toFixed(2)}` : 'Grátis'}
+                            </span>
+                          </p>
                           {o.description && <p className="text-[11px] text-muted-foreground truncate">{o.description}</p>}
                         </div>
                         {/* Seleção da opção: reutiliza o cadastro, sem duplicar. */}
@@ -319,12 +374,16 @@ export default function ConfigStepsEditor({ companyId, productId, categoryId, pr
                           aria-label={o.active !== false ? `Inativar ${o.name}` : `Ativar ${o.name}`}
                           className="shrink-0"
                         />
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0" disabled={visibleIdx === 0} onClick={() => handleMoveOption(s.id, opts, visibleIdx, -1)} aria-label="Subir opção"><ArrowUp className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0" disabled={visibleIdx === opts.length - 1} onClick={() => handleMoveOption(s.id, opts, visibleIdx, +1)} aria-label="Descer opção"><ArrowDown className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0" onClick={() => handleDuplicateOption(s.id, o, opts)} aria-label="Duplicar opção"><Copy className="h-3.5 w-3.5" /></Button>
                         <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0" onClick={() => openEditOption(o)} aria-label="Editar opção"><Pencil className="h-3.5 w-3.5" /></Button>
                         <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0 text-destructive" onClick={() => handleDeleteOption(s.id, o)} aria-label="Remover opção"><Trash2 className="h-4 w-4" /></Button>
                       </div>
                     )}
                   </div>
-                ))}
+                    );
+                  })}
                 {/* Associar existente */}
                 {!assocDraft || assocDraft.step_id !== s.id ? (
                   <div className="space-y-2 rounded-lg bg-muted/40 p-2.5">

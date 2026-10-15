@@ -40,9 +40,18 @@ export async function listIngredients(client, companyId) {
   return (data || []).map((r) => ({
     id: r.id, company_id: r.company_id, name: r.name || '',
     description: r.description || '', image_url: r.image_url || '',
+    // category: seção manual (migration 20261030); ausente pré-migration => ''.
+    category: typeof r.category === 'string' ? r.category : '',
     active: r.active !== false,
     sort_order: r.sort_order ?? 0,
   }));
+}
+
+// Coluna inexistente (migration de seção ainda não aplicada): PostgREST
+// 42703 ou PGRST204. Permite degradar sem ocultar a mensagem original.
+function isMissingColumn(error) {
+  const msg = `${error?.message || ''} ${error?.code || ''} ${error?.details || ''}`;
+  return /42703|does not exist|PGRST204|could not find/i.test(msg);
 }
 
 export async function createIngredient(client, companyId, data) {
@@ -58,9 +67,20 @@ export async function createIngredient(client, companyId, data) {
     active: data.active !== false,
     sort_order: data.sort_order === '' || data.sort_order == null ? 0 : Number(data.sort_order),
   };
-  const { data: row, error } = await c.from('ingredients').insert(payload).select().single();
-  if (error) rpcError(error);
-  return row;
+  const category = String(data.category || '').trim().toLowerCase();
+  if (category) payload.category = category;
+  try {
+    const { data: row, error } = await c.from('ingredients').insert(payload).select().single();
+    if (error) throw error;
+    return row;
+  } catch (err) {
+    // Migration de seção ainda não aplicada: tenta sem a coluna.
+    if (!category || !isMissingColumn(err)) rpcError(err);
+    const { category: _dropped, ...legacy } = payload;
+    const { data: row, error } = await c.from('ingredients').insert(legacy).select().single();
+    if (error) rpcError(error);
+    return row;
+  }
 }
 
 export async function updateIngredient(client, id, data) {
@@ -74,10 +94,19 @@ export async function updateIngredient(client, id, data) {
   if (data.image_url !== undefined) patch.image_url = data.image_url ? String(data.image_url).trim() : null;
   if (data.active !== undefined) patch.active = !!data.active;
   if (data.sort_order !== undefined) patch.sort_order = Number(data.sort_order) || 0;
+  if (data.category !== undefined) patch.category = String(data.category || '').trim().toLowerCase();
   if (patch.name !== undefined && patch.name === '') throw new Error('Nome do ingrediente é obrigatório');
-  const { data: row, error } = await c.from('ingredients').update(patch).eq('id', id).select().single();
-  if (error) rpcError(error);
-  return row;
+  try {
+    const { data: row, error } = await c.from('ingredients').update(patch).eq('id', id).select().single();
+    if (error) throw error;
+    return row;
+  } catch (err) {
+    if (patch.category === undefined || !isMissingColumn(err)) rpcError(err);
+    const { category: _dropped, ...legacy } = patch;
+    const { data: row, error } = await c.from('ingredients').update(legacy).eq('id', id).select().single();
+    if (error) rpcError(error);
+    return row;
+  }
 }
 
 export async function deleteIngredient(client, id) {

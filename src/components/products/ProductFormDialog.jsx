@@ -16,17 +16,18 @@ import {
   listSteps as sbListSteps, createStep as sbCreateStep,
   listOptions as sbListOptions, createOption as sbCreateOption,
   updateOption as sbUpdateOption, deleteOption as sbDeleteOption,
-  listIngredients as sbListIngredients,
+  listIngredients as sbListIngredients, createIngredient as sbCreateIngredient,
 } from '@/api/configurator';
 import { QUICK_GROUP_TITLE, findQuickStep, buildQuickRows } from '@/lib/quickExtras';
-import { Upload, Loader2, X, Package, Search } from 'lucide-react';
+import { INGREDIENT_SECTIONS, groupRowsBySection, validateNewIngredient } from '@/lib/ingredientSections';
+import { Upload, Loader2, X, Package, Search, Plus, ChevronDown, ChevronUp } from 'lucide-react';
 
 const MAX_IMAGE_MB = 5;
 
 function Section({ title, children }) {
   return (
-    <section className="rounded-xl border border-border bg-muted/30 p-3">
-      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">{title}</h3>
+    <section className="rounded-xl border border-border bg-muted/30 p-2.5">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{title}</h3>
       {children}
     </section>
   );
@@ -80,6 +81,14 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
   const [quickBusy, setQuickBusy] = useState(false);
   const [priceDraft, setPriceDraft] = useState({});
   const [refreshKey, setRefreshKey] = useState(0);
+  // Cadastro rápido de ingrediente (só biblioteca desta empresa; preço
+  // adicional vale para a associação a ESTE produto, se marcada).
+  const [showAddIng, setShowAddIng] = useState(false);
+  const [newIng, setNewIng] = useState({ name: '', category: '', price: '', active: true, associate: true });
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState('');
+  // Seções recolhidas por id (padrão: todas expandidas).
+  const [collapsedSections, setCollapsedSections] = useState({});
 
   const loadQuick = async () => {
     if (!open || !companyId || !product?.id) {
@@ -169,6 +178,46 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
       const q = quickSearch.trim().toLowerCase();
       return !q || (r.ingredient.name || '').toLowerCase().includes(q);
     });
+  const quickGroups = groupRowsBySection(quickRows);
+
+  const saveNewIngredient = async () => {
+    if (!product?.id || addBusy) return;
+    const err = validateNewIngredient({
+      name: newIng.name,
+      price: newIng.associate ? newIng.price : 0,
+      existingNames: quickIngredients.map((i) => i.name),
+    });
+    if (err) {
+      setAddError(err);
+      return;
+    }
+    setAddError('');
+    setAddBusy(true);
+    try {
+      const created = await sbCreateIngredient(supabase, companyId, {
+        name: newIng.name.trim(),
+        category: newIng.category || '',
+        active: newIng.active !== false,
+      });
+      if (newIng.associate) {
+        const step = await ensureQuickStep();
+        await sbCreateOption(supabase, {
+          step_id: step.id, ingredient_id: created.id, product_id: null,
+          name: created.name, description: '', price: Number(newIng.price) || 0,
+          active: true, sort_order: 0,
+        });
+      }
+      setNewIng({ name: '', category: '', price: '', active: true, associate: true });
+      setShowAddIng(false);
+      await loadQuick();
+      setRefreshKey((k) => k + 1);
+      toast({ title: `"${created.name}" cadastrado!` });
+    } catch (e) {
+      setAddError(e?.message || 'Erro ao cadastrar ingrediente');
+    } finally {
+      setAddBusy(false);
+    }
+  };
 
   // Imagem no bucket catalog (pasta da empresa).
   const handleUpload = async (e) => {
@@ -239,7 +288,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
           <DialogTitle>{product ? 'Editar produto' : 'Novo produto'}</DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+        <div className="flex-1 overflow-y-auto px-4 sm:px-5 py-3 sm:py-4 space-y-2.5">
           {/* Topo compacto: foto + nome/categoria (lado a lado no desktop). */}
           <Section title="Produto">
             <div className="flex gap-3">
@@ -338,6 +387,75 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
               </p>
             ) : (
               <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full h-8 text-xs mb-2"
+                  disabled={quickBusy}
+                  onClick={() => { setAddError(''); setShowAddIng((v) => !v); }}
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" /> Adicionar ingrediente ou extra
+                </Button>
+                {showAddIng && (
+                  <div className="rounded-xl border border-border p-2.5 mb-2 space-y-1.5 bg-muted/30">
+                    <div>
+                      <Label htmlFor="new-ing-name">Nome *</Label>
+                      <Input
+                        id="new-ing-name"
+                        value={newIng.name}
+                        onChange={(e) => setNewIng((p) => ({ ...p, name: e.target.value }))}
+                        placeholder="Ex.: Bacon crocante"
+                        className="h-9 text-sm mt-1"
+                        maxLength={80}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-1.5">
+                      <div>
+                        <Label htmlFor="new-ing-section">Seção</Label>
+                        <Select value={newIng.category} onValueChange={(v) => setNewIng((p) => ({ ...p, category: v === '__none' ? '' : v }))}>
+                          <SelectTrigger id="new-ing-section" className="h-9 text-sm mt-1"><SelectValue placeholder="Outros" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none">Outros</SelectItem>
+                            {INGREDIENT_SECTIONS.map((s) => (
+                              <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="new-ing-price">Preço adicional (R$)</Label>
+                        <Input
+                          id="new-ing-price"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={newIng.price}
+                          onChange={(e) => setNewIng((p) => ({ ...p, price: e.target.value }))}
+                          placeholder="0,00"
+                          className="h-9 text-sm mt-1"
+                        />
+                      </div>
+                    </div>
+                    <label className="flex cursor-pointer items-center gap-2 text-[13px]">
+                      <Switch checked={!!newIng.active} onCheckedChange={(v) => setNewIng((p) => ({ ...p, active: v }))} />
+                      Disponível na biblioteca
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2 text-[13px]">
+                      <Switch checked={!!newIng.associate} onCheckedChange={(v) => setNewIng((p) => ({ ...p, associate: v }))} />
+                      Associar a este produto
+                    </label>
+                    {addError && <p className="text-xs text-destructive">{addError}</p>}
+                    <div className="flex gap-1.5">
+                      <Button type="button" size="sm" className="flex-1 h-8 px-3 text-xs" disabled={addBusy} onClick={saveNewIngredient}>
+                        {addBusy ? 'Salvando...' : 'Salvar ingrediente'}
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" className="h-8 px-3 text-xs" disabled={addBusy} onClick={() => { setShowAddIng(false); setAddError(''); }}>
+                        Cancelar
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <div className="relative mb-2">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                   <Input value={quickSearch} onChange={(e) => setQuickSearch(e.target.value)} placeholder="Buscar ingrediente..." className="pl-9 h-9 text-sm" />
@@ -345,10 +463,25 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
                 <div className="max-h-52 overflow-y-auto rounded-xl border border-border divide-y divide-border">
                   {quickRows.length === 0 ? (
                     <p className="text-xs text-muted-foreground text-center py-4">Nenhum ingrediente encontrado.</p>
-                  ) : quickRows.map((row) => {
+                  ) : quickGroups.map((g) => (
+                  <div key={g.id || 'outros'}>
+                    <button
+                      type="button"
+                      onClick={() => setCollapsedSections((prev) => ({ ...prev, [g.id]: !prev[g.id] }))}
+                      aria-expanded={!collapsedSections[g.id]}
+                      className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{g.label} ({g.rows.length})</span>
+                      {collapsedSections[g.id] ? (
+                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      )}
+                    </button>
+                    {!collapsedSections[g.id] && g.rows.map((row) => {
                     const on = !!row.option;
                     return (
-                      <div key={row.ingredient.id} className="flex items-center gap-2.5 px-3 py-2">
+                      <div key={row.ingredient.id} className="flex items-center gap-2.5 px-3 py-1.5 min-h-[44px]">
                         <button
                           type="button"
                           onClick={() => toggleQuick(row.ingredient, row)}
@@ -388,6 +521,8 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
                       </div>
                     );
                   })}
+                    </div>
+                  ))}
                 </div>
                 <p className="text-[11px] text-muted-foreground mt-2">
                   Ativação por produto: marcar aqui não altera outros produtos. Regras finas na Montagem abaixo.

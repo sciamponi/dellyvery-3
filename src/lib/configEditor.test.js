@@ -14,6 +14,13 @@ describe('configEditor — ingrediente', () => {
     assert.match(validateIngredient({ name: 'X', sort_order: -1 }), /Ordem/);
     assert.equal(validateIngredient({ name: 'X', sort_order: 2 }), null);
   });
+
+  it('seção manual restrita às 4 fixas ou vazio', () => {
+    assert.equal(validateIngredient({ name: 'X', category: '' }), null);
+    assert.equal(validateIngredient({ name: 'X' }), null);
+    assert.equal(validateIngredient({ name: 'X', category: 'bebidas' }), null);
+    assert.match(validateIngredient({ name: 'X', category: 'doce?' }), /Seção/);
+  });
 });
 
 describe('configEditor — grupo (step)', () => {

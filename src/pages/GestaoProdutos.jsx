@@ -20,7 +20,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Image } from '@/components/ui/image';
 import { useToast } from '@/components/ui/use-toast';
-import { Plus, Search, Pencil, Trash2, Package, Star, Tag, Clock } from 'lucide-react';
+import { validateQuickProductEdit, quickProductPatch } from '@/lib/productQuickEdit';
+import { Plus, Search, Pencil, Trash2, Package, Star, Tag, Clock, LayoutGrid, List } from 'lucide-react';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -44,6 +45,14 @@ export default function GestaoProdutos() {
   const [categories, setCategories] = useState([]);
   const [search, setSearch] = useState('');
   const [filterCat, setFilterCat] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [viewMode, setViewMode] = useState('cards');
+  // Edição rápida (modo lista): rascunho, erro e salvamento por id — falha
+  // em uma linha nunca descarta as outras.
+  const [editingId, setEditingId] = useState(null);
+  const [drafts, setDrafts] = useState({});
+  const [rowErrors, setRowErrors] = useState({});
+  const [savingId, setSavingId] = useState(null);
   const [productDialog, setProductDialog] = useState(false);
   const [categoryDialog, setCategoryDialog] = useState(false);
   const [editProduct, setEditProduct] = useState(null);
@@ -93,8 +102,58 @@ export default function GestaoProdutos() {
   const filteredProducts = products.filter(p => {
     const ms = !search || p.name?.toLowerCase().includes(search.toLowerCase());
     const mc = filterCat === 'all' || p.category_id === filterCat;
-    return ms && mc;
+    const st = filterStatus === 'all'
+      || (filterStatus === 'active' && !!p.available)
+      || (filterStatus === 'inactive' && !p.available);
+    return ms && mc && st;
   });
+
+  const startQuickEdit = (product) => {
+    setEditingId(product.id);
+    setDrafts((prev) => ({
+      ...prev,
+      [product.id]: {
+        name: product.name || '',
+        category_id: product.category_id || '',
+        price: product.price ?? '',
+      },
+    }));
+    setRowErrors((prev) => ({ ...prev, [product.id]: '' }));
+  };
+
+  const cancelQuickEdit = (id) => {
+    setEditingId((cur) => (cur === id ? null : cur));
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setRowErrors((prev) => ({ ...prev, [id]: '' }));
+  };
+
+  const saveQuickEdit = async (product) => {
+    const draft = drafts[product.id] || {};
+    const err = validateQuickProductEdit(draft);
+    if (err) {
+      setRowErrors((prev) => ({ ...prev, [product.id]: err }));
+      return;
+    }
+    setSavingId(product.id);
+    try {
+      const updated = await sbUpdateProduct(
+        supabase, effectiveCompany.id, product.id, quickProductPatch(draft),
+      );
+      setProducts((prev) => prev.map((p) => (
+        p.id === product.id ? { ...p, ...(updated || {}), name: draft.name.trim(), category_id: draft.category_id || null, price: Number(draft.price) } : p
+      )));
+      setEditingId(null);
+      toast({ title: 'Produto atualizado!' });
+    } catch (e) {
+      setRowErrors((prev) => ({ ...prev, [product.id]: e?.message || 'Erro ao salvar' }));
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   const openEditProduct = (product) => {
     setEditProduct(product);
@@ -191,6 +250,21 @@ export default function GestaoProdutos() {
               ))}
             </div>
           </div>
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <div className="flex gap-1.5">
+              {[['all', 'Todos'], ['active', 'Ativos'], ['inactive', 'Inativos']].map(([v, label]) => (
+                <button key={v} onClick={() => setFilterStatus(v)} className={`shrink-0 whitespace-nowrap rounded-full px-3 h-8 text-xs font-medium transition-colors border ${filterStatus === v ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-transparent hover:bg-muted/70'}`}>{label}</button>
+              ))}
+            </div>
+            <div className="ml-auto flex gap-1.5">
+              <button onClick={() => setViewMode('cards')} aria-pressed={viewMode === 'cards'} title="Modo cards" className={`flex items-center gap-1.5 rounded-full px-3 h-8 text-xs font-medium transition-colors border ${viewMode === 'cards' ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-transparent hover:bg-muted/70'}`}>
+                <LayoutGrid className="h-3.5 w-3.5" /> Cards
+              </button>
+              <button onClick={() => setViewMode('lista')} aria-pressed={viewMode === 'lista'} title="Modo lista" className={`flex items-center gap-1.5 rounded-full px-3 h-8 text-xs font-medium transition-colors border ${viewMode === 'lista' ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-transparent hover:bg-muted/70'}`}>
+                <List className="h-3.5 w-3.5" /> Lista
+              </button>
+            </div>
+          </div>
 
           {filteredProducts.length === 0 ? (
             <div className="text-center py-16">
@@ -205,6 +279,22 @@ export default function GestaoProdutos() {
                 </Button>
               )}
             </div>
+          ) : viewMode === 'lista' ? (
+            <ProductListTable
+              products={filteredProducts}
+              categories={categories}
+              editingId={editingId}
+              drafts={drafts}
+              rowErrors={rowErrors}
+              savingId={savingId}
+              onStartEdit={startQuickEdit}
+              onCancelEdit={cancelQuickEdit}
+              onDraftChange={(id, field, value) => setDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } }))}
+              onSave={saveQuickEdit}
+              onToggle={toggleAvailable}
+              onEditFull={openEditProduct}
+              onDelete={(p) => setDeleteTarget({ type: 'product', id: p.id, name: p.name })}
+            />
           ) : (
             <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filteredProducts.map(product => {
@@ -404,6 +494,140 @@ export default function GestaoProdutos() {
           <IngredientsManager companyId={company.id} />
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// Modo lista: tabela compacta para edição rápida. Edição por linha com
+// estado próprio (rascunho/erro/salvamento por id): falha em uma linha
+// nunca descarta as outras. "Vinculado a" reflete vínculos reais:
+// categoria comercial + origem da montagem (flag use_category_steps).
+function ProductListTable({
+  products, categories, editingId, drafts, rowErrors, savingId,
+  onStartEdit, onCancelEdit, onDraftChange, onSave, onToggle, onEditFull, onDelete,
+}) {
+  const catOf = (p) => categories.find((c) => c.id === p.category_id);
+  return (
+    <div className="overflow-x-auto rounded-xl border border-border">
+      <table className="w-full min-w-[760px] text-sm">
+        <thead>
+          <tr className="bg-muted/60 text-left text-xs uppercase tracking-wider text-muted-foreground">
+            <th className="px-3 py-2 font-semibold">Produto</th>
+            <th className="px-3 py-2 font-semibold">Categoria</th>
+            <th className="px-3 py-2 font-semibold text-right">Preço</th>
+            <th className="px-3 py-2 font-semibold text-center">Ativo</th>
+            <th className="px-3 py-2 font-semibold">Vinculado a</th>
+            <th className="px-3 py-2 font-semibold text-right">Ações</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {products.map((p) => {
+            const editing = editingId === p.id;
+            const draft = drafts[p.id] || {};
+            const cat = catOf(p);
+            return (
+              <tr key={p.id} className="align-middle hover:bg-muted/30">
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {p.image_url ? (
+                      <Image src={p.image_url} fittingType="fill" className="h-9 w-9 rounded-lg shrink-0 object-cover" alt={p.name} />
+                    ) : (
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+                        <Package className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    )}
+                    {editing ? (
+                      <Input
+                        value={draft.name ?? ''}
+                        onChange={(e) => onDraftChange(p.id, 'name', e.target.value)}
+                        className="h-8 text-sm min-w-[140px]"
+                        aria-label="Nome do produto"
+                        maxLength={80}
+                      />
+                    ) : (
+                      <span className="font-medium text-foreground truncate">{p.name}</span>
+                    )}
+                  </div>
+                  {rowErrors[p.id] && <p className="text-xs text-destructive mt-1">{rowErrors[p.id]}</p>}
+                </td>
+                <td className="px-3 py-2">
+                  {editing ? (
+                    <select
+                      value={draft.category_id ?? ''}
+                      onChange={(e) => onDraftChange(p.id, 'category_id', e.target.value)}
+                      aria-label="Categoria do produto"
+                      className="h-8 text-sm rounded-md border border-input bg-background px-2 max-w-[160px]"
+                    >
+                      <option value="">Sem categoria</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="text-muted-foreground truncate">{cat ? `${cat.icon || ''} ${cat.name}`.trim() : '—'}</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {editing ? (
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={draft.price ?? ''}
+                      onChange={(e) => onDraftChange(p.id, 'price', e.target.value)}
+                      className="h-8 w-24 text-sm text-right ml-auto"
+                      aria-label="Preço do produto"
+                    />
+                  ) : (
+                    <span className="font-semibold whitespace-nowrap">{fmtCurrency(p.promotional_price || p.price)}</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-center">
+                  <Switch checked={!!p.available} onCheckedChange={() => onToggle(p)} aria-label={p.available ? 'Desativar produto' : 'Ativar produto'} />
+                </td>
+                <td className="px-3 py-2">
+                  <span className="text-xs text-muted-foreground">
+                    {cat ? cat.name : 'Sem categoria'}
+                    {p.use_category_steps ? ' • montagem da categoria' : ' • montagem própria'}
+                  </span>
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex justify-end gap-1">
+                    {editing ? (
+                      <>
+                        <Button size="sm" className="h-8 text-xs" disabled={savingId === p.id} onClick={() => onSave(p)}>
+                          {savingId === p.id ? 'Salvando...' : 'Salvar'}
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-8 text-xs" disabled={savingId === p.id} onClick={() => onCancelEdit(p.id)}>
+                          Cancelar
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => onStartEdit(p)}>
+                          <Pencil className="h-3.5 w-3.5" /> Editar
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => onEditFull(p)}>
+                          Completo
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                          aria-label={`Excluir ${p.name}`}
+                          onClick={() => onDelete(p)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

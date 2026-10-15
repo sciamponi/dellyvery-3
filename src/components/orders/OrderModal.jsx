@@ -125,6 +125,10 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   // Histórico do pedido: recolhido por padrão (expande/recolhe sem perder dados).
   const [historyOpen, setHistoryOpen] = useState(false);
 
+  // Histórico do cliente: recolhido por padrão, independente do histórico
+  // do pedido (expandir um nunca abre/fecha o outro).
+  const [custHistoryOpen, setCustHistoryOpen] = useState(false);
+
   // Fotos dos produtos + histórico do cliente (2 consultas, com cancelamento).
   useEffect(() => {
     if (!order || !isOpen) return;
@@ -142,6 +146,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setPrintPrompt(null);
     setComandaDraft('');
     setHistoryOpen(false);
+    setCustHistoryOpen(false);
     setNotifyPrompt(null);
     setNotifyMsg('');
     notifyShownRef.current = '';
@@ -1084,9 +1089,25 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
               </div>
             )}
 
-            {/* Customer history: OUTROS pedidos do cliente, um card por pedido */}
+            {/* Customer history: OUTROS pedidos do cliente, um card por pedido.
+                Recolhido por padrão, mesmo padrão do histórico do pedido. */}
             <div className="pt-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Histórico do cliente</p>
+              <button
+                type="button"
+                onClick={() => setCustHistoryOpen((v) => !v)}
+                aria-expanded={custHistoryOpen}
+                aria-label={custHistoryOpen ? 'Recolher histórico do cliente' : 'Expandir histórico do cliente'}
+                className="flex w-full items-center justify-between gap-2 rounded-lg py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Histórico do cliente</span>
+                {custHistoryOpen ? (
+                  <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                )}
+              </button>
+              {custHistoryOpen && (
+              <div className="mt-1">
               <p className="text-xs text-muted-foreground mb-2">Pedidos anteriores</p>
               {extraLoading ? (
                 <p className="text-sm text-muted-foreground">Carregando...</p>
@@ -1115,6 +1136,8 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                     </button>
                   ))}
                 </div>
+              )}
+              </div>
               )}
             </div>
           </div>

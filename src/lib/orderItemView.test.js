@@ -6,6 +6,7 @@ import {
   groupComplements,
   complementsTotal,
   itemsComplementsTotal,
+  itemNavState,
 } from './orderItemView.js';
 
 const fmt = (v) => `R$${Number(v).toFixed(2)}`;
@@ -47,5 +48,13 @@ describe('orderItemView — gratuitos e formatação', () => {
       { complements: [{ price: 0, quantity: 3 }] },
       {},
     ]), 2);
+  });
+
+  it('navegação entre itens respeita limites', () => {
+    assert.deepEqual(itemNavState(0, 3), { valid: true, count: 3, hasPrev: false, hasNext: true, prevIdx: -1, nextIdx: 1 });
+    assert.deepEqual(itemNavState(2, 3).hasNext, false);
+    assert.deepEqual(itemNavState(1, 3), { valid: true, count: 3, hasPrev: true, hasNext: true, prevIdx: 0, nextIdx: 2 });
+    assert.equal(itemNavState(0, 0).valid, false);
+    assert.equal(itemNavState(null, 3).valid, false);
   });
 });

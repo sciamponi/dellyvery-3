@@ -13,7 +13,7 @@ import PrintPromptModal from '@/components/orders/PrintPromptModal';
 import { normalizePrintSettings, markPrinted } from '@/lib/printSettings';
 import { decidePrintTrigger, openPrintWindow, printUrl, PRINT_FAILURE_MESSAGE } from '@/lib/printTrigger';
 import { formatAddress, resolveAdvanceFlow } from '@/lib/deliveryRoute';
-import { groupComplements, isFreeComplement, itemsComplementsTotal } from '@/lib/orderItemView';
+import { groupComplements, isFreeComplement, itemsComplementsTotal, itemNavState } from '@/lib/orderItemView';
 import { listDrivers } from '@/api/team';
 import { assignDriver as sbAssignDriver } from '@/api/orders';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
@@ -128,6 +128,11 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   // Histórico do cliente: recolhido por padrão, independente do histórico
   // do pedido (expandir um nunca abre/fecha o outro).
   const [custHistoryOpen, setCustHistoryOpen] = useState(false);
+  // Itens: recolhe acima de 3; detalhe do item e resumo financeiro em
+  // painéis secundários (nunca trocam de pedido).
+  const [itemsOpen, setItemsOpen] = useState(false);
+  const [selectedItemIdx, setSelectedItemIdx] = useState(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
 
   // Fotos dos produtos + histórico do cliente (2 consultas, com cancelamento).
   useEffect(() => {
@@ -147,6 +152,9 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setComandaDraft('');
     setHistoryOpen(false);
     setCustHistoryOpen(false);
+    setItemsOpen(false);
+    setSelectedItemIdx(null);
+    setSummaryOpen(false);
     setNotifyPrompt(null);
     setNotifyMsg('');
     notifyShownRef.current = '';
@@ -626,22 +634,27 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
 
   const busy = saving || statusAction !== null;
 
+  // Painel do item: navega SÓ entre itens deste pedido (nunca troca de pedido).
+  const itemNav = itemNavState(selectedItemIdx, (order?.items || []).length);
+  const selectedItem = itemNav.valid ? order.items[selectedItemIdx] : null;
+  const selectedItemPhoto = selectedItem?.product_id ? photoMap[selectedItem.product_id] : null;
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="w-[calc(100vw-2rem)] max-w-lg max-h-[90vh] overflow-hidden p-0 gap-0 flex flex-col">
-        <DialogHeader className="shrink-0 px-4 pt-4 sm:px-6 sm:pt-6">
+        <DialogHeader className="shrink-0 px-4 pt-3 sm:px-6 sm:pt-4">
           <button
             type="button"
             onClick={onClose}
             aria-label="Voltar ao Kanban"
-            className="mb-2 inline-flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md"
+            className="mb-1 inline-flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md"
           >
             <ArrowLeft className="h-4 w-4" /> Voltar
           </button>
           <DialogTitle className="flex flex-wrap items-end justify-between gap-2 pr-6">
             <span>
               <span className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pedido</span>
-              <span className="font-heading text-3xl font-bold">#{order.order_number}</span>
+              <span className="font-heading text-2xl font-bold">#{order.order_number}</span>
               {order.created_date && (
                 <span className="block text-xs text-muted-foreground mt-0.5">
                   {new Date(order.created_date).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
@@ -657,8 +670,9 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
         {!editMode ? (
           <>
           <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4 space-y-5">
-            {/* Customer */}
-            <div className="rounded-2xl bg-muted/50 p-4 space-y-1.5">
+            {/* Cliente + operação: duas colunas no desktop, empilhadas no mobile. */}
+            <div className="grid gap-3 md:grid-cols-2">
+            <div className="rounded-2xl bg-muted/50 p-3.5 space-y-1.5">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Cliente</p>
               <p className="font-heading text-xl font-bold text-foreground break-words">{order.customer_name}</p>
               {order.customer_id && order.status !== 'cancelado' && histOk &&
@@ -702,6 +716,11 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                   </span>
                 </button>
               )}
+            </div>
+            {(order.order_type === 'retirada' || order.order_type === 'mesa'
+              || (order.status !== 'finalizado' && order.status !== 'cancelado' && sbActive)) && (
+            <div className="rounded-2xl bg-muted/50 p-3.5 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Vínculos e operação</p>
               {order.status !== 'finalizado' && order.status !== 'cancelado' && sbActive && (
                 <div className="rounded-xl border border-border p-3 space-y-2">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">🔗 Vínculos</p>
@@ -968,31 +987,51 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                 </p>
               )}
             </div>
+            )}
+            </div>
 
-            {/* Items */}
+            {/* Items: compactos; acima de 3, recolhe com expansão. Clique abre o detalhe. */}
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                Itens ({order.items?.length || 0})
-              </p>
-              <div className="space-y-2">
-                {order.items?.map((item, i) => {
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Itens do pedido ({order.items?.length || 0})
+                </p>
+                {(order.items?.length || 0) > 3 && (
+                  <button
+                    type="button"
+                    onClick={() => setItemsOpen((v) => !v)}
+                    aria-expanded={itemsOpen}
+                    className="text-xs font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+                  >
+                    {itemsOpen ? 'Ver menos' : `Ver todos (${order.items.length})`}
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                {(itemsOpen || (order.items?.length || 0) <= 3 ? (order.items || []) : (order.items || []).slice(0, 3)).map((item, i) => {
                   const photo = item.product_id ? photoMap[item.product_id] : null;
                   return (
-                    <div key={i} className="flex gap-3 rounded-2xl border border-border bg-card p-3">
+                    <button
+                      key={item.id || i}
+                      type="button"
+                      onClick={() => setSelectedItemIdx((order.items || []).indexOf(item))}
+                      aria-label={`Ver detalhes de ${item.name}`}
+                      className="flex w-full gap-2.5 rounded-2xl border border-border bg-card p-2.5 text-left transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
                       {photo ? (
-                        <Image src={photo} fittingType="fill" className="h-16 w-16 sm:h-20 sm:w-20 rounded-xl shrink-0 object-cover" alt={item.name} />
+                        <Image src={photo} fittingType="fill" className="h-14 w-14 sm:h-16 sm:w-16 rounded-xl shrink-0 object-cover" alt="" />
                       ) : (
-                        <div className="flex h-16 w-16 sm:h-20 sm:w-20 shrink-0 items-center justify-center rounded-xl bg-muted">
-                          <Package className="h-7 w-7 text-muted-foreground" />
+                        <div className="flex h-14 w-14 sm:h-16 sm:w-16 shrink-0 items-center justify-center rounded-xl bg-muted">
+                          <Package className="h-6 w-6 text-muted-foreground" />
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-foreground break-words leading-snug">{item.name}</p>
-                        <p className="text-sm text-muted-foreground mt-0.5">
+                        <p className="font-semibold text-foreground break-words leading-snug text-sm">{item.name}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
                           {item.quantity} {item.quantity === 1 ? 'unidade' : 'unidades'} • {fmtCurrency(item.unit_price)} cada
                         </p>
                         {item.complements && item.complements.length > 0 && (
-                          <div className="mt-1.5 space-y-1">
+                          <div className="mt-1 space-y-0.5">
                             {groupComplements(item.complements).map((g, gi) => (
                               <p key={gi} className="text-xs text-muted-foreground break-words">
                                 <span className="font-semibold">{g.group}: </span>
@@ -1007,25 +1046,33 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                             ))}
                           </div>
                         )}
-                        {item.notes && <p className="text-xs text-muted-foreground italic mt-1 break-words">📝 {item.notes}</p>}
+                        {item.notes && <p className="text-xs text-muted-foreground italic mt-0.5 break-words">📝 {item.notes}</p>}
                       </div>
-                      <p className="text-base font-bold shrink-0 whitespace-nowrap">{fmtCurrency(item.price)}</p>
-                    </div>
+                      <p className="text-sm font-bold shrink-0 whitespace-nowrap">{fmtCurrency(item.price)}</p>
+                    </button>
                   );
                 })}
               </div>
             </div>
 
-            {/* Totals */}
-            <div className="rounded-2xl border border-border p-4 space-y-1 text-sm">
+            {/* Totals: bloco clicável abre o resumo financeiro (só conferência). */}
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setSummaryOpen(true)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSummaryOpen(true); } }}
+              aria-label="Ver resumo financeiro do pedido"
+              title="Ver resumo financeiro"
+              className="w-full text-left rounded-2xl border border-border p-3.5 space-y-1 text-sm cursor-pointer transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
               <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{fmtCurrency(order.subtotal)}</span></div>
               {itemsComplementsTotal(order.items) > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Adicionais inclusos</span><span>{fmtCurrency(itemsComplementsTotal(order.items))}</span></div>}
               {order.delivery_fee > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Taxa de entrega</span><span>{fmtCurrency(order.delivery_fee)}</span></div>}
               {order.discount > 0 && <div className="flex justify-between text-green-600"><span>Desconto</span><span>-{fmtCurrency(order.discount)}</span></div>}
               {order.change_for != null && <div className="flex justify-between"><span className="text-muted-foreground">Troco para</span><span>{fmtCurrency(order.change_for)}</span></div>}
               <div className="flex items-baseline justify-between pt-2 border-t border-border">
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total</span>
-                <span className="font-heading text-3xl font-bold">{fmtCurrency(order.total)}</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total • ver resumo</span>
+                <span className="font-heading text-2xl font-bold">{fmtCurrency(order.total)}</span>
               </div>
             </div>
 
@@ -1144,7 +1191,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
 
             {/* Actions by status */}
             {(primaryAction || cancelAction) && (
-              <div className="shrink-0 border-t border-border px-4 sm:px-6 py-3 sm:py-4">
+              <div className="shrink-0 border-t border-border px-4 sm:px-6 py-2 sm:py-3">
                 {keepStep && (
                   <div className="rounded-xl border border-border bg-muted/40 p-3 mb-3 space-y-2">
                     <p className="text-sm font-semibold text-foreground">Entregador já vinculado</p>
@@ -1462,6 +1509,130 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
           }}
         />
       )}
+
+      {/* Detalhe do item: foto, personalizações e total da linha, com
+          navegação anterior/próximo restrita aos itens DESTE pedido. */}
+      <Dialog open={!!selectedItem} onOpenChange={(open) => { if (!open) setSelectedItemIdx(null); }}>
+        <DialogContent
+          className="w-[calc(100vw-2rem)] max-w-md max-h-[90vh] overflow-y-auto"
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft' && itemNav.hasPrev) setSelectedItemIdx(itemNav.prevIdx);
+            if (e.key === 'ArrowRight' && itemNav.hasNext) setSelectedItemIdx(itemNav.nextIdx);
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle className="pr-6">
+              {selectedItem?.name}
+              <span className="block text-xs font-normal text-muted-foreground mt-0.5">
+                Item {(selectedItemIdx ?? 0) + 1} de {itemNav.count} • Pedido #{order.order_number}
+              </span>
+            </DialogTitle>
+          </DialogHeader>
+          {selectedItem && (
+            <div className="space-y-3">
+              <div className="flex gap-3">
+                {selectedItemPhoto ? (
+                  <Image src={selectedItemPhoto} fittingType="fill" className="h-24 w-24 rounded-xl shrink-0 object-cover" alt="" />
+                ) : (
+                  <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-xl bg-muted">
+                    <Package className="h-8 w-8 text-muted-foreground" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-muted-foreground">
+                    {selectedItem.quantity} {selectedItem.quantity === 1 ? 'unidade' : 'unidades'} • {fmtCurrency(selectedItem.unit_price)} cada
+                  </p>
+                  <p className="font-heading text-2xl font-bold mt-1">{fmtCurrency(selectedItem.price)}</p>
+                </div>
+              </div>
+              {(selectedItem.complements?.length || 0) > 0 && (
+                <div className="space-y-1">
+                  {groupComplements(selectedItem.complements).map((g, gi) => (
+                    <p key={gi} className="text-sm break-words">
+                      <span className="font-semibold">{g.group}: </span>
+                      <span className="text-muted-foreground">
+                        {g.items.map((c, ci) => (
+                          <span key={ci}>
+                            {ci > 0 && ', '}
+                            {Number(c.quantity) > 1 ? `${c.quantity}x ` : ''}{c.option_name || c.name}
+                            {' '}({isFreeComplement(c) ? 'Grátis' : fmtCurrency(c.price)})
+                          </span>
+                        ))}
+                      </span>
+                    </p>
+                  ))}
+                </div>
+              )}
+              {selectedItem.notes && <p className="text-sm italic text-muted-foreground break-words">📝 {selectedItem.notes}</p>}
+              <div className="flex gap-2">
+                <Button
+                  variant="outline" className="flex-1"
+                  disabled={!itemNav.hasPrev}
+                  onClick={() => setSelectedItemIdx(itemNav.prevIdx)}
+                  aria-label="Item anterior"
+                >
+                  ← Anterior
+                </Button>
+                <Button
+                  variant="outline" className="flex-1"
+                  disabled={!itemNav.hasNext}
+                  onClick={() => setSelectedItemIdx(itemNav.nextIdx)}
+                  aria-label="Próximo item"
+                >
+                  Próximo →
+                </Button>
+              </div>
+              <Button variant="ghost" className="w-full" onClick={() => setSelectedItemIdx(null)}>
+                Voltar ao pedido
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Resumo financeiro: só conferência dos valores oficiais (sem recalcular,
+          sem finalizar). Ação de avanço só se o fluxo atual permitir. */}
+      <Dialog open={summaryOpen} onOpenChange={setSummaryOpen}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-sm max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="pr-6">
+              Resumo financeiro
+              <span className="block text-xs font-normal text-muted-foreground mt-0.5">
+                Pedido #{order.order_number} • valores registrados
+              </span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-1 text-sm">
+            <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{fmtCurrency(order.subtotal)}</span></div>
+            {itemsComplementsTotal(order.items) > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Adicionais inclusos</span><span>{fmtCurrency(itemsComplementsTotal(order.items))}</span></div>}
+            {order.delivery_fee > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Taxa de entrega</span><span>{fmtCurrency(order.delivery_fee)}</span></div>}
+            {order.discount > 0 && <div className="flex justify-between text-green-600"><span>Desconto</span><span>-{fmtCurrency(order.discount)}</span></div>}
+            {order.change_for != null && <div className="flex justify-between"><span className="text-muted-foreground">Troco para</span><span>{fmtCurrency(order.change_for)}</span></div>}
+            <div className="flex items-baseline justify-between pt-2 border-t border-border">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total</span>
+              <span className="font-heading text-3xl font-bold">{fmtCurrency(order.total)}</span>
+            </div>
+            {(order.payment_method || order.payment_status) && (
+              <p className="text-sm text-muted-foreground pt-1">
+                Pagamento: <span className="font-medium text-foreground">{[order.payment_method, order.payment_status].filter(Boolean).join(' • ')}</span>
+              </p>
+            )}
+          </div>
+          {primaryAction && (
+            <Button
+              className="w-full bg-green-600 hover:bg-green-700 text-white"
+              disabled={busy}
+              onClick={() => { setSummaryOpen(false); handleStatusAction(primaryAction); }}
+              aria-label={primaryAction.label}
+            >
+              {primaryAction.label}
+            </Button>
+          )}
+          <Button variant="ghost" className="w-full" onClick={() => setSummaryOpen(false)}>
+            Fechar resumo
+          </Button>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }

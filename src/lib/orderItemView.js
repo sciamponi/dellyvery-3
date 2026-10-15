@@ -45,3 +45,21 @@ export function complementsTotal(list) {
 export function itemsComplementsTotal(items) {
   return (items || []).reduce((s, i) => s + complementsTotal(i?.complements), 0);
 }
+
+/**
+ * Estado da navegação entre itens (painel de detalhe): anterior/próximo
+ * com limites desabilitados. Não muda de pedido, só de item.
+ */
+export function itemNavState(index, length) {
+  const n = Number(length) || 0;
+  const i = index;
+  const valid = Number.isInteger(i) && i >= 0 && i < n;
+  return {
+    valid,
+    count: n,
+    hasPrev: valid && i > 0,
+    hasNext: valid && i < n - 1,
+    prevIdx: i - 1,
+    nextIdx: i + 1,
+  };
+}

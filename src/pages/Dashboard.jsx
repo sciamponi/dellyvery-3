@@ -16,6 +16,8 @@ import OrdersListModal from '@/components/orders/OrdersListModal';
 import NewOrderAlert from '@/components/orders/NewOrderAlert';
 import PdvAnnouncement, { hasSeenPdv } from '@/components/PdvAnnouncement';
 import { playNewOrderAlert, requestNotificationPermission, showOrderNotification } from '@/lib/orderSound';
+import WhatsNewModal from '@/components/WhatsNewModal';
+import { hasSeenWhatsNew } from '@/lib/whatsNew';
 import { getAlertPrefs } from '@/lib/alertPrefs';
 import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
 import { getQueueOrders, getDelayedOrders, getFinalizedByType, getCanceled, filterByDriver } from '@/lib/orderQueue';
@@ -70,6 +72,7 @@ export default function Dashboard() {
   const [alertQueue, setAlertQueue] = useState([]);
   const [highlightId, setHighlightId] = useState(null);
   const [showPdvNews, setShowPdvNews] = useState(false);
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
   const seenOrderIdsRef = useRef(new Set());
   const highlightTimerRef = useRef(null);
   const alertPrefsRef = useRef({ sound: true, visual: true });
@@ -143,7 +146,10 @@ export default function Dashboard() {
         console.error(err);
       } finally {
         setLoading(false);
+        // Avisos exibidos uma única vez por usuário (localStorage):
+        // primeiro o PDV, depois as novidades — nunca os dois juntos.
         if (!hasSeenPdv(sbUser?.id)) setShowPdvNews(true);
+        else if (!hasSeenWhatsNew(sbUser?.id)) setShowWhatsNew(true);
       }
     };
     load();
@@ -612,7 +618,11 @@ export default function Dashboard() {
           onClose={() => setAlertQueue(prev => prev.slice(1))}
         />
       )}
-      <PdvAnnouncement open={showPdvNews} userId={sbUser?.id} onClose={() => setShowPdvNews(false)} />
+      <PdvAnnouncement open={showPdvNews} userId={sbUser?.id} onClose={() => {
+        setShowPdvNews(false);
+        if (!hasSeenWhatsNew(sbUser?.id)) setShowWhatsNew(true);
+      }} />
+      <WhatsNewModal open={showWhatsNew} userId={sbUser?.id} onClose={() => setShowWhatsNew(false)} />
       {selectedOrder && (
         <OrderModal
           order={selectedOrder}

@@ -7,8 +7,8 @@ describe('updates — canal de atualizações', () => {
     assert.deepEqual(UPDATE_TABS.map(t => t.id), ['destaques', 'novidades', 'melhorias', 'correcoes', 'pagamentos', 'embreve']);
   });
 
-  it('18 itens disponíveis', () => {
-    assert.equal(UPDATES.filter(u => u.status === 'disponivel').length, 18);
+  it('26 itens disponíveis', () => {
+    assert.equal(UPDATES.filter(u => u.status === 'disponivel').length, 26);
   });
 
   it('13 itens futuros (desenvolvimento + embreve)', () => {

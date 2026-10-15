@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   validateRing, closeRing, toGeoJSON, fromGeoJSON,
   pointInPolygon, zoneContainsPoint, resolveZoneForPoint, bboxCenter,
+  displayDeliveryFee,
 } from './deliveryGeo.js';
 
 const square = [
@@ -75,5 +76,29 @@ describe('deliveryGeo — bboxCenter', () => {
     assert.deepEqual(bboxCenter(square), { lat: 5, lng: 5 });
     const fb = bboxCenter([]);
     assert.equal(fb.lat, -23.5505);
+  });
+});
+
+describe('deliveryGeo — displayDeliveryFee (estimativa honesta)', () => {
+  it('retirada/mesa zeram; zona manual é exata', () => {
+    assert.deepEqual(displayDeliveryFee({ orderType: 'retirada' }), { fee: 0, isEstimate: false });
+    assert.deepEqual(
+      displayDeliveryFee({ orderType: 'delivery', zoneFee: 7 }),
+      { fee: 7, isEstimate: false },
+    );
+  });
+
+  it('auto (polígonos + coords, sem zona manual): estimativa com taxa padrão', () => {
+    assert.deepEqual(
+      displayDeliveryFee({ orderType: 'delivery', hasPolygonZones: true, hasCoords: true, defaultFee: 5 }),
+      { fee: 5, isEstimate: true },
+    );
+  });
+
+  it('legado (sem polígonos): taxa padrão exata como antes', () => {
+    assert.deepEqual(
+      displayDeliveryFee({ orderType: 'delivery', hasPolygonZones: false, hasCoords: false, defaultFee: 5 }),
+      { fee: 5, isEstimate: false },
+    );
   });
 });

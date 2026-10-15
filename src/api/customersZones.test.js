@@ -17,6 +17,7 @@ import {
   createZone,
   updateZone,
   deleteZone,
+  validateZoneForm,
 } from './deliveryZones.js';
 
 function createMockClient({ tables = {} } = {}) {
@@ -175,4 +176,12 @@ describe('zones — CRUD', () => {
     assert.deepEqual(client.calls[1].payload, { polygon: null });
   });
 
+  it('validateZoneForm: nome e números (criar e editar usam a mesma)', () => {
+    assert.equal(validateZoneForm({ name: '  ', fee: 0 }), 'Nome é obrigatório');
+    assert.equal(validateZoneForm(null), 'Nome é obrigatório');
+    assert.equal(validateZoneForm({ name: 'Centro', fee: -1 }), 'Taxa deve ser maior ou igual a 0');
+    assert.equal(validateZoneForm({ name: 'Centro', minimum_order: 'x' }), 'Pedido mínimo deve ser maior ou igual a 0');
+    assert.equal(validateZoneForm({ name: 'Centro', estimated_time: 0 }), 'Tempo estimado deve ser maior ou igual a 1');
+    assert.equal(validateZoneForm({ name: 'Centro', fee: '5', minimum_order: '', estimated_time: '10' }), null);
+  });
 });

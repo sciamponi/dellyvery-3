@@ -52,6 +52,23 @@ export function toSupabaseZonePatch(data) {
   return out;
 }
 
+// Validação pura do formulário da zona (criar e editar usam a mesma).
+// Retorna null se válido ou a mensagem do primeiro problema.
+export function validateZoneForm(data) {
+  const d = data || {};
+  if (!String(d.name || '').trim()) return 'Nome é obrigatório';
+  for (const [key, label, min] of [
+    ['fee', 'Taxa', 0],
+    ['minimum_order', 'Pedido mínimo', 0],
+    ['estimated_time', 'Tempo estimado', 1],
+  ]) {
+    if (d[key] === undefined || d[key] === null || d[key] === '') continue;
+    const n = Number(d[key]);
+    if (!Number.isFinite(n) || n < min) return `${label} deve ser maior ou igual a ${min}`;
+  }
+  return null;
+}
+
 export async function listZones(client, companyId) {
   const c = mustBeConfigured(client);
   const { data, error } = await c

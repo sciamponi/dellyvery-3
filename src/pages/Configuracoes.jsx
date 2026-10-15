@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
-import { listZones, createZone as sbCreateZone, deleteZone as sbDeleteZone, updateZone as sbUpdateZone } from '@/api/deliveryZones';
+import { listZones, createZone as sbCreateZone, deleteZone as sbDeleteZone, updateZone as sbUpdateZone, validateZoneForm } from '@/api/deliveryZones';
 import { updateCompany as sbUpdateCompany, getCompanySettings as sbGetSettings, updateCompanySettings as sbUpdateSettings } from '@/api/company';
 import { listDrivers as sbListDrivers } from '@/api/team';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -53,10 +53,13 @@ export default function Configuracoes() {
   const [uploading, setUploading] = useState(false);
   const [form, setForm] = useState(null);
   const [zones, setZones] = useState([]);
-  const [newZone, setNewZone] = useState({ name: '', fee: 0, estimated_time: 30 });
+  const [newZone, setNewZone] = useState({ name: '', fee: 0, minimum_order: 0, estimated_time: 30 });
   // Contorno da região no mapa (GeoJSON na zona). Hooks no topo (regras dos Hooks).
   const [zoneMapId, setZoneMapId] = useState(null);
   const [zoneSaving, setZoneSaving] = useState(false);
+  // Edição pelo card (modo edição do mesmo formulário). Hooks no topo.
+  const [editingZoneId, setEditingZoneId] = useState(null);
+  const [zoneForm, setZoneForm] = useState({ name: '', fee: 0, minimum_order: 0, estimated_time: 30, active: true });
   // Mapa de cobertura (entorno + verificação de endereço, só leitura).
   const [coverageOpen, setCoverageOpen] = useState(false);
   const [drivers, setDrivers] = useState([]);
@@ -398,12 +401,56 @@ export default function Configuracoes() {
   };
 
   const addZone = async () => {
+    const err = validateZoneForm({ ...newZone, name: newZone.name });
     if (!newZone.name.trim()) return;
+    if (err) { toast({ title: err, variant: 'destructive' }); return; }
     try {
-      const z = await sbCreateZone(supabase, sbCompany?.id || company.id, { ...newZone, fee: Number(newZone.fee) || 0, estimated_time: Number(newZone.estimated_time) || 30 });
+      const z = await sbCreateZone(supabase, sbCompany?.id || company.id, { ...newZone, fee: Number(newZone.fee) || 0, minimum_order: Number(newZone.minimum_order) || 0, estimated_time: Number(newZone.estimated_time) || 30 });
       setZones(prev => [...prev, z]);
-      setNewZone({ name: '', fee: 0, estimated_time: 30 });
+      setNewZone({ name: '', fee: 0, minimum_order: 0, estimated_time: 30 });
+      toast({ title: 'Zona criada!' });
     } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }
+  };
+
+  // Edição pelo card: carrega os dados atuais, salva via update (mesmo id,
+  // mesma empresa, polígono intacto). Falha nunca fecha nem limpa o form.
+  // Reutiliza zoneSaving (uma operação de zona por vez).
+  const openZoneEdit = (z) => {
+    setEditingZoneId(z.id);
+    setZoneForm({
+      name: z.name || '',
+      fee: z.fee ?? 0,
+      minimum_order: z.minimum_order ?? 0,
+      estimated_time: z.estimated_time ?? 30,
+      active: z.active !== false,
+    });
+  };
+
+  const cancelZoneEdit = () => {
+    setEditingZoneId(null);
+  };
+
+  const saveZoneEdit = async () => {
+    if (!editingZoneId) return;
+    const err = validateZoneForm(zoneForm);
+    if (err) { toast({ title: err, variant: 'destructive' }); return; }
+    setZoneSaving(true);
+    try {
+      const updated = await sbUpdateZone(supabase, sbCompany?.id || company.id, editingZoneId, {
+        name: String(zoneForm.name).trim(),
+        fee: Number(zoneForm.fee) || 0,
+        minimum_order: Number(zoneForm.minimum_order) || 0,
+        estimated_time: Number(zoneForm.estimated_time) || 30,
+        active: !!zoneForm.active,
+      });
+      setZones(prev => prev.map(zz => zz.id === updated.id ? { ...zz, ...updated } : zz));
+      setEditingZoneId(null);
+      toast({ title: 'Zona atualizada!' });
+    } catch (err) {
+      toast({ title: 'Erro ao salvar', description: err?.message, variant: 'destructive' });
+    } finally {
+      setZoneSaving(false);
+    }
   };
 
   const deleteZone = async (id) => {
@@ -659,32 +706,93 @@ export default function Configuracoes() {
                 </Button>
               </div>
               <div className="space-y-2">
-                {zones.map(z => (
-                  <div key={z.id} className="flex items-center gap-3 rounded-xl border border-border p-3">
+                {zones.map(z => {
+                  const editing = editingZoneId === z.id;
+                  return (
+                  <div
+                    key={z.id}
+                    role={editing ? undefined : 'button'}
+                    tabIndex={editing ? undefined : 0}
+                    title={editing ? undefined : `Editar ${z.name}`}
+                    onClick={editing ? undefined : () => openZoneEdit(z)}
+                    onKeyDown={editing ? undefined : (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openZoneEdit(z); } }}
+                    className={`rounded-xl border border-border p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${editing ? 'border-primary/40 bg-primary/5' : 'cursor-pointer hover:shadow-md hover:border-primary/30 transition-all'}`}
+                  >
+                    <div className="flex items-center gap-3">
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-foreground text-sm truncate">{z.name}</p>
+                      <p className="font-medium text-foreground text-sm truncate">
+                        {z.name}
+                        {z.active === false && <span className="ml-1.5 text-[11px] text-muted-foreground">(inativa)</span>}
+                      </p>
                       <p className="text-[11px] text-muted-foreground">
                         {z.polygon ? '🗺️ com área desenhada' : 'sem área desenhada'}
+                        {Number(z.minimum_order) > 0 && ` • mín R$ ${Number(z.minimum_order).toFixed(2)}`}
                       </p>
                     </div>
                     <span className="text-sm text-muted-foreground shrink-0">R$ {Number(z.fee).toFixed(2)}</span>
                     <span className="text-sm text-muted-foreground shrink-0">{z.estimated_time}min</span>
-                    <Button variant="outline" size="sm" className="h-8 shrink-0 text-xs" onClick={() => setZoneMapId(z.id)} aria-label={`Desenhar área de ${z.name}`}>
+                    <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setZoneMapId(z.id)} aria-label={`Desenhar área de ${z.name}`}>
                       <MapIcon className="h-3.5 w-3.5" /> Área
                     </Button>
                     {z.polygon && (
-                      <Button variant="ghost" size="sm" className="h-8 shrink-0 text-xs text-muted-foreground" onClick={() => clearZoneBoundary(z)} aria-label={`Remover contorno de ${z.name}`}>
+                      <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground" onClick={() => clearZoneBoundary(z)} aria-label={`Remover contorno de ${z.name}`}>
                         <X className="h-3.5 w-3.5" />
                       </Button>
                     )}
-                    <Button variant="ghost" size="icon" onClick={() => deleteZone(z.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                    <Button variant="ghost" size="icon" onClick={() => {
+                      if (!window.confirm(`Excluir a zona "${z.name}"? Pedidos já registrados não são afetados.`)) return;
+                      deleteZone(z.id);
+                    }} aria-label={`Excluir ${z.name}`}>
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                    </div>
+                    </div>
+                    {editing && (
+                      <div className="mt-3 space-y-2 rounded-lg border border-border bg-card p-3" onClick={(e) => e.stopPropagation()}>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="space-y-1">
+                            <Label>Nome *</Label>
+                            <Input value={zoneForm.name} onChange={(e) => setZoneForm((p) => ({ ...p, name: e.target.value }))} className="h-9 text-sm" />
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="space-y-1">
+                              <Label>Taxa</Label>
+                              <Input type="number" min={0} step="0.50" value={zoneForm.fee} onChange={(e) => setZoneForm((p) => ({ ...p, fee: e.target.value }))} className="h-9 text-sm" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label>Ped. mín.</Label>
+                              <Input type="number" min={0} step="0.50" value={zoneForm.minimum_order} onChange={(e) => setZoneForm((p) => ({ ...p, minimum_order: e.target.value }))} className="h-9 text-sm" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label>Min</Label>
+                              <Input type="number" min={1} value={zoneForm.estimated_time} onChange={(e) => setZoneForm((p) => ({ ...p, estimated_time: e.target.value }))} className="h-9 text-sm" />
+                            </div>
+                          </div>
+                        </div>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border px-2.5 py-1.5 text-[13px]">
+                          <Switch checked={zoneForm.active !== false} onCheckedChange={(v) => setZoneForm((p) => ({ ...p, active: v }))} className="shrink-0" />
+                          Zona ativa
+                        </label>
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" className="flex-1" onClick={cancelZoneEdit} disabled={zoneSaving}>
+                            Cancelar
+                          </Button>
+                          <Button size="sm" className="flex-1 min-h-9" onClick={saveZoneEdit} disabled={zoneSaving}>
+                            {zoneSaving ? 'Salvando...' : 'Salvar alterações'}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
                 {zones.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">Nenhuma zona cadastrada</p>}
               </div>
               <div className="flex items-end gap-2 mt-3">
                 <div className="flex-1 space-y-1"><Input value={newZone.name} onChange={e => setNewZone(p => ({ ...p, name: e.target.value }))} placeholder="Bairro/região" /></div>
                 <div className="w-24 space-y-1"><Input type="number" min="0" step="0.50" value={newZone.fee} onChange={e => setNewZone(p => ({ ...p, fee: e.target.value }))} placeholder="Taxa" /></div>
+                <div className="w-24 space-y-1"><Input type="number" min="0" step="0.50" value={newZone.minimum_order} onChange={e => setNewZone(p => ({ ...p, minimum_order: e.target.value }))} placeholder="Mínimo" /></div>
                 <div className="w-24 space-y-1"><Input type="number" min="1" value={newZone.estimated_time} onChange={e => setNewZone(p => ({ ...p, estimated_time: e.target.value }))} placeholder="Min" /></div>
                 <Button onClick={addZone} variant="outline"><Plus className="h-4 w-4" /></Button>
               </div>

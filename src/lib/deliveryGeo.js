@@ -136,3 +136,19 @@ export function bboxCenter(path) {
   }
   return { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 };
 }
+
+// Taxa exibida no checkout ANTES do envio (pura, testável).
+// Com áreas desenhadas + localização, o valor exato só existe no servidor:
+// exibe a taxa padrão como ESTIMATIVA honesta. Com zona manual, exibe o
+// valor da zona (o servidor cobra exatamente esse, se elegível).
+// Retorna { fee, isEstimate }. Retirada/mesa sempre zeram aqui.
+export function displayDeliveryFee({ orderType, hasPolygonZones, hasCoords, zoneFee, defaultFee }) {
+  if (orderType !== 'delivery') return { fee: 0, isEstimate: false };
+  if (zoneFee !== null && zoneFee !== undefined) {
+    return { fee: Number(zoneFee) || 0, isEstimate: false };
+  }
+  if (hasPolygonZones && hasCoords) {
+    return { fee: Number(defaultFee) || 0, isEstimate: true };
+  }
+  return { fee: Number(defaultFee) || 0, isEstimate: false };
+}

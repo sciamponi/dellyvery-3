@@ -11,6 +11,7 @@ import { resolveTableToken } from '@/api/tables';
 import ProductModal from '@/components/menu/ProductModal';
 import { suggestUpsell, guideMessageFor } from '@/lib/upsell';
 import { geocodeAddress, getBrowserLocation, buildGeocodeQuery } from '@/lib/geocode';
+import { displayDeliveryFee } from '@/lib/deliveryGeo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -80,6 +81,9 @@ export default function Checkout() {
         setError('Não foi possível obter sua localização. Verifique a permissão ou informe o endereço.');
         return;
       }
+      // GPS define o modo automático: dispensa a zona manual (o servidor
+      // resolve a área e a taxa; divergência posterior é rejeitada lá).
+      setDeliveryZoneId('');
       setGeoCoords({ ...pos, source: 'gps', query: null });
     } finally {
       setLocating('');
@@ -223,8 +227,19 @@ export default function Checkout() {
 
   const subtotal = getSubtotal();
   const selectedZone = deliveryZones.find(z => z.id === deliveryZoneId);
-  const deliveryFee = orderType === 'delivery' ? (selectedZone?.fee ?? company?.delivery_fee ?? 0) : 0;
+  // Taxa exibida: com áreas + localização (sem zona manual), o valor exato
+  // só existe no servidor — mostra estimativa honesta. Servidor recalcula.
+  const feeView = displayDeliveryFee({
+    orderType,
+    hasPolygonZones,
+    hasCoords: !!geoCoords,
+    zoneFee: selectedZone ? selectedZone.fee : null,
+    defaultFee: company?.delivery_fee ?? 0,
+  });
+  const deliveryFee = feeView.fee;
   const total = subtotal + deliveryFee;
+  // Modo automático: áreas desenhadas + localização, sem zona manual.
+  const autoZone = orderType === 'delivery' && hasPolygonZones && !!geoCoords && !deliveryZoneId;
 
   const handleNext = () => {
     setError('');
@@ -291,6 +306,8 @@ export default function Checkout() {
             const g = await geocodeAddress(customer);
             coords = g ? { ...g, source: 'geocode', query: q } : null;
             setGeoCoords(coords);
+            // Geocodificação nova também entra em modo automático.
+            if (coords) setDeliveryZoneId('');
           } finally {
             setLocating('');
           }
@@ -613,7 +630,7 @@ export default function Checkout() {
               </div>
             )}
 
-            {orderType === 'delivery' && deliveryZones.length > 0 && (
+            {orderType === 'delivery' && !autoZone && deliveryZones.length > 0 && (
               <div className="space-y-2">
                 <Label>Zona de entrega</Label>
                 <select
@@ -626,6 +643,21 @@ export default function Checkout() {
                     <option key={z.id} value={z.id}>{z.name} — {fmtCurrency(z.fee)} (~{z.estimated_time}min)</option>
                   ))}
                 </select>
+                {hasPolygonZones && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Com áreas desenhadas, prefira localizar o endereço para taxa automática.
+                  </p>
+                )}
+              </div>
+            )}
+            {orderType === 'delivery' && autoZone && (
+              <div className="rounded-xl border border-green-300 bg-green-50 p-3 text-sm text-green-800" role="status">
+                ✓ Endereço localizado — a taxa será calculada pela área de entrega no envio.
+                <div>
+                  <button type="button" onClick={() => setGeoCoords(null)} className="mt-1 text-xs font-medium underline">
+                    Prefiro escolher a zona manualmente
+                  </button>
+                </div>
               </div>
             )}
 
@@ -670,6 +702,11 @@ export default function Checkout() {
                   <p className="text-[11px] text-muted-foreground">
                     A taxa é calculada pela área de entrega do endereço. Dados de mapa © OpenStreetMap.
                   </p>
+                  {geoCoords && geoCoords.source === 'geocode' && geoCoords.displayName && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Encontrado: {geoCoords.displayName} — não é este? Ajuste o endereço ou use o GPS.
+                    </p>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <Label>Número</Label>
@@ -716,9 +753,14 @@ export default function Checkout() {
               </div>
               {orderType === 'delivery' && (
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Taxa de entrega</span>
+                  <span className="text-muted-foreground">
+                    Taxa de entrega{feeView.isEstimate ? ' (estimativa)' : ''}
+                  </span>
                   <span>{fmtCurrency(deliveryFee)}</span>
                 </div>
+              )}
+              {orderType === 'delivery' && feeView.isEstimate && (
+                <p className="text-[11px] text-muted-foreground">Valor final confirmado pelo servidor no envio.</p>
               )}
               <div className="flex justify-between font-heading text-lg font-bold pt-2 border-t border-border">
                 <span>Total</span>

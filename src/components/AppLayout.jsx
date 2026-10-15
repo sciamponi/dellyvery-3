@@ -9,7 +9,7 @@ import SelectGuard from '@/components/SelectGuard';
 import {
   LayoutDashboard, ShoppingBag, UtensilsCrossed, Users, User,
   Settings, LogOut, Menu as MenuIcon, X, Store, Wallet, CreditCard, LayoutGrid,
-  ContactRound, Megaphone, UserPlus, ShieldCheck, Undo2, Armchair
+  ContactRound, Megaphone, UserPlus, ShieldCheck, Undo2, Armchair, FileText
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -32,6 +32,7 @@ const MASTER_NAV = [
   { label: 'Dashboard', path: '/master', icon: LayoutDashboard },
   { label: 'Interessados', path: '/master/interessados', icon: UserPlus },
   { label: 'Planos', path: '/master/planos', icon: LayoutGrid },
+  { label: 'Contratos', path: '/master/contratos', icon: FileText },
 ];
 
 export default function AppLayout() {

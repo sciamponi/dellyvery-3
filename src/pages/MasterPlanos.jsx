@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
-import { listPlans, createPlan, updatePlan, deletePlan, isPlatformAdmin, validatePlanData } from '@/api/plans';
+import { listPlans, createPlan, updatePlan, deletePlan, isPlatformAdmin, validatePlanData, missingColumnOf } from '@/api/plans';
 import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
@@ -34,9 +34,19 @@ export default function MasterPlanos() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({});
+  // Coluna comercial ausente no banco (migration pendente): orienta sem
+  // ocultar a mensagem original do erro.
+  const [schemaIssue, setSchemaIssue] = useState('');
 
   const loadPlans = async () => {
-    setPlans(await listPlans(supabase, { onlyActive: false }));
+    try {
+      setPlans(await listPlans(supabase, { onlyActive: false }));
+      setSchemaIssue('');
+    } catch (err) {
+      const col = missingColumnOf(err);
+      if (col) setSchemaIssue(`A tabela de planos no banco não tem a coluna "${col === true ? 'comercial' : col}". Aplique a migration de planos comerciais e recarregue. Detalhe: ${err?.message || ''}`);
+      else toast({ title: 'Erro ao carregar planos', description: err?.message, variant: 'destructive' });
+    }
   };
 
   useEffect(() => {
@@ -88,8 +98,13 @@ export default function MasterPlanos() {
       else await createPlan(supabase, payload);
       toast({ title: editPlan ? 'Plano atualizado!' : 'Plano criado!' });
       setDialog(false);
+      setSchemaIssue('');
       loadPlans();
     } catch (err) {
+      const col = missingColumnOf(err);
+      if (col) {
+        setSchemaIssue(`Não foi possível salvar: falta a coluna "${col === true ? 'comercial' : col}" na tabela de planos. Aplique a migration de planos comerciais. Detalhe: ${err?.message || ''}`);
+      }
       toast({ title: 'Erro', description: err?.message || 'Tente novamente', variant: 'destructive' });
     } finally { setSaving(false); }
   };
@@ -120,6 +135,11 @@ export default function MasterPlanos() {
       </PageHeader>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {schemaIssue && (
+        <div className="sm:col-span-2 lg:col-span-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900" role="alert">
+          {schemaIssue}
+        </div>
+      )}
         {plans.map(p => (
           <div key={p.id} className={`rounded-2xl border bg-card p-5 ${p.is_popular ? 'border-primary' : 'border-border'} ${!p.active ? 'opacity-60' : ''}`}>
             <div className="flex items-start justify-between">

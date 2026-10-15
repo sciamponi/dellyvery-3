@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   slugifyPlanName, fromSupabasePlan, toSupabasePlan, validatePlanData,
   listPlans, createPlan, updatePlan, deletePlan, isPlatformAdmin,
+  missingColumnOf,
 } from './plans.js';
 
 function createMockClient({ tables = {} } = {}) {
@@ -139,5 +140,18 @@ describe('plans — FASE A campos comerciais e validação', () => {
     assert.equal(p.annual_price, null);
     assert.deepEqual(p.benefits, []);
     assert.equal(p.description, '');
+  });
+
+  it('missingColumnOf detecta coluna comercial ausente (migration pendente)', () => {
+    assert.equal(
+      missingColumnOf({ message: 'column plans.description does not exist', code: '42703' }),
+      'description',
+    );
+    assert.equal(
+      missingColumnOf({ message: "Could not find the 'benefits' column of 'plans' in the schema cache", code: 'PGRST204' }),
+      'benefits',
+    );
+    assert.equal(missingColumnOf(new Error('permission denied')), null);
+    assert.equal(missingColumnOf(null), null);
   });
 });

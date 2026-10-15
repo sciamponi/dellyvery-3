@@ -16,6 +16,17 @@ function rpcError(error) {
   throw new Error(error?.message || 'Erro na operação');
 }
 
+// Detecta erro de coluna inexistente (ex.: migration comercial ainda não
+// aplicada no banco): PostgREST 42703 ou PGRST204. Permite à UI orientar
+// sem ocultar a mensagem original.
+export function missingColumnOf(error) {
+  const msg = `${error?.message || ''} ${error?.code || ''} ${error?.details || ''} ${error?.hint || ''}`;
+  if (!/42703|does not exist|PGRST204|could not find/i.test(msg)) return null;
+  const m = msg.match(/'([a-z_][a-z0-9_]*)'\s+column/i)
+    || msg.match(/column\s+(?:\w+\.)?([a-z_][a-z0-9_]*)/i);
+  return m ? m[1] : true;
+}
+
 export function slugifyPlanName(name) {
   const base = (name || '')
     .normalize('NFD')

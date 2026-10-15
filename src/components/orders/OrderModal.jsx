@@ -22,6 +22,10 @@ import { listCustomers as sbListCustomers } from '@/api/customers';
 import { editOrder as sbEditOrder, getOrderDetail as sbGetOrderDetail, listOrdersWithItems as sbListOrdersWithItems, linkOrderCustomer as sbLinkCustomer, linkOrderTable as sbLinkTable, setComandaName as sbSetComanda } from '@/api/orders';
 import { queueDriverNotifyForStatus, getDriverNotification, markDriverNotified as sbMarkNotified } from '@/api/driverNotifications';
 import { buildDriverDeliveryUrl, buildDriverMapsLink } from '@/lib/driverMessage';
+import {
+  getPaymentReceipts, registerOrderPayment, SUPPORTED_PAYMENT_METHODS,
+} from '@/api/payments';
+import { paymentBadgeState, paymentBadgeClass, paymentMethodIcon } from '@/lib/paymentBadge';
 import { getDriver as sbGetDriver } from '@/api/team';
 import { isComandaEditable, resolveComandaName } from '@/lib/comanda';
 import { filterLinkCustomers, resolveCustomerEnter } from '@/lib/linkEnter';
@@ -101,6 +105,17 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const [conferenceDrivers, setConferenceDrivers] = useState([]);
   const [conferenceDriver, setConferenceDriver] = useState('');
   const [conferenceBusy, setConferenceBusy] = useState(false);
+  // Recebimento: declaração auditável (audit_logs); o selo oficial segue
+  // orders.payment_status (sem escrita direta — guard do banco).
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receipts, setReceipts] = useState([]);
+  const [receiptForm, setReceiptForm] = useState({ amount: '', method: '', notes: '' });
+  const [receiptBusy, setReceiptBusy] = useState(false);
+  const [receiptError, setReceiptError] = useState('');
+
+  const isPaid = order?.payment_status === 'paid';
+  const latestReceipt = receipts.length > 0 ? receipts[0] : null;
+  const payBadge = paymentBadgeState({ paymentStatus: order?.payment_status, hasReceipt: receipts.length > 0 });
   // UX Kanban: gerenciar entregador direto no pedido (alterar/remover).
   const [managingDriver, setManagingDriver] = useState(false);
   // Vínculos de balcão: cliente e mesa (sem recriar o pedido).
@@ -173,6 +188,10 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setSummaryOpen(false);
     setDispatchAction(null);
     setConferenceAction(null);
+    setReceiptOpen(false);
+    setReceipts([]);
+    setReceiptForm({ amount: '', method: '', notes: '' });
+    setReceiptError('');
     setNotifyPrompt(null);
     setNotifyMsg('');
     notifyShownRef.current = '';
@@ -361,6 +380,12 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, order?.id, order?.status, order?.driver_id, sbActive]);
+
+  useEffect(() => {
+    if (!order?.id || !isOpen) return;
+    loadReceipts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order?.id, isOpen]);
 
   if (!order) return null;
 
@@ -610,6 +635,51 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     }
   };
 
+  // Recebimentos declarados (leitura; falha silenciosa com lista vazia).
+  const loadReceipts = async () => {
+    if (!order?.id || !sbActive) {
+      setReceipts([]);
+      return;
+    }
+    try {
+      setReceipts(await getPaymentReceipts(supabase, order.company_id, order.id));
+    } catch {
+      setReceipts([]);
+    }
+  };
+
+  const openReceipt = () => {
+    setReceiptForm({
+      amount: String(order.total ?? ''),
+      method: SUPPORTED_PAYMENT_METHODS.includes(order.payment_method) ? order.payment_method : SUPPORTED_PAYMENT_METHODS[0],
+      notes: '',
+    });
+    setReceiptError('');
+    setReceiptOpen(true);
+  };
+
+  const confirmReceipt = async () => {
+    if (receiptBusy) return;
+    if (latestReceipt) return; // já registrado: sem duplicata
+    setReceiptBusy(true);
+    try {
+      await registerOrderPayment(supabase, order.company_id, {
+        orderId: order.id,
+        orderStatus: order.status,
+        amount: receiptForm.amount,
+        method: receiptForm.method,
+        notes: receiptForm.notes,
+      });
+      await loadReceipts();
+      toast({ title: 'Recebimento registrado!' });
+    } catch (err) {
+      setReceiptError(err?.message || 'Erro ao registrar recebimento');
+      return;
+    } finally {
+      setReceiptBusy(false);
+    }
+  };
+
   // Envio manual explícito: monta a mensagem do pedido persistido, abre o
   // wa.me e registra NO MÁXIMO "iniciado" (nunca "enviado"/confirmado).
   // Sem telefone válido: informa o motivo, sem enviar. Falha: mantém o
@@ -768,6 +838,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
             <span className={`text-sm px-3 py-1.5 rounded-full font-semibold whitespace-nowrap ${STATUS_PILL[order.status] || STATUS_PILL.novo}`}>
               {stageName || STATUS_LABELS[order.status] || order.status}
             </span>
+            <span className={`text-xs px-2.5 py-1 rounded-full font-bold whitespace-nowrap ${paymentBadgeClass(payBadge)}`}>{payBadge.label}</span>
           </DialogTitle>
         </DialogHeader>
 
@@ -1099,6 +1170,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
             </div>
 
             {/* Items: compactos; acima de 3, recolhe com expansão. Clique abre o detalhe. */}
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_300px] items-start">
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1183,15 +1255,22 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                 <span className="font-heading text-2xl font-bold">{fmtCurrency(order.total)}</span>
               </div>
             </div>
+            </div>
 
             {/* Payment + notes */}
-            {order.payment_method && (
+            {(order.payment_method || order.payment_status || latestReceipt) && (
               <div className="flex items-center gap-2 text-sm pt-2 border-t border-border">
                 <Receipt className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="text-muted-foreground">Pagamento:</span>
-                <span className="font-medium truncate">{order.payment_method}</span>
-                {order.payment_status && <span className="text-muted-foreground">• {order.payment_status}</span>}
+                <span className="font-medium truncate">{paymentMethodIcon(order.payment_method)} {order.payment_method || '—'}</span>
+                <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${paymentBadgeClass(payBadge)}`}>{payBadge.label}</span>
               </div>
+            )}
+            {latestReceipt && !isPaid && (
+              <p className="text-xs text-muted-foreground">
+                Recebido {fmtCurrency(latestReceipt.amount)} via {latestReceipt.method || '—'}
+                {latestReceipt.createdAt ? ` em ${new Date(latestReceipt.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''} (declaração; quitação oficial pendente).
+              </p>
             )}
             {order.notes && (
               <div className="text-sm pt-2 border-t border-border break-words">
@@ -1736,6 +1815,15 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
               {primaryAction.label}
             </Button>
           )}
+          {!isPaid && (
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => { setSummaryOpen(false); openReceipt(); }}
+            >
+              Receber pagamento
+            </Button>
+          )}
           <Button variant="ghost" className="w-full" onClick={() => setSummaryOpen(false)}>
             Fechar resumo
           </Button>
@@ -1874,6 +1962,105 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Recebimento: declaração auditável (sem alterar payment_status,
+          totais ou pedidos). Pago oficial => só leitura. */}
+      <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-sm max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="pr-6">
+              Receber pagamento
+              <span className="block text-xs font-normal text-muted-foreground mt-0.5">
+                Pedido #{order.order_number} • {fmtCurrency(order.total)}
+              </span>
+            </DialogTitle>
+          </DialogHeader>
+          {isPaid ? (
+            <div className="space-y-2">
+              <p className="text-sm">
+                <span className="inline-block text-xs px-2.5 py-1 rounded-full font-bold bg-green-600 text-white">PAGO</span>
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Pagamento confirmado no registro{order.payment_method ? ` (${order.payment_method})` : ''}.
+              </p>
+              <Button variant="ghost" className="w-full" onClick={() => setReceiptOpen(false)}>
+                Fechar
+              </Button>
+            </div>
+          ) : latestReceipt ? (
+            <div className="space-y-2">
+              <p className="text-sm">
+                <span className="inline-block text-xs px-2.5 py-1 rounded-full font-bold bg-amber-100 text-amber-800">RECEBIMENTO REGISTRADO</span>
+              </p>
+              <div className="rounded-xl border border-border p-3 text-sm space-y-1">
+                <div className="flex justify-between"><span className="text-muted-foreground">Valor</span><span className="font-bold">{fmtCurrency(latestReceipt.amount)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Forma</span><span>{latestReceipt.method || '—'}</span></div>
+                {latestReceipt.notes && <p className="text-muted-foreground break-words">Obs: {latestReceipt.notes}</p>}
+                <p className="text-xs text-muted-foreground">
+                  Registrado em {latestReceipt.createdAt ? new Date(latestReceipt.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}.
+                  O selo oficial segue o status do pedido.
+                </p>
+              </div>
+              <Button variant="ghost" className="w-full" onClick={() => setReceiptOpen(false)}>
+                Fechar
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-border p-3 text-sm space-y-1">
+                <div className="flex justify-between"><span className="text-muted-foreground">Total do pedido</span><span className="font-bold">{fmtCurrency(order.total)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Pagamento</span><span>{order.payment_method || '—'}</span></div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Forma de recebimento</Label>
+                <Select value={receiptForm.method} onValueChange={(v) => setReceiptForm((p) => ({ ...p, method: v }))}>
+                  <SelectTrigger aria-label="Forma de recebimento"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {SUPPORTED_PAYMENT_METHODS.map((m) => (
+                      <SelectItem key={m} value={m}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="receipt-amount">Valor recebido (R$)</Label>
+                <Input
+                  id="receipt-amount"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={receiptForm.amount}
+                  onChange={(e) => setReceiptForm((p) => ({ ...p, amount: e.target.value }))}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="receipt-notes">Observação (opcional)</Label>
+                <Input
+                  id="receipt-notes"
+                  value={receiptForm.notes}
+                  onChange={(e) => setReceiptForm((p) => ({ ...p, notes: e.target.value }))}
+                  placeholder="Ex.: Pix confirmado no extrato"
+                  className="h-9 text-sm"
+                  maxLength={120}
+                />
+              </div>
+              {receiptError && <p className="text-xs text-destructive">{receiptError}</p>}
+              <p className="text-[11px] text-muted-foreground">
+                Registra a declaração de recebimento com autor e horário (auditoria). Não altera totais nem o status oficial.
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" disabled={receiptBusy} onClick={() => setReceiptOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button className="flex-1" disabled={receiptBusy} onClick={confirmReceipt}>
+                  {receiptBusy ? 'Registrando...' : 'Confirmar recebimento'}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </Dialog>

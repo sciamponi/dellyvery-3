@@ -25,6 +25,7 @@ import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
 import { changeOrderStatus, getAvailableActions, STATUS_LABELS } from '@/lib/orderStatusFlow';
 import { queueDriverNotifyForStatus } from '@/api/driverNotifications';
 import { formatOrderTotal, isMissingTotal } from '@/lib/money';
+import { paymentBadgeState, paymentMethodIcon } from '@/lib/paymentBadge';
 import { attachFirstOrderFlag, resolveFirstOrderFlags, freezeFirstFlags } from '@/lib/customerHistory';
 import {
   LEGACY_STAGE_SEED,
@@ -635,7 +636,7 @@ export default function Pedidos() {
                                     <span className="shrink-0">•</span>
                                     <span className="truncate">{order.items?.length || 0} {order.items?.length === 1 ? 'item' : 'itens'}</span>
                                   </div>
-                                  {order.payment_method && <p className="text-xs text-muted-foreground mt-1 truncate">💳 {order.payment_method}</p>}
+                                  {order.payment_method && <p className="text-xs text-muted-foreground mt-1 truncate">{paymentMethodIcon(order.payment_method)} {order.payment_method} • {paymentBadgeState({ paymentStatus: order.payment_status }).label}</p>}
                                   {order.notes && <p className="text-xs text-muted-foreground mt-1 italic truncate">📝 {order.notes}</p>}
                                   {/* Total + selo: linha própria, nunca truncada nem disputada */}
                                   <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-border">

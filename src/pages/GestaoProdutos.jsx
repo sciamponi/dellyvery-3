@@ -5,6 +5,7 @@ import {
   listCategories, listProducts, deleteCategory as sbDeleteCategory,
   deleteProduct as sbDeleteProduct, updateCategory as sbUpdateCategory,
   updateProduct as sbUpdateProduct, ensureDefaultCategories as sbEnsureDefaults,
+  createProduct as sbCreateProduct,
 } from '@/api/catalog';
 import { useCompany } from '@/hooks/useCompany';
 import PageHeader from '@/components/PageHeader';
@@ -21,7 +22,13 @@ import { Switch } from '@/components/ui/switch';
 import { Image } from '@/components/ui/image';
 import { useToast } from '@/components/ui/use-toast';
 import { validateQuickProductEdit, quickProductPatch } from '@/lib/productQuickEdit';
-import { Plus, Search, Pencil, Trash2, Package, Star, Tag, Clock, LayoutGrid, List } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Package, Star, Tag, Clock, LayoutGrid, List, Copy, Settings2 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import BulkActionsBar from '@/components/products/BulkActionsBar';
+import CategoryProductsDialog from '@/components/products/CategoryProductsDialog';
+import { getViewMode, setViewMode as persistViewMode } from '@/lib/viewPrefs';
+import { toggleSelected, toggleAllVisible, pruneSelected, allVisibleSelected, runBulk } from '@/lib/bulkSelect';
+import { buildProductDuplicate } from '@/lib/productQuickEdit';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -46,7 +53,17 @@ export default function GestaoProdutos() {
   const [search, setSearch] = useState('');
   const [filterCat, setFilterCat] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [viewMode, setViewMode] = useState('cards');
+  // Vista por área com persistência (sobrevive a navegação e reload).
+  const [viewMode, setViewModeState] = useState(() => getViewMode('produtos'));
+  const [catViewMode, setCatViewModeState] = useState(() => getViewMode('categorias'));
+  const setViewMode = (v) => { setViewModeState(v); persistViewMode('produtos', v); };
+  const setCatViewMode = (v) => { setCatViewModeState(v); persistViewMode('categorias', v); };
+  // Seleção em massa (só ids visíveis pelo "todos"; reconciliada ao mudar dados).
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [catSelectedIds, setCatSelectedIds] = useState([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  // Gerenciador de produtos da categoria (duas colunas).
+  const [manageCat, setManageCat] = useState(null);
   // Edição rápida (modo lista): rascunho, erro e salvamento por id — falha
   // em uma linha nunca descarta as outras.
   const [editingId, setEditingId] = useState(null);
@@ -94,6 +111,12 @@ export default function GestaoProdutos() {
     if (sbActive) loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sbActive, sbCompany?.id]);
+
+  // Reconcilia a seleção quando registros somem (exclusão em outra sessão).
+  useEffect(() => {
+    setSelectedIds((prev) => pruneSelected(prev, products.map((p) => p.id)));
+    setCatSelectedIds((prev) => pruneSelected(prev, categories.map((c) => c.id)));
+  }, [products, categories]);
 
   if (loading || sbLoading) return <Spinner />;
   if (!effectiveCompany) return null;
@@ -196,6 +219,102 @@ export default function GestaoProdutos() {
     }
   };
 
+  const summarizeBulk = (label, ok, fail) => {
+    if (fail.length === 0) {
+      toast({ title: `${ok.length} ${label} com sucesso!` });
+    } else {
+      toast({
+        title: `${ok.length} ok, ${fail.length} falharam`,
+        description: fail.slice(0, 3).map((f) => f.error).join(' • '),
+        variant: 'destructive',
+      });
+    }
+  };
+
+  // Ativa/inativa em massa (só empresa atual; falha por registro).
+  const bulkSetAvailable = async (ids, active) => {
+    if (!ids.length || bulkBusy) return;
+    setBulkBusy(true);
+    const targets = products.filter((p) => ids.includes(p.id));
+    const { ok, fail } = await runBulk(targets, (p) =>
+      sbUpdateProduct(supabase, effectiveCompany.id, p.id, { available: active }),
+    );
+    if (ok.length > 0) {
+      const okSet = new Set(ok);
+      setProducts((prev) => prev.map((p) => (okSet.has(p.id) ? { ...p, available: active } : p)));
+      setSelectedIds((prev) => prev.filter((id) => !okSet.has(id)));
+    }
+    setBulkBusy(false);
+    summarizeBulk(active ? 'ativados' : 'inativados', ok, fail);
+  };
+
+  const bulkDeleteProducts = async (ids) => {
+    if (!ids.length || bulkBusy) return;
+    if (!window.confirm(`Excluir ${ids.length} ${ids.length === 1 ? 'produto' : 'produtos'}? Esta ação é irreversível.`)) return;
+    setBulkBusy(true);
+    const targets = products.filter((p) => ids.includes(p.id));
+    const { ok, fail } = await runBulk(targets, (p) =>
+      sbDeleteProduct(supabase, effectiveCompany.id, p.id),
+    );
+    if (ok.length > 0) {
+      const okSet = new Set(ok);
+      setProducts((prev) => prev.filter((p) => !okSet.has(p.id)));
+      setSelectedIds((prev) => prev.filter((id) => !okSet.has(id)));
+    }
+    setBulkBusy(false);
+    summarizeBulk('excluídos', ok, fail);
+  };
+
+  const bulkSetCategoryActive = async (ids, active) => {
+    if (!ids.length || bulkBusy) return;
+    setBulkBusy(true);
+    const targets = categories.filter((c) => ids.includes(c.id));
+    const { ok, fail } = await runBulk(targets, (c) =>
+      sbUpdateCategory(supabase, effectiveCompany.id, c.id, { active }),
+    );
+    if (ok.length > 0) {
+      const okSet = new Set(ok);
+      setCategories((prev) => prev.map((c) => (okSet.has(c.id) ? { ...c, active } : c)));
+      setCatSelectedIds((prev) => prev.filter((id) => !okSet.has(id)));
+    }
+    setBulkBusy(false);
+    summarizeBulk(active ? 'ativadas' : 'inativadas', ok, fail);
+  };
+
+  const bulkDeleteCategories = async (ids) => {
+    if (!ids.length || bulkBusy) return;
+    if (!window.confirm(`Excluir ${ids.length} ${ids.length === 1 ? 'categoria' : 'categorias'}? Esta ação é irreversível.`)) return;
+    setBulkBusy(true);
+    const targets = categories.filter((c) => ids.includes(c.id));
+    const { ok, fail } = await runBulk(targets, (c) =>
+      sbDeleteCategory(supabase, effectiveCompany.id, c.id),
+    );
+    if (ok.length > 0) {
+      const okSet = new Set(ok);
+      setCategories((prev) => prev.filter((c) => !okSet.has(c.id)));
+      setCatSelectedIds((prev) => prev.filter((id) => !okSet.has(id)));
+    }
+    setBulkBusy(false);
+    summarizeBulk('excluídas', ok, fail);
+  };
+
+  // Duplica o produto com novo id, sem levar vínculos; abre para revisão.
+  const duplicateProduct = async (p) => {
+    if (!p?.id || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      const created = await sbCreateProduct(supabase, effectiveCompany.id, buildProductDuplicate(p));
+      setProducts((prev) => [...prev, { ...buildProductDuplicate(p), id: created.id }]);
+      setEditProduct({ ...buildProductDuplicate(p), id: created.id });
+      setProductDialog(true);
+      toast({ title: 'Produto duplicado (inativo para revisão)!' });
+    } catch (err) {
+      toast({ title: 'Erro ao duplicar', description: err?.message, variant: 'destructive' });
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   // Categorias padrão (Lanches, Acompanhamentos, ...): restaura as 5 sem
   // duplicar (upsert por slug) e sem tocar nas personalizadas.
   const handleRestoreDefaults = async () => {
@@ -280,6 +399,16 @@ export default function GestaoProdutos() {
               )}
             </div>
           ) : viewMode === 'lista' ? (
+            <>
+            <BulkActionsBar
+              count={selectedIds.length}
+              entityLabel="produtos"
+              busy={bulkBusy}
+              onActivate={() => bulkSetAvailable(selectedIds, true)}
+              onDeactivate={() => bulkSetAvailable(selectedIds, false)}
+              onDelete={() => bulkDeleteProducts(selectedIds)}
+              onClear={() => setSelectedIds([])}
+            />
             <ProductListTable
               products={filteredProducts}
               categories={categories}
@@ -294,7 +423,14 @@ export default function GestaoProdutos() {
               onToggle={toggleAvailable}
               onEditFull={openEditProduct}
               onDelete={(p) => setDeleteTarget({ type: 'product', id: p.id, name: p.name })}
+              onDuplicate={duplicateProduct}
+              selectedIds={selectedIds}
+              onToggleSelect={(id) => setSelectedIds((prev) => toggleSelected(prev, id))}
+              onToggleAll={(v) => setSelectedIds((prev) => toggleAllVisible(prev, filteredProducts.map((p) => p.id), v))}
+              allChecked={allVisibleSelected(selectedIds, filteredProducts.map((p) => p.id))}
+              someChecked={filteredProducts.some((p) => selectedIds.includes(p.id))}
             />
+            </>
           ) : (
             <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filteredProducts.map(product => {
@@ -364,6 +500,16 @@ export default function GestaoProdutos() {
                           <Button
                             variant="ghost"
                             size="sm"
+                            className="h-8 w-8 p-0 shrink-0"
+                            aria-label={`Duplicar ${product.name}`}
+                            title="Duplicar produto"
+                            onClick={(e) => { e.stopPropagation(); duplicateProduct(product); }}
+                          >
+                            <Copy className="h-4 w-4 text-muted-foreground" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
                             aria-label={`Excluir ${product.name}`}
                             onClick={(e) => { e.stopPropagation(); setDeleteTarget({ type: 'product', id: product.id, name: product.name }); }}
@@ -404,6 +550,96 @@ export default function GestaoProdutos() {
               </Button>
             </div>
           ) : (
+            <>
+            <div className="ml-auto flex gap-1.5 mb-3 w-fit">
+              <button onClick={() => setCatViewMode('cards')} aria-pressed={catViewMode === 'cards'} title="Modo cards" className={`flex items-center gap-1.5 rounded-full px-3 h-8 text-xs font-medium transition-colors border ${catViewMode === 'cards' ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-transparent hover:bg-muted/70'}`}>
+                <LayoutGrid className="h-3.5 w-3.5" /> Cards
+              </button>
+              <button onClick={() => setCatViewMode('lista')} aria-pressed={catViewMode === 'lista'} title="Modo lista" className={`flex items-center gap-1.5 rounded-full px-3 h-8 text-xs font-medium transition-colors border ${catViewMode === 'lista' ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-transparent hover:bg-muted/70'}`}>
+                <List className="h-3.5 w-3.5" /> Lista
+              </button>
+            </div>
+            {catViewMode === 'lista' ? (
+            <>
+            <BulkActionsBar
+              count={catSelectedIds.length}
+              entityLabel="categorias"
+              busy={bulkBusy}
+              onActivate={() => bulkSetCategoryActive(catSelectedIds, true)}
+              onDeactivate={() => bulkSetCategoryActive(catSelectedIds, false)}
+              onDelete={() => bulkDeleteCategories(catSelectedIds)}
+              onClear={() => setCatSelectedIds([])}
+            />
+            <div className="overflow-x-auto rounded-xl border border-border">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead>
+                  <tr className="bg-muted/60 text-left text-xs uppercase tracking-wider text-muted-foreground">
+                    <th className="px-3 py-2 w-10">
+                      <Checkbox
+                        checked={(() => {
+                          const ids = categories.map((c) => c.id);
+                          if (allVisibleSelected(catSelectedIds, ids)) return true;
+                          if (ids.some((id) => catSelectedIds.includes(id))) return 'indeterminate';
+                          return false;
+                        })()}
+                        onCheckedChange={(v) => setCatSelectedIds((prev) => toggleAllVisible(prev, categories.map((c) => c.id), !!v))}
+                        aria-label="Selecionar categorias visíveis"
+                        className="shrink-0"
+                      />
+                    </th>
+                    <th className="px-3 py-2 font-semibold">Categoria</th>
+                    <th className="px-3 py-2 font-semibold text-right">Produtos</th>
+                    <th className="px-3 py-2 font-semibold text-center">Ativa</th>
+                    <th className="px-3 py-2 font-semibold text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {categories.map((cat) => {
+                    const count = products.filter((p) => p.category_id === cat.id).length;
+                    return (
+                      <tr key={cat.id} className="align-middle hover:bg-muted/30">
+                        <td className="px-3 py-2">
+                          <Checkbox
+                            checked={catSelectedIds.includes(cat.id)}
+                            onCheckedChange={() => setCatSelectedIds((prev) => toggleSelected(prev, cat.id))}
+                            aria-label={`Selecionar ${cat.name}`}
+                            className="shrink-0"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <span className="font-medium text-foreground">{cat.icon} {cat.name}</span>
+                          {cat.slug && <span className="ml-1.5 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary align-middle">Padrão</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right font-semibold whitespace-nowrap">{count}</td>
+                        <td className="px-3 py-2 text-center">
+                          <Switch checked={!!cat.active} onCheckedChange={() => toggleCategoryActive(cat)} aria-label={cat.active ? 'Desativar categoria' : 'Ativar categoria'} />
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex justify-end gap-1">
+                            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setManageCat(cat)}>
+                              <Settings2 className="h-3.5 w-3.5" /> Gerenciar
+                            </Button>
+                            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => { setEditCategory(cat); setCategoryDialog(true); }}>
+                              <Pencil className="h-3.5 w-3.5" /> Editar
+                            </Button>
+                            <Button
+                              size="sm" variant="ghost"
+                              className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                              aria-label={`Excluir ${cat.name}`}
+                              onClick={() => setDeleteTarget({ type: 'category', id: cat.id, name: cat.name })}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            </>
+            ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {categories.map(cat => {
                 const count = products.filter(p => p.category_id === cat.id).length;
@@ -422,6 +658,11 @@ export default function GestaoProdutos() {
                         {cat.image_url ? <Image src={cat.image_url} fittingType="fill" className="h-12 w-12 rounded-xl" alt={cat.name} /> : (cat.icon || '📦')}
                       </div>
                       <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        {cat.slug !== 'extras' && (
+                          <Button variant="ghost" size="icon" title="Gerenciar produtos" onClick={() => setManageCat(cat)}>
+                            <Settings2 className="h-4 w-4 text-muted-foreground" />
+                          </Button>
+                        )}
                         <Button variant="ghost" size="icon" onClick={() => { setEditCategory(cat); setCategoryDialog(true); }}>
                           <Pencil className="h-4 w-4 text-muted-foreground" />
                         </Button>
@@ -447,6 +688,8 @@ export default function GestaoProdutos() {
                 );
               })}
             </div>
+            )}
+            </>
           )}
         </TabsContent>
 
@@ -477,6 +720,14 @@ export default function GestaoProdutos() {
         companyId={company.id}
         onSaved={loadData}
       />
+      <CategoryProductsDialog
+        open={!!manageCat}
+        onOpenChange={(v) => { if (!v) setManageCat(null); }}
+        category={manageCat}
+        products={products}
+        companyId={company.id}
+        onSaved={loadData}
+      />
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={(v) => !v && setDeleteTarget(null)}
@@ -491,7 +742,7 @@ export default function GestaoProdutos() {
           <DialogHeader>
             <DialogTitle>Extras — ingredientes reutilizáveis</DialogTitle>
           </DialogHeader>
-          <IngredientsManager companyId={company.id} />
+          <IngredientsManager companyId={company.id} viewKey="extras" />
         </DialogContent>
       </Dialog>
     </div>
@@ -505,13 +756,22 @@ export default function GestaoProdutos() {
 function ProductListTable({
   products, categories, editingId, drafts, rowErrors, savingId,
   onStartEdit, onCancelEdit, onDraftChange, onSave, onToggle, onEditFull, onDelete,
+  onDuplicate, selectedIds, onToggleSelect, onToggleAll, allChecked, someChecked,
 }) {
   const catOf = (p) => categories.find((c) => c.id === p.category_id);
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full min-w-[760px] text-sm">
+      <table className="w-full min-w-[820px] text-sm">
         <thead>
           <tr className="bg-muted/60 text-left text-xs uppercase tracking-wider text-muted-foreground">
+            <th className="px-3 py-2 w-10">
+              <Checkbox
+                checked={allChecked ? true : someChecked ? 'indeterminate' : false}
+                onCheckedChange={(v) => onToggleAll(!!v)}
+                aria-label="Selecionar produtos visíveis"
+                className="shrink-0"
+              />
+            </th>
             <th className="px-3 py-2 font-semibold">Produto</th>
             <th className="px-3 py-2 font-semibold">Categoria</th>
             <th className="px-3 py-2 font-semibold text-right">Preço</th>
@@ -527,6 +787,14 @@ function ProductListTable({
             const cat = catOf(p);
             return (
               <tr key={p.id} className="align-middle hover:bg-muted/30">
+                <td className="px-3 py-2">
+                  <Checkbox
+                    checked={(selectedIds || []).includes(p.id)}
+                    onCheckedChange={() => onToggleSelect(p.id)}
+                    aria-label={`Selecionar ${p.name}`}
+                    className="shrink-0"
+                  />
+                </td>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2 min-w-0">
                     {p.image_url ? (
@@ -609,6 +877,16 @@ function ProductListTable({
                         </Button>
                         <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => onEditFull(p)}>
                           Completo
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 w-8 p-0 shrink-0"
+                          aria-label={`Duplicar ${p.name}`}
+                          title="Duplicar produto"
+                          onClick={() => onDuplicate(p)}
+                        >
+                          <Copy className="h-4 w-4" />
                         </Button>
                         <Button
                           size="sm"

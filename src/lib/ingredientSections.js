@@ -36,6 +36,19 @@ export function groupRowsBySection(rows) {
     .map((id) => ({ id, label: labels.get(id), rows: buckets.get(id) }));
 }
 
+/** Monta os dados da cópia de um ingrediente: novo id no banco, mesma
+ *  seção, sem levar associações a produtos; nasce inativa para revisão. */
+export function buildIngredientDuplicate(ing) {
+  const src = ing || {};
+  return {
+    name: `${String(src.name || 'Ingrediente').trim()} (cópia)`,
+    description: src.description || '',
+    category: String(src.category || '').trim().toLowerCase(),
+    active: false,
+    sort_order: Number(src.sort_order) || 0,
+  };
+}
+
 /** Validação do formulário compacto (nome, preço, duplicata por empresa). */
 export function validateNewIngredient({ name, price, existingNames = [] }) {
   if (String(name || '').trim() === '') return 'Nome do ingrediente é obrigatório';

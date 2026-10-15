@@ -4,6 +4,7 @@ import {
   sectionOf,
   groupRowsBySection,
   validateNewIngredient,
+  buildIngredientDuplicate,
   INGREDIENT_SECTIONS,
 } from './ingredientSections.js';
 
@@ -46,5 +47,13 @@ describe('ingredientSections — validação do cadastro', () => {
     assert.equal(validateNewIngredient({ name: 'A', price: 'x', existingNames: [] }), 'Preço adicional deve ser maior ou igual a 0');
     assert.equal(validateNewIngredient({ name: 'Queijo', price: 2, existingNames: ['queijo'] }), 'Já existe um ingrediente com esse nome');
     assert.equal(validateNewIngredient({ name: 'Queijo', price: 0, existingNames: ['Presunto'] }), null);
+  });
+
+  it('duplicata: mesma seção, sem associações, inativa', () => {
+    const d = buildIngredientDuplicate({ id: 'i1', name: 'Bacon', description: 'd', category: 'lanches', active: true, sort_order: 3, company_id: 'co' });
+    assert.equal(d.name, 'Bacon (cópia)');
+    assert.equal(d.category, 'lanches');
+    assert.equal(d.active, false);
+    assert.ok(!('id' in d) && !('company_id' in d));
   });
 });

@@ -21,7 +21,7 @@ import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listCustomers as sbListCustomers } from '@/api/customers';
 import { editOrder as sbEditOrder, getOrderDetail as sbGetOrderDetail, listOrdersWithItems as sbListOrdersWithItems, linkOrderCustomer as sbLinkCustomer, linkOrderTable as sbLinkTable, setComandaName as sbSetComanda } from '@/api/orders';
 import { queueDriverNotifyForStatus, getDriverNotification, markDriverNotified as sbMarkNotified } from '@/api/driverNotifications';
-import { buildDriverDeliveryUrl } from '@/lib/driverMessage';
+import { buildDriverDeliveryUrl, buildDriverMapsLink } from '@/lib/driverMessage';
 import { getDriver as sbGetDriver } from '@/api/team';
 import { isComandaEditable, resolveComandaName } from '@/lib/comanda';
 import { filterLinkCustomers, resolveCustomerEnter } from '@/lib/linkEnter';
@@ -32,6 +32,10 @@ import { checkCartDependencies, buildDepModesFromProducts } from '@/lib/productD
 import { getCompanySettings as sbGetSettings } from '@/api/company';
 import { useToast } from '@/components/ui/use-toast';
 import { changeOrderStatus, getAvailableActions, getNextStatus, STATUS_LABELS } from '@/lib/orderStatusFlow';
+import {
+  shouldConfirmDispatch, shouldConferenceConclusion,
+  validateDispatchConfirm, resolveConclusionDriver,
+} from '@/lib/dispatchConfirm';
 import { resolveAdvanceTarget, resolveRegressTarget, shouldAutoCloseOnAction, listStages as sbListStages } from '@/api/orderStages';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -85,6 +89,18 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const [drivers, setDrivers] = useState([]);
   const [selectedDriver, setSelectedDriver] = useState('');
   const [assigning, setAssigning] = useState(false);
+  // Conferência de saída: resumo + entregador obrigatório antes de
+  // sair_entrega (substitui keep/assignStep nesse caso).
+  const [dispatchAction, setDispatchAction] = useState(null);
+  const [dispatchDrivers, setDispatchDrivers] = useState([]);
+  const [dispatchDriver, setDispatchDriver] = useState('');
+  const [dispatchBusy, setDispatchBusy] = useState(false);
+  // Conferência de baixa: valores oficiais + responsável (sem writes novos;
+  // repasse continua no fechamento manual).
+  const [conferenceAction, setConferenceAction] = useState(null);
+  const [conferenceDrivers, setConferenceDrivers] = useState([]);
+  const [conferenceDriver, setConferenceDriver] = useState('');
+  const [conferenceBusy, setConferenceBusy] = useState(false);
   // UX Kanban: gerenciar entregador direto no pedido (alterar/remover).
   const [managingDriver, setManagingDriver] = useState(false);
   // Vínculos de balcão: cliente e mesa (sem recriar o pedido).
@@ -155,6 +171,8 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setItemsOpen(false);
     setSelectedItemIdx(null);
     setSummaryOpen(false);
+    setDispatchAction(null);
+    setConferenceAction(null);
     setNotifyPrompt(null);
     setNotifyMsg('');
     notifyShownRef.current = '';
@@ -475,6 +493,16 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   };
 
   const handleStatusAction = async (action) => {
+    // Conferência de saída/baixa (delivery): tem precedência sobre
+    // keep/assignStep nesses casos — nunca avança sem entregador.
+    if (shouldConfirmDispatch(order, action.next)) {
+      await openDispatchConfirm(action);
+      return;
+    }
+    if (shouldConferenceConclusion(order, action.next)) {
+      await openConference(action);
+      return;
+    }
     // Delivery rumo a saiu_entrega: sem entregador → seletor; com entregador →
     // confirmação (manter/alterar/cancelar). Demais fluxos vão direto.
     if (!assignStep && !keepStep && resolveAdvanceFlow(order, action.next) !== 'direct') {
@@ -504,6 +532,82 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
       setAssigning(false);
     }
     await runStatusAction(action);
+  };
+
+  const loadActiveDrivers = async () => {
+    try {
+      const list = sbActive
+        ? (await listDrivers(supabase, order.company_id)).filter((d) => d.status === 'ativo')
+        : [];
+      return list;
+    } catch {
+      return [];
+    }
+  };
+
+  // Conferência de saída: carrega entregadores ativos e preseleciona o
+  // vinculado. Cancelar não muda nada (nem status, nem notificação).
+  const openDispatchConfirm = async (action) => {
+    setDispatchDrivers(await loadActiveDrivers());
+    setDispatchDriver(order.driver_id || '');
+    setDispatchAction(action);
+  };
+
+  const confirmDispatchConfirm = async () => {
+    const action = dispatchAction;
+    if (!action || dispatchBusy) return;
+    const check = validateDispatchConfirm({ driverId: dispatchDriver });
+    if (!check.ok) {
+      toast({ title: check.reason, variant: 'destructive' });
+      return;
+    }
+    setDispatchBusy(true);
+    try {
+      if (dispatchDriver !== (order.driver_id || '')) {
+        await sbAssignDriver(supabase, order.id, order.company_id, dispatchDriver);
+      }
+      setDispatchAction(null);
+      await runStatusAction(action);
+    } catch (err) {
+      toast({ title: 'Saída não confirmada', description: err?.message, variant: 'destructive' });
+    } finally {
+      setDispatchBusy(false);
+    }
+  };
+
+  // Conferência de baixa: responsável + valores oficiais (só leitura).
+  // Troca de entregador usa o fluxo existente (pré-terminal); repasse
+  // continua no fechamento manual — nada é contabilizado aqui.
+  const openConference = async (action) => {
+    setConferenceDrivers(await loadActiveDrivers());
+    setConferenceDriver(order.driver_id || '');
+    setConferenceAction(action);
+  };
+
+  const confirmConference = async () => {
+    const action = conferenceAction;
+    if (!action || conferenceBusy) return;
+    const resolved = resolveConclusionDriver({
+      orderDriverId: order.driver_id || null,
+      selectedDriverId: conferenceDriver || null,
+    });
+    if (!resolved.ok) {
+      toast({ title: 'Selecione o entregador responsável pela baixa', variant: 'destructive' });
+      return;
+    }
+    setConferenceBusy(true);
+    try {
+      if (resolved.changed) {
+        await sbAssignDriver(supabase, order.id, order.company_id, resolved.driverId);
+      }
+      setConferenceAction(null);
+      await runStatusAction(action);
+      toast({ title: `Entrega baixada (${resolved.driverId === order.driver_id ? 'responsável mantido' : 'responsável atualizado'})!` });
+    } catch (err) {
+      toast({ title: 'Baixa não concluída', description: err?.message, variant: 'destructive' });
+    } finally {
+      setConferenceBusy(false);
+    }
   };
 
   // Envio manual explícito: monta a mensagem do pedido persistido, abre o
@@ -1635,6 +1739,141 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
           <Button variant="ghost" className="w-full" onClick={() => setSummaryOpen(false)}>
             Fechar resumo
           </Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* Conferência de saída: resumo + entregador obrigatório. Cancelar não
+          muda status nem notifica; confirmar atribui (se trocou) e executa a
+          transição pelo fluxo existente (aviso ao entregador segue depois). */}
+      <Dialog open={!!dispatchAction} onOpenChange={(open) => { if (!open) setDispatchAction(null); }}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="pr-6">
+              Confirmar saída para entrega
+              <span className="block text-xs font-normal text-muted-foreground mt-0.5">
+                Pedido #{order.order_number} • {order.customer_name || '—'}
+                {order.customer_phone ? ` • ${order.customer_phone}` : ''}
+              </span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-xl border border-border p-3 text-sm">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Entrega</p>
+              <p className="break-words">{[
+                [order.customer_address, order.customer_number].filter(Boolean).join(', '),
+                order.customer_complement, order.customer_neighborhood, order.customer_city, order.customer_zip_code,
+              ].filter(Boolean).join(' — ') || 'Endereço não informado'}</p>
+              {buildDriverMapsLink(order) ? (
+                <a
+                  href={buildDriverMapsLink(order)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-block text-sm font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+                >
+                  Abrir rota no mapa
+                </a>
+              ) : (
+                <p className="text-xs text-muted-foreground mt-1">Sem coordenadas para rota automática.</p>
+              )}
+            </div>
+            <div className="rounded-xl border border-border p-3 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Entregador</p>
+              <p className="text-sm">
+                Vinculado: <span className="font-medium">{driver?.name || (order.driver_id ? 'Vinculado' : 'Nenhum')}</span>
+              </p>
+              <Select value={dispatchDriver} onValueChange={setDispatchDriver}>
+                <SelectTrigger aria-label="Selecionar entregador"><SelectValue placeholder="Selecione o entregador..." /></SelectTrigger>
+                <SelectContent>
+                  {dispatchDrivers.map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.name}{d.vehicle_plate ? ` • ${d.vehicle_plate}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!validateDispatchConfirm({ driverId: dispatchDriver }).ok && (
+                <p className="text-xs text-amber-700">Selecione um entregador para confirmar a saída.</p>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" disabled={dispatchBusy} onClick={() => setDispatchAction(null)}>
+                Cancelar
+              </Button>
+              <Button
+                className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                disabled={dispatchBusy || !validateDispatchConfirm({ driverId: dispatchDriver }).ok}
+                onClick={confirmDispatchConfirm}
+              >
+                {dispatchBusy ? 'Saindo...' : 'Confirmar saída para entrega'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Conferência de baixa: valores oficiais (só leitura) + responsável.
+          Repasse continua no fechamento manual; nada é contabilizado aqui. */}
+      <Dialog open={!!conferenceAction} onOpenChange={(open) => { if (!open) setConferenceAction(null); }}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="pr-6">
+              Conferência de entrega
+              <span className="block text-xs font-normal text-muted-foreground mt-0.5">
+                Pedido #{order.order_number} • {order.customer_name || '—'}
+              </span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-xl border border-border p-3 text-sm space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Identificação</p>
+              <p>Cliente: <span className="font-medium">{order.customer_name || '—'}</span></p>
+              {order.order_type === 'delivery' && <p className="text-muted-foreground break-words">{formatAddress(order) || '—'}</p>}
+              <p>Entregador atual: <span className="font-medium">{driver?.name || (order.driver_id ? 'Vinculado' : 'Nenhum')}</span></p>
+            </div>
+            <div className="rounded-xl border border-border p-3 text-sm space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Conferência financeira</p>
+              <div className="flex justify-between"><span className="text-muted-foreground">Total do pedido</span><span className="font-bold">{fmtCurrency(order.total)}</span></div>
+              {order.delivery_fee > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Taxa de entrega</span><span>{fmtCurrency(order.delivery_fee)}</span></div>}
+              {order.discount > 0 && <div className="flex justify-between text-green-600"><span>Desconto</span><span>-{fmtCurrency(order.discount)}</span></div>}
+              <div className="flex justify-between"><span className="text-muted-foreground">Pagamento</span><span>{[order.payment_method, order.payment_status].filter(Boolean).join(' • ') || '—'}</span></div>
+              {order.change_for != null && (
+                <div className="flex justify-between"><span className="text-muted-foreground">Troco para</span><span>{fmtCurrency(order.change_for)}</span></div>
+              )}
+            </div>
+            <div className="rounded-xl border border-border p-3 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Responsável pela baixa</p>
+              <Select value={conferenceDriver} onValueChange={setConferenceDriver}>
+                <SelectTrigger aria-label="Selecionar responsável pela baixa"><SelectValue placeholder="Selecione o entregador..." /></SelectTrigger>
+                <SelectContent>
+                  {conferenceDrivers.map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.name}{d.vehicle_plate ? ` • ${d.vehicle_plate}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {(() => {
+                  const r = resolveConclusionDriver({ orderDriverId: order.driver_id || null, selectedDriverId: conferenceDriver || null });
+                  if (!r.ok) return 'Selecione quem concluiu a entrega.';
+                  const who = (conferenceDrivers.find((d) => d.id === r.driverId) || driver || {}).name || 'entregador';
+                  return r.changed ? `Será registrado como responsável: ${who} (antes: ${driver?.name || 'outro'}).` : `Responsável: ${who}.`;
+                })()}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" disabled={conferenceBusy} onClick={() => setConferenceAction(null)}>
+                Voltar
+              </Button>
+              <Button
+                className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                disabled={conferenceBusy}
+                onClick={confirmConference}
+              >
+                {conferenceBusy ? 'Baixando...' : 'Dar baixa na entrega'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </Dialog>

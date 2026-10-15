@@ -391,10 +391,21 @@ export default function Pedidos() {
   };
 
   // Ação direta no card (reutiliza fluxo central + guarda anti-duplo do drag).
-  // Avanço para etapa terminal (baixa da entrega) exige confirmação explícita.
+  // Saída e baixa de entrega passam pelo modal (conferência + entregador
+  // obrigatório); demais avanços e a baixa de outros tipos seguem direto.
   const requestCardAction = (order, action) => {
     if (!order || !action) return;
+    if (action.next === 'saiu_entrega') {
+      setSelectedOrder(order);
+      toast({ title: 'Confirme a saída no detalhe do pedido' });
+      return;
+    }
     if (action.next === 'finalizado') {
+      if (order.status === 'saiu_entrega') {
+        setSelectedOrder(order);
+        toast({ title: 'Confira a entrega no detalhe do pedido' });
+        return;
+      }
       setFinishOrderData({ order, action });
       return;
     }
@@ -447,6 +458,13 @@ export default function Pedidos() {
       if (check.noop) return;
       // Arraste para Cancelado abre o diálogo com motivo (nunca baixa direta).
       if (check.cancel) { setCancelOrderData(dragged); return; }
+      // Saída/baixa de entrega pelo arraste: abre o detalhe para conferência
+      // (entregador obrigatório); sem transição direta aqui.
+      if (toStatus === 'saiu_entrega' || (toStatus === 'finalizado' && dragged.status === 'saiu_entrega')) {
+        setSelectedOrder(dragged);
+        toast({ title: toStatus === 'saiu_entrega' ? 'Confirme a saída no detalhe do pedido' : 'Confira a entrega no detalhe do pedido' });
+        return;
+      }
     } catch (err) {
       toast({ title: 'Movimento inválido', description: err?.message, variant: 'destructive' });
       try {

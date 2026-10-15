@@ -502,7 +502,10 @@ end;
 $$;
 
 revoke all on function create_order(text, text, text, jsonb, jsonb, uuid, text, text, text, numeric, uuid, text, numeric, numeric) from public;
-grant execute on function create_order(text, text, text, jsonb, jsonb, uuid, text, text, text, numeric, uuid, text, numeric, numeric) to anon, authenticated;
+-- service_role explícito: o DROP acima apaga todos os grants da v12
+-- vigente (que inclui service_role); sem ele, chamadas administrativas
+-- via service_role quebrariam. Privilégio mínimo mantido: só EXECUTE.
+grant execute on function create_order(text, text, text, jsonb, jsonb, uuid, text, text, text, numeric, uuid, text, numeric, numeric) to anon, authenticated, service_role;
 
 -- =========================
 -- 3. Storefront: has_polygon nas zonas

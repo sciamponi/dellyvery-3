@@ -641,7 +641,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="w-[calc(100vw-2rem)] max-w-lg max-h-[90vh] overflow-hidden p-0 gap-0 flex flex-col">
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl max-h-[90vh] overflow-hidden p-0 gap-0 flex flex-col">
         <DialogHeader className="shrink-0 px-4 pt-3 sm:px-6 sm:pt-4">
           <button
             type="button"
@@ -721,27 +721,29 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
               || (order.status !== 'finalizado' && order.status !== 'cancelado' && sbActive)) && (
             <div className="rounded-2xl bg-muted/50 p-3.5 space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Vínculos e operação</p>
+              {/* Vínculos e entregador lado a lado no desktop; empilhados no mobile. */}
+              <div className="grid gap-2 lg:grid-cols-2">
               {order.status !== 'finalizado' && order.status !== 'cancelado' && sbActive && (
-                <div className="rounded-xl border border-border p-3 space-y-2">
+                <div className="rounded-xl border border-border p-2.5 space-y-2">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">🔗 Vínculos</p>
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm text-muted-foreground truncate">
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground break-words">
                       Cliente: <span className="font-medium text-foreground">{order.customer_name || 'Avulso'}</span>
                       {order.order_type === 'mesa' && (
                         <> • Mesa: <span className="font-medium text-foreground">{order.table_number || '—'}</span></>
                       )}
                     </p>
                     {linking ? (
-                      <Button variant="ghost" size="sm" onClick={() => { linkOp().userNavigated(); setLinking(null); }} disabled={linkBusy}>
+                      <Button variant="ghost" size="sm" className="h-8 text-xs w-full" onClick={() => { linkOp().userNavigated(); setLinking(null); }} disabled={linkBusy}>
                         Fechar
                       </Button>
                     ) : (
-                      <div className="flex shrink-0 gap-1.5">
-                        <Button variant="outline" size="sm" onClick={openLinkCustomer}>
+                      <div className="flex gap-1.5">
+                        <Button variant="outline" size="sm" className="h-8 text-xs flex-1" onClick={openLinkCustomer}>
                           {order.customer_id ? 'Alterar' : 'Vincular'}
                         </Button>
                         {order.order_type === 'mesa' && (
-                          <Button variant="outline" size="sm" onClick={openLinkTable}>Mesa</Button>
+                          <Button variant="outline" size="sm" className="h-8 text-xs flex-1" onClick={openLinkTable}>Mesa</Button>
                         )}
                       </div>
                     )}
@@ -884,13 +886,13 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                 </div>
               )}
               {order.order_type === 'delivery' && order.status !== 'finalizado' && order.status !== 'cancelado' && sbActive && (
-                <div className="rounded-xl border border-border p-3 space-y-2">
+                <div className="rounded-xl border border-border p-2.5 space-y-2">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">🛵 Entregador</p>
                   {!managingDriver ? (
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-foreground truncate">
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-foreground break-words">
                         {driver?.name || (order.driver_id ? 'Vinculado' : 'Sem entregador')}
-                        {driver?.phone && <span className="text-muted-foreground"> • {driver.phone}</span>}
+                        {driver?.phone && <span className="text-muted-foreground font-normal"> • {driver.phone}</span>}
                         {order.driver_id && defaultDriverId && order.driver_id === defaultDriverId && (
                           <span className="ml-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Padrão</span>
                         )}
@@ -898,6 +900,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                       <Button
                         variant="outline"
                         size="sm"
+                        className="h-8 text-xs w-full"
                         onClick={async () => {
                           try {
                             const list = (await listDrivers(supabase, order.company_id)).filter(d => d.status === 'ativo');
@@ -976,6 +979,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                   )}
                 </div>
               )}
+              </div>
               {order.order_type === 'retirada' && (
                 <p className="flex items-center gap-2 text-sm font-semibold text-foreground pt-1">
                   <ShoppingBag className="h-4 w-4 shrink-0" /> 🛍️ RETIRADA no balcão

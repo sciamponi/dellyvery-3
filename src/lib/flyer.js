@@ -14,9 +14,10 @@ export function menuUrlFor(origin, slug) {
   return `${String(origin).replace(/\/+$/, '')}/cardapio/${slug}`;
 }
 
-// Até 3 fotos reais; manuais (ids) têm prioridade, completa com as primeiras
-// com imagem. Nunca inventa URL.
-export function pickProductPhotos(products, manualIds = [], limit = 3) {
+// Até 3 fotos reais; manuais (ids) têm prioridade. Com autoFill (padrão,
+// compatível), completa com as primeiras com imagem; com false, SÓ manuais
+// (sem surpresa: nenhuma foto automática inesperada). Nunca inventa URL.
+export function pickProductPhotos(products, manualIds = [], limit = 3, autoFill = true) {
   const list = Array.isArray(products) ? products : [];
   const byId = new Map(list.map((p) => [p.id, p]));
   const picked = [];
@@ -25,7 +26,7 @@ export function pickProductPhotos(products, manualIds = [], limit = 3) {
     if (p?.image_url && !picked.some((x) => x.id === p.id)) picked.push(p);
     if (picked.length >= limit) break;
   }
-  if (picked.length < limit) {
+  if (autoFill && picked.length < limit) {
     for (const p of list) {
       if (picked.length >= limit) break;
       if (p?.image_url && !picked.some((x) => x.id === p.id)) picked.push(p);
@@ -51,13 +52,16 @@ export function buildFlyerModel({ company, products = [], table = null, origin, 
     title: opts.title || (table ? DEFAULT_TABLE_TITLE : DEFAULT_GENERAL_TITLE),
     instruction: opts.instruction || DEFAULT_INSTRUCTION,
     qrUrl,
-    photos: pickProductPhotos(products, opts.photoIds, 3),
+    photos: pickProductPhotos(products, opts.photoIds, 3, opts.autoPhotos !== false),
   };
 }
 
 // Render PNG do flyer em canvas (1080x1350). Falha de imagem/rede não
-// derruba: espaços vazios. Retorna dataURL PNG.
-export async function renderFlyerPng(model, { qrDataUrl }) {
+// derruba: espaços vazios. Retorna dataURL PNG. onMissing (opcional):
+// avisado com { cover, photos } quando capa/fotos falham (CORS/rede).
+export async function renderFlyerPng(model, { qrDataUrl, onMissing } = {}) {
+  if (!model) throw new Error('Modelo inválido');
+  if (!qrDataUrl) throw new Error('QR Code não gerado');
   if (!model) throw new Error('Modelo inválido');
   if (!qrDataUrl) throw new Error('QR Code não gerado');
   const W = 1080;
@@ -75,6 +79,7 @@ export async function renderFlyerPng(model, { qrDataUrl }) {
     img.src = src;
   });
   const cover = await load(model.coverUrl);
+  const missing = { cover: !!model.coverUrl && !cover, photos: 0 };
   if (cover) {
     const s = Math.max(W / cover.width, (H * 0.42) / cover.height);
     const w = cover.width * s;
@@ -112,6 +117,10 @@ export async function renderFlyerPng(model, { qrDataUrl }) {
   wrapText(x, model.instruction, W / 2, 900, W - 160, 38);
   const thumbs = await Promise.all((model.photos || []).map((p) => load(p.image_url)));
   const valid = thumbs.filter(Boolean);
+  missing.photos = (model.photos || []).length - valid.length;
+  if (typeof onMissing === 'function' && (missing.cover || missing.photos > 0)) {
+    try { onMissing(missing); } catch { /* aviso best-effort */ }
+  }
   valid.forEach((img, i) => {
     const S = 200;
     const total = valid.length * (S + 24) - 24;

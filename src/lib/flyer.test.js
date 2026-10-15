@@ -49,4 +49,13 @@ describe('flyer — modelo', () => {
     assert.throws(() => buildFlyerModel({ company: {}, products, table: null, origin: 'https://x' }), /Loja/);
     assert.throws(() => menuUrlFor('', 'loja'), /Loja/);
   });
+
+  it('autoFill=false: só manuais, sem surpresa automática', () => {
+    assert.deepEqual(pickProductPhotos(products, ['p3'], 3, false).map((p) => p.id), ['p3']);
+    assert.deepEqual(pickProductPhotos(products, [], 3, false), []);
+    const m = buildFlyerModel({ company, products, table: null, origin: 'https://x', opts: { autoPhotos: false } });
+    assert.deepEqual(m.photos, []);
+    const m2 = buildFlyerModel({ company, products, table: null, origin: 'https://x' });
+    assert.ok(m2.photos.length > 0);
+  });
 });

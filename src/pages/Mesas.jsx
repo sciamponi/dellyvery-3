@@ -4,7 +4,7 @@ import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listTables, createTable, updateTable, setTableActive, deleteTable, getTableBlockers } from '@/api/tables';
 import { buildTableQrUrl, resolvePublicBaseUrl } from '@/lib/tableQr';
 import { FLYER_PRINT_CSS } from '@/lib/printCss';
-import { buildFlyerModel, renderFlyerPng } from '@/lib/flyer';
+import { buildFlyerModel, renderFlyerPng, DEFAULT_TABLE_TITLE, DEFAULT_INSTRUCTION } from '@/lib/flyer';
 import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -54,6 +54,25 @@ export default function Mesas() {
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [printPng, setPrintPng] = useState('');
   const [printing, setPrinting] = useState(false);
+  // Paridade com Configurações: título/instrução + gate de capa.
+  const [qrTitle, setQrTitle] = useState('');
+  const [qrInstruction, setQrInstruction] = useState('');
+  const [qrCoverStatus, setQrCoverStatus] = useState('idle');
+  const qrCoverUrl = currentCompany?.cover_url || '';
+
+  useEffect(() => {
+    if (!qrTarget) return;
+    if (!qrCoverUrl) { setQrCoverStatus('idle'); return; }
+    let alive = true;
+    setQrCoverStatus('checking');
+    const Ctor = typeof window !== 'undefined' ? window.Image : null;
+    if (!Ctor) { setQrCoverStatus('error'); return undefined; }
+    const img = new Ctor();
+    img.onload = () => { if (alive) setQrCoverStatus('ok'); };
+    img.onerror = () => { if (alive) setQrCoverStatus('error'); };
+    img.src = qrCoverUrl;
+    return () => { alive = false; };
+  }, [qrTarget, qrCoverUrl]);
 
   const load = async () => {
     if (!companyId) { setLoading(false); return; }
@@ -153,6 +172,8 @@ export default function Mesas() {
     setQrTarget(t);
     setQrDataUrl('');
     setPrintPng('');
+    setQrTitle('');
+    setQrInstruction('');
     try {
       const url = buildTableQrUrl(
         resolvePublicBaseUrl(window.location.origin), currentCompany?.slug, t.public_token,
@@ -165,8 +186,13 @@ export default function Mesas() {
   };
 
   // Impressão A4 do material da mesa via PNG (mesmo gerador do download).
+  // Paridade com Configurações: título/instrução + gate de capa + aviso CORS.
   const printTableFlyer = async () => {
     if (!qrTarget || !qrDataUrl) return;
+    if (qrCoverUrl && qrCoverStatus !== 'ok') {
+      toast({ title: 'Capa indisponível', description: 'A imagem da capa não carregou. Verifique em Configurações e tente de novo.', variant: 'destructive' });
+      return;
+    }
     setPrinting(true);
     try {
       const model = buildFlyerModel({
@@ -174,8 +200,19 @@ export default function Mesas() {
         products: [],
         table: qrTarget,
         origin: resolvePublicBaseUrl(window.location.origin),
+        opts: {
+          title: qrTitle.trim() || undefined,
+          instruction: qrInstruction.trim() || undefined,
+        },
       });
-      const png = await renderFlyerPng(model, { qrDataUrl });
+      const png = await renderFlyerPng(model, {
+        qrDataUrl,
+        onMissing: (m) => {
+          if (m?.cover || m?.photos > 0) {
+            toast({ title: 'Material gerado sem imagens', description: 'Capa ou fotos não carregaram (rede/CORS) e ficaram em branco no PNG.' });
+          }
+        },
+      });
       setPrintPng(png);
       setTimeout(() => window.print(), 150);
     } catch (err) {
@@ -365,6 +402,29 @@ export default function Mesas() {
                 <p className="text-[11px] text-muted-foreground mt-2 break-all">
                   {qrDisplayUrl(qrTarget)}
                 </p>
+              </div>
+              <div className="space-y-2 mt-3 text-left">
+                <div className="space-y-1">
+                  <Label>Título do material</Label>
+                  <Input
+                    value={qrTitle}
+                    onChange={(e) => setQrTitle(e.target.value)}
+                    placeholder={DEFAULT_TABLE_TITLE}
+                    maxLength={60}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Instrução</Label>
+                  <Textarea
+                    value={qrInstruction}
+                    onChange={(e) => setQrInstruction(e.target.value)}
+                    rows={2}
+                    placeholder={DEFAULT_INSTRUCTION}
+                  />
+                </div>
+                {qrCoverUrl && qrCoverStatus === 'error' && (
+                  <p className="text-xs text-destructive">A capa não carregou — a impressão usa o fundo padrão.</p>
+                )}
               </div>
             </div>
           )}

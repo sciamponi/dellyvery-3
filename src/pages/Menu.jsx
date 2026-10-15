@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { getStorefrontBySlug } from '@/api/storefront';
 import { resolveTableToken } from '@/api/tables';
@@ -19,6 +19,7 @@ const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', c
 
 export default function Menu() {
   const { slug } = useParams();
+  const navigate = useNavigate();
   const { setCartCompany, addItem, removeItem, items, getTotalItems, getSubtotal } = useCart();
   const [loading, setLoading] = useState(true);
   const [company, setCompany] = useState(null);
@@ -80,6 +81,15 @@ export default function Menu() {
   const handleCloseSide = () => {
     setSideProduct(null);
     setSideOpen(false);
+  };
+
+  // "Continuar pedido" avança à revisão (checkout) sem perder o carrinho;
+  // "Continuar sem adicionais" só fecha a etapa e segue no cardápio.
+  const handleContinueOrder = () => {
+    const mesa = new URLSearchParams(window.location.search).get('mesa');
+    setSideProduct(null);
+    setSideOpen(false);
+    navigate(`/checkout/${slug}${mesa ? `?mesa=${encodeURIComponent(mesa)}` : ''}`);
   };
 
   const handleCloseModal = () => {
@@ -435,7 +445,7 @@ export default function Menu() {
             <Button variant="outline" className="flex-1 min-h-11" onClick={handleCloseSide}>
               Continuar sem adicionais
             </Button>
-            <Button className="flex-1 min-h-11" style={{ backgroundColor: primaryColor }} onClick={handleCloseSide}>
+            <Button className="flex-1 min-h-11" style={{ backgroundColor: primaryColor }} onClick={handleContinueOrder}>
               Continuar pedido
             </Button>
           </div>

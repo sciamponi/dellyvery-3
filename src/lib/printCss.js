@@ -15,6 +15,7 @@ export const FLYER_PRINT_CSS = `
     background: #fff;
   }
   .fly-print img { max-width: 100%; }
+  .fly-print-img { max-height: 265mm; object-fit: contain; }
   .no-print { display: none !important; }
 }
 `;

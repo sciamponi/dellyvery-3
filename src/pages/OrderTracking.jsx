@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Image } from '@/components/ui/image';
 import { useToast } from '@/components/ui/use-toast';
 import { playOrderSound, showOrderNotification } from '@/lib/orderSound';
-import { Package, CheckCircle, Clock, Bike, Store, Table2, Phone, MapPin, Receipt, ChefHat, Home, XCircle } from 'lucide-react';
+import { Package, CheckCircle, Clock, Bike, Store, Table2, Phone, Receipt, ChefHat, Home, XCircle } from 'lucide-react';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -251,23 +251,15 @@ export default function OrderTracking() {
           )}
         </div>
 
-        {/* Customer info */}
+        {/* Customer info — pública via token: mostra só o nome.
+            Telefone/endereço nunca são exibidos aqui, mesmo que a API
+            um dia os retorne (defesa em profundidade). */}
         <div className="rounded-xl border border-border bg-card p-4 space-y-2">
           <h2 className="font-heading font-semibold text-foreground text-sm">Dados de entrega</h2>
           <div className="flex items-start gap-2 text-sm">
             <Phone className="h-4 w-4 text-muted-foreground mt-0.5" />
-            <span className="text-foreground">{order.customer_name} • {order.customer_phone || '—'}</span>
+            <span className="text-foreground">{order.customer_name || '—'}</span>
           </div>
-          {order.order_type === 'delivery' && order.customer_address && (
-            <div className="flex items-start gap-2 text-sm">
-              <MapPin className="h-4 w-4 text-muted-foreground mt-0.5" />
-              <span className="text-foreground">
-                {order.customer_address}
-                {order.customer_neighborhood && `, ${order.customer_neighborhood}`}
-                {order.customer_city && ` — ${order.customer_city}`}
-              </span>
-            </div>
-          )}
         </div>
 
         <Button asChild variant="outline" className="w-full">

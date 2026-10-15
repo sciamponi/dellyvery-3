@@ -99,7 +99,7 @@ export default function Equipe() {
 
   const handleRoleChange = async (m, role) => {
     try {
-      await updateMemberRole(supabase, m.id, role);
+      await updateMemberRole(supabase, sbCompany.id, m.id, role);
       setMembers(prev => prev.map(x => x.id === m.id ? { ...x, role } : x));
       toast({ title: 'Função atualizada!' });
     } catch (err) {
@@ -109,7 +109,7 @@ export default function Equipe() {
 
   const handleToggleActive = async (m) => {
     try {
-      await deactivateMember(supabase, m.id, !m.active);
+      await deactivateMember(supabase, sbCompany.id, m.id, !m.active);
       setMembers(prev => prev.map(x => x.id === m.id ? { ...x, active: !x.active } : x));
       toast({ title: m.active ? 'Membro desativado' : 'Membro reativado' });
     } catch (err) {
@@ -120,7 +120,7 @@ export default function Equipe() {
   const handleToggleDriver = async (d) => {
     try {
       const active = d.status !== 'ativo';
-      await deactivateDriver(supabase, d.id, active);
+      await deactivateDriver(supabase, sbCompany.id, d.id, active);
       setDrivers(prev => prev.map(x => x.id === d.id ? { ...x, status: active ? 'ativo' : 'inativo' } : x));
     } catch (err) {
       toast({ title: 'Erro', description: err?.message, variant: 'destructive' });

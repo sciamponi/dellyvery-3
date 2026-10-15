@@ -105,10 +105,10 @@ export default function GestaoProdutos() {
     if (!deleteTarget) return;
     try {
       if (deleteTarget.type === 'product') {
-        await sbDeleteProduct(supabase, deleteTarget.id);
+        await sbDeleteProduct(supabase, effectiveCompany.id, deleteTarget.id);
         setProducts(prev => prev.filter(p => p.id !== deleteTarget.id));
       } else {
-        await sbDeleteCategory(supabase, deleteTarget.id);
+        await sbDeleteCategory(supabase, effectiveCompany.id, deleteTarget.id);
         setCategories(prev => prev.filter(c => c.id !== deleteTarget.id));
       }
       toast({ title: 'Excluído com sucesso' });
@@ -121,7 +121,7 @@ export default function GestaoProdutos() {
 
   const toggleAvailable = async (product) => {
     try {
-      await sbUpdateProduct(supabase, product.id, { available: !product.available });
+      await sbUpdateProduct(supabase, effectiveCompany.id, product.id, { available: !product.available });
       setProducts(prev => prev.map(p => p.id === product.id ? { ...p, available: !p.available } : p));
     } catch (err) {
       toast({ title: 'Erro', variant: 'destructive' });
@@ -130,7 +130,7 @@ export default function GestaoProdutos() {
 
   const toggleCategoryActive = async (cat) => {
     try {
-      await sbUpdateCategory(supabase, cat.id, { active: !cat.active });
+      await sbUpdateCategory(supabase, effectiveCompany.id, cat.id, { active: !cat.active });
       setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, active: !cat.active } : c));
     } catch (err) {
       toast({ title: 'Erro', variant: 'destructive' });

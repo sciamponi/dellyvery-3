@@ -36,7 +36,7 @@ export default function DriverFormDialog({ open, onOpenChange, driver, companyId
       delete data.id; delete data.company_id; delete data.created_at; delete data.updated_at;
       // Equipe só existe no Supabase (sem entidade legada); a página garante sbActive.
       if (driver) {
-        await updateDriver(supabase, driver.id, data);
+        await updateDriver(supabase, companyId, driver.id, data);
         toast({ title: 'Entregador atualizado!' });
       } else {
         await createDriver(supabase, companyId, data);

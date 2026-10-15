@@ -59,7 +59,7 @@ export default function CategoryFormDialog({ open, onOpenChange, category, compa
       };
       delete data.id; delete data.created_date; delete data.updated_date; delete data.created_by_id;
       if (category) {
-        await sbUpdateCategory(supabase, category.id, data);
+        await sbUpdateCategory(supabase, companyId, category.id, data);
         toast({ title: 'Categoria atualizada!' });
       } else {
         await sbCreateCategory(supabase, companyId, data);

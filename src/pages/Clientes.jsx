@@ -98,7 +98,7 @@ export default function Clientes() {
       const data = { ...form, company_id: company.id, tags: form.tags || [] };
       delete data.id; delete data.created_date; delete data.updated_date; delete data.created_by_id;
       if (editCustomer) {
-        await sbUpdateCustomer(supabase, editCustomer.id, data, {
+        await sbUpdateCustomer(supabase, company.id, editCustomer.id, data, {
           street: editCustomer.address, number: editCustomer.number,
           complement: editCustomer.complement, neighborhood: editCustomer.neighborhood,
           city: editCustomer.city, zip_code: editCustomer.zip_code,
@@ -118,7 +118,7 @@ export default function Clientes() {
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
-      await sbDeleteCustomer(supabase, deleteTarget.id);
+      await sbDeleteCustomer(supabase, company.id, deleteTarget.id);
       setCustomers(prev => prev.filter(c => c.id !== deleteTarget.id));
       toast({ title: 'Cliente excluído' });
     } catch (err) { toast({ title: 'Erro', variant: 'destructive' }); }
@@ -127,7 +127,7 @@ export default function Clientes() {
 
   const toggleFavorite = async (c) => {
     try {
-      await sbUpdateCustomer(supabase, c.id, { is_favorite: !c.is_favorite });
+      await sbUpdateCustomer(supabase, company.id, c.id, { is_favorite: !c.is_favorite });
       setCustomers(prev => prev.map(x => x.id === c.id ? { ...x, is_favorite: !x.is_favorite } : x));
       toast({ title: c.is_favorite ? 'Removido dos favoritos' : 'Adicionado aos favoritos' });
     } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }
@@ -135,7 +135,7 @@ export default function Clientes() {
 
   const toggleBlocked = async (c) => {
     try {
-      await sbUpdateCustomer(supabase, c.id, { is_blocked: !c.is_blocked });
+      await sbUpdateCustomer(supabase, company.id, c.id, { is_blocked: !c.is_blocked });
       setCustomers(prev => prev.map(x => x.id === c.id ? { ...x, is_blocked: !x.is_blocked } : x));
       toast({ title: c.is_blocked ? 'Cliente desbloqueado' : 'Cliente bloqueado' });
     } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }

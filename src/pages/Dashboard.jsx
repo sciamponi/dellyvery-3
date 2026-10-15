@@ -91,8 +91,8 @@ export default function Dashboard() {
   // Marca como lida a notificação de "novo" do pedido (best-effort).
   const markNovoNotificationRead = async (orderId) => {
     try {
-      const list = await listNovoNotifications(supabase, orderId);
-      await Promise.all(list.filter(n => !n.read).map(n => sbMarkRead(supabase, n.id)));
+      const list = await listNovoNotifications(supabase, companyIdRef.current, orderId);
+      await Promise.all(list.filter(n => !n.read).map(n => sbMarkRead(supabase, companyIdRef.current, n.id)));
     } catch (err) { /* ignore */ }
   };
   // FASE 5.4: com sessão Supabase, pedidos/produtos via Supabase (RLS).

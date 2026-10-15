@@ -75,19 +75,20 @@ export async function createZone(client, companyId, data) {
   return fromSupabaseZone(row);
 }
 
-export async function deleteZone(client, id) {
+export async function deleteZone(client, companyId, id) {
   const c = mustBeConfigured(client);
-  const { error } = await c.from('delivery_zones').delete().eq('id', id);
+  const { error } = await c.from('delivery_zones').delete().eq('id', id).eq('company_id', requireCompanyId(companyId));
   if (error) throw error;
 }
 
-export async function updateZone(client, id, data) {
+export async function updateZone(client, companyId, id, data) {
   const c = mustBeConfigured(client);
   if (!id) throw new Error('Região não identificada');
   const { data: row, error } = await c
     .from('delivery_zones')
     .update(toSupabaseZonePatch(data || {}))
     .eq('id', id)
+    .eq('company_id', requireCompanyId(companyId))
     .select()
     .single();
   if (error) throw error;

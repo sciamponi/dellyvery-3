@@ -7,7 +7,7 @@ import { listTables } from '@/api/tables';
 import { listCustomers } from '@/api/customers';
 import { listZones } from '@/api/deliveryZones';
 import { createOrder, editOrder, cancelOrder, getOrderDetail, listOrdersWithItems, assignDriver, buildCreateOrderItems } from '@/api/orders';
-import { listDrivers } from '@/api/team';
+import { listDrivers, getDriver } from '@/api/team';
 import { markDriverNotified } from '@/api/driverNotifications';
 import { buildDriverDeliveryUrl } from '@/lib/driverMessage';
 import { Button } from '@/components/ui/button';
@@ -486,6 +486,10 @@ export default function Pdv() {
       : null;
     submitRef.current = true;
     setSubmitting(true);
+    // Idempotência: uma chave por tentativa — retry do mesmo submit
+    // reaproveita; nova tentativa gera nova chave. Servidor retorna o
+    // pedido existente em vez de duplicar.
+    const attemptKey = crypto.randomUUID();
     try {
       const apiItems = buildCreateOrderItems(items);
       let number;
@@ -508,6 +512,9 @@ export default function Pdv() {
           paymentMethod: paymentMethod || null,
           notes: '',
           changeFor: changeForValue,
+          // Desconto atômico no create (servidor valida 0<=d<=subtotal).
+          discount: discountValue,
+          idempotencyKey: attemptKey,
           // FASE 2: PDV é atendimento presencial (balcão) — funciona mesmo
           // com o restaurante fechado para pedidos online (is_open=false).
           source: 'balcao',
@@ -520,14 +527,6 @@ export default function Pdv() {
             await assignDriver(supabase, savedId, company.id, driverId);
           } catch {
             toast({ title: `Pedido #${number} criado sem entregador`, description: 'Associe o entregador em Pedidos.', variant: 'destructive' });
-          }
-        }
-        // create_order não aceita desconto: aplica via edit em seguida.
-        if (discountValue > 0) {
-          try {
-            await editOrder(supabase, created.order_id, { discount: discountValue });
-          } catch {
-            toast({ title: `Pedido #${number} criado sem desconto`, description: 'Não foi possível aplicar o desconto. Ajuste em Pedidos.', variant: 'destructive' });
           }
         }
         toast({ title: `Pedido #${number} criado!` });
@@ -559,7 +558,10 @@ export default function Pdv() {
     try {
       const detail = await getOrderDetail(supabase, company.id, doneOrder.order_id);
       if (!detail) throw new Error('Pedido não encontrado.');
-      const url = buildDriverDeliveryUrl(detail, driver);
+      // Revalida o entregador no momento do envio (lista pode estar defasada).
+      const fresh = await getDriver(supabase, company.id, driver.id);
+      if (!fresh || !fresh.phone) throw new Error('Entregador inválido para esta empresa.');
+      const url = buildDriverDeliveryUrl(detail, fresh);
       await markDriverNotified(supabase, company.id, {
         orderId: doneOrder.order_id, driverId: driver.id,
         message: `Conversa iniciada manualmente pelo PDV (pedido #${detail.order_number}).`,

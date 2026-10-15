@@ -209,6 +209,7 @@ export async function createOrder(client, {
   companySlug, orderType = 'delivery', tableNumber = '', tableId = null, tableToken = null, items = [],
   customer = {}, deliveryZoneId = null, paymentMethod = '', notes = '',
   source = 'online', changeFor = null, latitude = null, longitude = null,
+  discount = 0, idempotencyKey = null,
 }) {
   const c = mustBeConfigured(client);
   if (!companySlug) throw new Error('Empresa não identificada');
@@ -245,6 +246,10 @@ export async function createOrder(client, {
     p_source: source || 'online',
     // Operação: troco (opcional; servidor valida > 0 e >= total).
     p_change_for: changeFor == null || changeFor === '' ? null : Number(changeFor),
+    // Segurança (20261027): desconto atômico validado no servidor
+    // (0 <= d <= subtotal) + chave de idempotência anti-duplicidade.
+    p_discount: Number(discount) || 0,
+    p_idempotency_key: idempotencyKey || null,
   });
   if (error) rpcError(error);
   return data; // { order_id, order_number, tracking_token }
@@ -375,7 +380,7 @@ export async function assignDriver(client, orderId, companyId, driverId) {
     if (!drv || drv.company_id !== cid) throw new Error('Entregador pertence a outra empresa');
     if (drv.status !== 'ativo') throw new Error('Entregador inativo');
   }
-  const { error: updErr } = await c.from('orders').update({ driver_id: driverId || null }).eq('id', orderId);
+  const { error: updErr } = await c.from('orders').update({ driver_id: driverId || null }).eq('id', orderId).eq('company_id', cid);
   if (updErr) rpcError(updErr);
   // history + audit (best-effort; nunca notification ao cliente)
   try {
@@ -448,7 +453,7 @@ export async function linkOrderCustomer(client, orderId, companyId, customerId) 
   const { error: updErr } = await c.from('orders').update({
     customer_id: cust.id,
     customer_data: { name: cust.name || '', phone: cust.phone || '', email: cust.email || '' },
-  }).eq('id', orderId);
+  }).eq('id', orderId).eq('company_id', cid);
   if (updErr) rpcError(updErr);
   await logOrderLink(c, cid, order, 'link_customer', `Cliente vinculado: ${cust.name || 'sem nome'}`, {
     customer_id: cust.id,
@@ -476,7 +481,7 @@ export async function linkOrderTable(client, orderId, companyId, tableId) {
   if (table.active === false) throw new Error('Mesa inativa');
   const { error: updErr } = await c.from('orders').update({
     table_id: table.id, table_number: table.name || '',
-  }).eq('id', orderId);
+  }).eq('id', orderId).eq('company_id', cid);
   if (updErr) rpcError(updErr);
   await logOrderLink(c, cid, order, 'link_table', `Mesa vinculada: ${table.name || ''}`, {
     table_id: table.id,
@@ -552,17 +557,18 @@ export async function listNotifications(client, companyId, limit = 30) {
   }));
 }
 
-export async function markNotificationRead(client, notificationId) {
+export async function markNotificationRead(client, companyId, notificationId) {
   const c = mustBeConfigured(client);
-  const { error } = await c.from('notifications').update({ read: true }).eq('id', notificationId);
+  const { error } = await c.from('notifications').update({ read: true }).eq('id', notificationId).eq('company_id', requireCompanyId(companyId));
   if (error) rpcError(error);
 }
 
-export async function listNovoNotifications(client, orderId) {
+export async function listNovoNotifications(client, companyId, orderId) {
   const c = mustBeConfigured(client);
   const { data, error } = await c
     .from('notifications')
     .select('*')
+    .eq('company_id', requireCompanyId(companyId))
     .eq('order_id', orderId)
     .eq('status', 'novo');
   if (error) rpcError(error);

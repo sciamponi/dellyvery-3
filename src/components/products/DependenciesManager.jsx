@@ -114,7 +114,7 @@ export default function DependenciesManager({ companyId }) {
   // exigidos — combos com componentes obrigatórios). Servidor revalida.
   const handleMode = async (productId, mode) => {
     try {
-      await sbUpdateProduct(supabase, productId, { dependency_mode: mode });
+      await sbUpdateProduct(supabase, companyId, productId, { dependency_mode: mode });
       setProducts((prev) => (prev || []).map((p) => (p.id === productId ? { ...p, dependency_mode: mode } : p)));
       toast({ title: mode === 'all' ? 'Exige todos os itens!' : 'Basta um dos itens!' });
     } catch (err) {

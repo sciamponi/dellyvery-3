@@ -273,6 +273,9 @@ export default function Checkout() {
     submitRef.current = true;
     setSubmitting(true);
     setError('');
+    // Idempotência: chave estável por tentativa; retry reaproveita e o
+    // servidor retorna o pedido existente em vez de duplicar.
+    const attemptKey = crypto.randomUUID();
     try {
       // Localização da entrega (somente delivery): GPS fixado vale;
       // senão, geocodifica o endereço (falha => segue sem coordenadas e
@@ -310,7 +313,8 @@ export default function Checkout() {
         latitude: coords ? coords.lat : null,
         longitude: coords ? coords.lng : null,
         paymentMethod,
-        notes
+        notes,
+        idempotencyKey: attemptKey,
       });
       // Retomada: guarda o token por loja (falha de storage nunca bloqueia).
       saveResume(slug, created.tracking_token);

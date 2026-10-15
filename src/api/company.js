@@ -99,7 +99,9 @@ export async function getStoreTheme(client, companyId) {
 
 export async function updateStoreTheme(client, companyId, theme) {
   const c = mustBeConfigured(client);
-  const payload = { company_id: requireCompanyId(companyId), ...(theme || {}) };
+  // company_id do contexto sempre por último: payload nunca sobrescreve.
+  const payload = { ...(theme || {}), company_id: requireCompanyId(companyId) };
+  delete payload.id;
   delete payload.created_at;
   delete payload.updated_at;
   const { data, error } = await c

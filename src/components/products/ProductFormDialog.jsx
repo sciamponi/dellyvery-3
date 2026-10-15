@@ -215,7 +215,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
       };
       delete data.id; delete data.created_date; delete data.updated_date; delete data.created_by_id;
       if (product) {
-        await sbUpdateProduct(supabase, product.id, data);
+        await sbUpdateProduct(supabase, companyId, product.id, data);
         toast({ title: 'Produto atualizado!' });
       } else {
         await sbCreateProduct(supabase, companyId, data);

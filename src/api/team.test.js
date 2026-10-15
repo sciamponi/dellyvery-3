@@ -59,16 +59,17 @@ describe('team — funcionários', () => {
     assert.deepEqual(client.calls[0], { fn: 'list_team', args: { p_company_id: 'c1' } });
   });
 
-  it('updateMemberRole valida role e nunca envia company_id', async () => {
+  it('updateMemberRole valida role e aplica escopo da empresa', async () => {
     const client = createMockClient({ tables: { company_members: { single: { data: { id: 'm1', role: 'ADMIN' }, error: null } } } });
-    await updateMemberRole(client, 'm1', 'ADMIN');
+    await updateMemberRole(client, 'c1', 'm1', 'ADMIN');
     assert.deepEqual(client.calls[0].payload, { role: 'ADMIN' });
-    await assert.rejects(() => updateMemberRole(client, 'm1', 'SUPER'), /Função inválida/);
+    await assert.rejects(() => updateMemberRole(client, 'c1', 'm1', 'SUPER'), /Função inválida/);
+    await assert.rejects(() => updateMemberRole(client, null, 'm1', 'ADMIN'), /Empresa atual/);
   });
 
-  it('deactivateMember alterna active', async () => {
+  it('deactivateMember alterna active com escopo da empresa', async () => {
     const client = createMockClient({ tables: { company_members: { single: { data: {}, error: null } } } });
-    await deactivateMember(client, 'm1', false);
+    await deactivateMember(client, 'c1', 'm1', false);
     assert.deepEqual(client.calls[0].payload, { active: false });
   });
 
@@ -97,9 +98,9 @@ describe('team — entregadores', () => {
     await assert.rejects(() => createDriver(client, 'c1', { name: ' ' }), /Nome é obrigatório/);
   });
 
-  it('deactivateDriver alterna status', async () => {
+  it('deactivateDriver alterna status com escopo da empresa', async () => {
     const client = createMockClient({ tables: { delivery_drivers: { single: { data: {}, error: null } } } });
-    await deactivateDriver(client, 'd1', false);
+    await deactivateDriver(client, 'c1', 'd1', false);
     assert.deepEqual(client.calls[0].payload, { status: 'inativo' });
   });
 

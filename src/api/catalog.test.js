@@ -23,11 +23,15 @@ import {
 // resultados configurados por tabela.
 function createMockClient({ tables = {} } = {}) {
   const calls = [];
+  const filters = [];
   const table = (name) => {
     const cfg = tables[name] || {};
     const chain = {
       select: () => chain,
-      eq: () => chain,
+      eq: (col, val) => {
+        filters.push({ table: name, col, val });
+        return chain;
+      },
       order: () => chain,
       insert: (payload) => {
         calls.push({ table: name, op: 'insert', payload });
@@ -57,7 +61,7 @@ function createMockClient({ tables = {} } = {}) {
     };
     return chain;
   };
-  return { calls, from: (name) => table(name) };
+  return { calls, filters, from: (name) => table(name) };
 }
 
 describe('catalog — mapeamento categorias', () => {
@@ -113,10 +117,11 @@ describe('catalog — categorias CRUD', () => {
     assert.equal(client.calls.length, 0);
   });
 
-  it('excluir chama delete', async () => {
+  it('excluir chama delete com escopo da empresa', async () => {
     const client = createMockClient();
-    await deleteCategory(client, 'c1');
+    await deleteCategory(client, 'coA', 'c1');
     assert.deepEqual(client.calls[0], { table: 'categories', op: 'delete' });
+    assert.ok(client.filters.some((f) => f.table === 'categories' && f.col === 'company_id' && f.val === 'coA'));
   });
 });
 
@@ -148,7 +153,7 @@ describe('catalog — produtos CRUD', () => {
     assert.equal(client.calls[0].payload.company_id, 'coA');
   });
 
-  it('update nunca envia company_id', async () => {
+  it('update com escopo da empresa e sem company_id no payload', async () => {
     const updated = { id: 'p1', company_id: 'coA', name: 'P2', price: 6, active: true, options: [] };
     const client = createMockClient({
       tables: {
@@ -158,14 +163,16 @@ describe('catalog — produtos CRUD', () => {
         },
       },
     });
-    await updateProduct(client, 'p1', { name: 'P2', company_id: 'coB' });
+    await updateProduct(client, 'coA', 'p1', { name: 'P2', company_id: 'coB' });
     assert.ok(!('company_id' in client.calls[0].payload));
+    assert.ok(client.filters.some((f) => f.table === 'products' && f.col === 'company_id' && f.val === 'coA'));
   });
 
-  it('excluir chama delete', async () => {
+  it('excluir produto com escopo da empresa', async () => {
     const client = createMockClient();
-    await deleteProduct(client, 'p1');
+    await deleteProduct(client, 'coA', 'p1');
     assert.deepEqual(client.calls[0], { table: 'products', op: 'delete' });
+    assert.ok(client.filters.some((f) => f.col === 'company_id' && f.val === 'coA'));
   });
 
   it('assertCategoryOfCompany rejeita categoria inexistente', async () => {

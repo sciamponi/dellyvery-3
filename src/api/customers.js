@@ -104,21 +104,22 @@ export async function createCustomer(client, companyId, data) {
   return fromSupabaseCustomer(row);
 }
 
-export async function updateCustomer(client, id, data, prevAddress) {
+export async function updateCustomer(client, companyId, id, data, prevAddress) {
   const c = mustBeConfigured(client);
   const { data: row, error } = await c
     .from('customers')
     .update(toSupabaseCustomerPatch({ ...data, __prevAddress: prevAddress }))
     .eq('id', id)
+    .eq('company_id', requireCompanyId(companyId))
     .select()
     .single();
   if (error) throw error;
   return fromSupabaseCustomer(row);
 }
 
-export async function deleteCustomer(client, id) {
+export async function deleteCustomer(client, companyId, id) {
   const c = mustBeConfigured(client);
-  const { error } = await c.from('customers').delete().eq('id', id);
+  const { error } = await c.from('customers').delete().eq('id', id).eq('company_id', requireCompanyId(companyId));
   if (error) throw error;
 }
 

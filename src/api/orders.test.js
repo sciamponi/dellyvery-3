@@ -14,6 +14,8 @@ import {
   editOrder,
   getOrderByToken,
   listNotifications,
+  markNotificationRead,
+  listNovoNotifications,
   subscribeCompanyTable,
   __activeChannelCount,
   assignDriver,
@@ -60,17 +62,25 @@ function createRealtimeMockClient() {
 
 function createMockClient({ tables = {}, rpcs = {} } = {}) {
   const calls = { rpc: [] };
+  const writes = [];
+  const filters = [];
   const table = (name) => {
     const cfg = tables[name] || {};
     const chain = {
       select: () => chain,
-      eq: () => chain,
+      eq: (col, val) => {
+        filters.push({ table: name, col, val });
+        return chain;
+      },
       neq: () => chain,
       in: () => chain,
       order: () => chain,
       limit: () => chain,
       insert: (p) => chain,
-      update: (p) => chain,
+      update: (p) => {
+        writes.push({ table: name, payload: p });
+        return chain;
+      },
       delete: () => chain,
       single: async () => cfg.single || { data: null, error: null },
       maybeSingle: async () => cfg.maybeSingle || { data: null, error: null },
@@ -86,6 +96,8 @@ function createMockClient({ tables = {}, rpcs = {} } = {}) {
   };
   return {
     calls,
+    writes,
+    filters,
     from: (name) => table(name),
     rpc: async (fn, args) => {
       calls.rpc.push({ fn, args });
@@ -154,6 +166,37 @@ describe('orders — escrita via RPC (nunca direta)', () => {
       items: [{ product_id: 'p', quantity: 1 }], customer: {},
     });
     assert.equal(c2.calls.rpc[0].args.p_table_id, null);
+  });
+
+  it('createOrder envia desconto atômico + chave de idempotência', async () => {
+    const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o', order_number: 3, tracking_token: 't' }, error: null } } });
+    await createOrder(client, {
+      companySlug: 'loja', orderType: 'delivery',
+      items: [{ product_id: 'p', quantity: 1 }], customer: { name: 'Z', phone: '119' },
+      discount: 5, idempotencyKey: 'key-123',
+    });
+    assert.equal(client.calls.rpc[0].args.p_discount, 5);
+    assert.equal(client.calls.rpc[0].args.p_idempotency_key, 'key-123');
+  });
+
+  it('createOrder default: desconto 0 e sem chave', async () => {
+    const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
+    await createOrder(client, {
+      companySlug: 'loja', items: [{ product_id: 'p', quantity: 1 }], customer: {},
+    });
+    assert.equal(client.calls.rpc[0].args.p_discount, 0);
+    assert.equal(client.calls.rpc[0].args.p_idempotency_key, null);
+  });
+
+  it('createOrder repassa coordenadas para zona por polígono', async () => {
+    const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
+    await createOrder(client, {
+      companySlug: 'loja', orderType: 'delivery',
+      items: [{ product_id: 'p', quantity: 1 }], customer: { name: 'Z', phone: '119', address: 'R' },
+      latitude: -23.55, longitude: -46.6,
+    });
+    assert.equal(client.calls.rpc[0].args.p_lat, -23.55);
+    assert.equal(client.calls.rpc[0].args.p_lng, -46.6);
   });
 
   it('createOrder repassa troco (p_change_for) e mapeia change_for', async () => {
@@ -302,6 +345,23 @@ describe('orders — escrita via RPC (nunca direta)', () => {
     const list = await listNotifications(client, 'c');
     assert.equal(list[0].title, 'Novo pedido #4');
     assert.equal(list[0].created_date, 't');
+  });
+
+  it('writes operacionais e notificações têm escopo da empresa', async () => {
+    const tables = {
+      orders: { maybeSingle: { data: { id: 'o1', company_id: 'c1', status: 'novo' }, error: null } },
+      delivery_drivers: { maybeSingle: { data: { id: 'd1', company_id: 'c1', status: 'ativo' }, error: null } },
+      customers: { maybeSingle: { data: { id: 'k1', company_id: 'c1' }, error: null } },
+    };
+    const client = createMockClient({ tables });
+    await assignDriver(client, 'o1', 'c1', 'd1');
+    await linkOrderCustomer(client, 'o1', 'c1', 'k1');
+    await markNotificationRead(client, 'c1', 'n1');
+    await listNovoNotifications(client, 'c1', 'o1');
+    const scoped = (t) => client.filters.some((f) => f.table === t && f.col === 'company_id' && f.val === 'c1');
+    assert.ok(client.writes.filter((w) => w.table === 'orders').length >= 1);
+    assert.ok(scoped('orders'));
+    assert.ok(scoped('notifications'));
   });
 });
 

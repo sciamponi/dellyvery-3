@@ -165,16 +165,16 @@ export async function createCategory(client, companyId, data) {
   return fromSupabaseCategory(row);
 }
 
-export async function updateCategory(client, id, data) {
+export async function updateCategory(client, companyId, id, data) {
   const c = mustBeConfigured(client);
-  const { data: row, error } = await c.from('categories').update(toSupabaseCategoryPatch(data)).eq('id', id).select().single();
+  const { data: row, error } = await c.from('categories').update(toSupabaseCategoryPatch(data)).eq('id', id).eq('company_id', requireCompanyId(companyId)).select().single();
   if (error) throw error;
   return fromSupabaseCategory(row);
 }
 
-export async function deleteCategory(client, id) {
+export async function deleteCategory(client, companyId, id) {
   const c = mustBeConfigured(client);
-  const { error } = await c.from('categories').delete().eq('id', id);
+  const { error } = await c.from('categories').delete().eq('id', id).eq('company_id', requireCompanyId(companyId));
   if (error) throw error;
 }
 
@@ -236,8 +236,9 @@ export async function createProduct(client, companyId, data) {
   return fromSupabaseProduct(row);
 }
 
-export async function updateProduct(client, id, data) {
+export async function updateProduct(client, companyId, id, data) {
   const c = mustBeConfigured(client);
+  const cid = requireCompanyId(companyId);
   const payload = toSupabaseProductPatch(data); // sem company_id: imutável (trigger)
   if (data.category_id !== undefined) {
     // valida contra a empresa dona da linha (RLS garante visibilidade só da própria)
@@ -246,13 +247,13 @@ export async function updateProduct(client, id, data) {
     if (!current) throw new Error('Produto não encontrado');
     await assertCategoryOfCompany(c, current.company_id, data.category_id || null);
   }
-  const { data: row, error } = await c.from('products').update(payload).eq('id', id).select().single();
+  const { data: row, error } = await c.from('products').update(payload).eq('id', id).eq('company_id', cid).select().single();
   if (error) throw error;
   return fromSupabaseProduct(row);
 }
 
-export async function deleteProduct(client, id) {
+export async function deleteProduct(client, companyId, id) {
   const c = mustBeConfigured(client);
-  const { error } = await c.from('products').delete().eq('id', id);
+  const { error } = await c.from('products').delete().eq('id', id).eq('company_id', requireCompanyId(companyId));
   if (error) throw error;
 }

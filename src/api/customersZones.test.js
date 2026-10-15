@@ -21,11 +21,15 @@ import {
 
 function createMockClient({ tables = {} } = {}) {
   const calls = [];
+  const filters = [];
   const table = (name) => {
     const cfg = tables[name] || {};
     const chain = {
       select: () => chain,
-      eq: () => chain,
+      eq: (col, val) => {
+        filters.push({ table: name, col, val });
+        return chain;
+      },
       order: () => chain,
       insert: (payload) => {
         calls.push({ table: name, op: 'insert', payload });
@@ -51,7 +55,7 @@ function createMockClient({ tables = {} } = {}) {
     };
     return chain;
   };
-  return { calls, from: (name) => table(name) };
+  return { calls, filters, from: (name) => table(name) };
 }
 
 describe('customers — mapeamento', () => {
@@ -97,10 +101,19 @@ describe('customers — CRUD', () => {
     assert.equal(client.calls.length, 0);
   });
 
-  it('excluir chama delete', async () => {
+  it('excluir chama delete com escopo da empresa', async () => {
     const client = createMockClient();
-    await deleteCustomer(client, '1');
+    await deleteCustomer(client, 'co', '1');
     assert.deepEqual(client.calls[0], { table: 'customers', op: 'delete' });
+    assert.ok(client.filters.some((f) => f.col === 'company_id' && f.val === 'co'));
+  });
+
+  it('atualizar aplica escopo da empresa', async () => {
+    const client = createMockClient({
+      tables: { customers: { single: { data: { id: '1' }, error: null } } },
+    });
+    await updateCustomer(client, 'co', '1', { name: 'B' });
+    assert.ok(client.filters.some((f) => f.table === 'customers' && f.col === 'company_id' && f.val === 'co'));
   });
 });
 
@@ -133,10 +146,11 @@ describe('zones — CRUD', () => {
     assert.equal(client.calls.length, 0);
   });
 
-  it('excluir chama delete', async () => {
+  it('excluir chama delete com escopo da empresa', async () => {
     const client = createMockClient();
-    await deleteZone(client, 'z');
+    await deleteZone(client, 'co', 'z');
     assert.deepEqual(client.calls[0], { table: 'delivery_zones', op: 'delete' });
+    assert.ok(client.filters.some((f) => f.col === 'company_id' && f.val === 'co'));
   });
 
   it('mapeia polygon GeoJSON; inválido vira null', () => {
@@ -151,12 +165,14 @@ describe('zones — CRUD', () => {
     const client = createMockClient({
       tables: { delivery_zones: { single: { data: { id: 'z', polygon: geo }, error: null } } },
     });
-    const out = await updateZone(client, 'z', { polygon: geo });
+    const out = await updateZone(client, 'co', 'z', { polygon: geo });
     assert.deepEqual(out.polygon, geo);
     assert.deepEqual(client.calls[0].payload, { polygon: geo });
-    await assert.rejects(updateZone(client, '', { polygon: geo }), /identificada/);
-    await assert.rejects(updateZone(client, 'z', { polygon: { type: 'Polygon', coordinates: [] } }), /inválido/);
-    await updateZone(client, 'z', { polygon: null });
+    assert.ok(client.filters.some((f) => f.col === 'company_id' && f.val === 'co'));
+    await assert.rejects(updateZone(client, 'co', '', { polygon: geo }), /identificada/);
+    await assert.rejects(updateZone(client, 'co', 'z', { polygon: { type: 'Polygon', coordinates: [] } }), /inválido/);
+    await updateZone(client, 'co', 'z', { polygon: null });
     assert.deepEqual(client.calls[1].payload, { polygon: null });
   });
+
 });

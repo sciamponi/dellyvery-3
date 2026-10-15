@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   formatAddressLines, formatOrderItems,
   buildDriverDeliveryMessage, buildDriverDeliveryUrl,
+  buildDriverMapsLink,
 } from './driverMessage.js';
 
 const order = {
@@ -37,11 +38,39 @@ describe('driverMessage — montagem com dados reais', () => {
     assert.ok(text.includes('Pedido #42'));
     assert.ok(text.includes('Maria'));
     assert.ok(text.includes('Rua A, 10'));
-    assert.ok(text.includes('2x X-Bacon (Cheddar) [sem cebola]'));
+    assert.ok(text.includes('2x X-Bacon (Cheddar)'));
     assert.ok(text.includes('Portão azul'));
     assert.ok(text.includes('Pagamento: dinheiro'));
     assert.ok(text.includes('Troco para:'));
     assert.ok(text.includes('Confirme o recebimento'));
+  });
+
+  it('minimização de PII no link wa.me', () => {
+    const { text } = buildDriverDeliveryMessage(
+      { ...order, customer_name: 'Maria Silva Souza' },
+      driver,
+    );
+    assert.ok(text.includes('Cliente: Maria'));
+    assert.ok(!text.includes('Silva'));
+    assert.ok(!text.includes('Referência:'));
+    assert.ok(!text.includes('ap 2'));
+    assert.ok(!text.includes('01000-000'));
+    assert.ok(!text.includes('[sem cebola]'));
+    assert.ok(text.includes('11999998888'));
+    assert.ok(text.includes('Bairro: Centro'));
+    assert.ok(text.includes('Total:'));
+  });
+
+  it('mapa na mensagem só com coordenadas explícitas', () => {
+    const semCoords = buildDriverDeliveryMessage(order, driver);
+    assert.ok(!semCoords.text.includes('Mapa:'));
+    const comCoords = buildDriverDeliveryMessage(
+      { ...order, lat: -23.55, lng: -46.63 },
+      driver,
+    );
+    assert.ok(comCoords.text.includes('Mapa: https://www.google.com/maps/search/?api=1&query=-23.55,-46.63'));
+    assert.equal(buildDriverMapsLink({ lat: 0, lng: 0 }), '');
+    assert.equal(buildDriverMapsLink(null), '');
   });
 
   it('omite opcionais ausentes; exige pedido e telefone', () => {

@@ -408,7 +408,7 @@ export default function Configuracoes() {
 
   const deleteZone = async (id) => {
     try {
-      await sbDeleteZone(supabase, id);
+      await sbDeleteZone(supabase, sbCompany?.id || company.id, id);
       setZones(prev => prev.filter(z => z.id !== id));
     } catch (err) { toast({ title: 'Erro', description: err?.message, variant: 'destructive' }); }
   };
@@ -420,7 +420,7 @@ export default function Configuracoes() {
     if (!zoneEditing) return;
     setZoneSaving(true);
     try {
-      const updated = await sbUpdateZone(supabase, zoneEditing.id, { polygon: geo });
+      const updated = await sbUpdateZone(supabase, sbCompany?.id || company.id, zoneEditing.id, { polygon: geo });
       setZones(prev => prev.map(z => z.id === updated.id ? updated : z));
       toast({ title: 'Região salva!' });
       setZoneMapId(null);
@@ -434,7 +434,7 @@ export default function Configuracoes() {
   const clearZoneBoundary = async (zone) => {
     if (!window.confirm(`Remover o contorno de "${zone.name}"? A taxa e o nome são mantidos.`)) return;
     try {
-      const updated = await sbUpdateZone(supabase, zone.id, { polygon: null });
+      const updated = await sbUpdateZone(supabase, sbCompany?.id || company.id, zone.id, { polygon: null });
       setZones(prev => prev.map(z => z.id === updated.id ? updated : z));
       toast({ title: 'Contorno removido!' });
     } catch (err) {

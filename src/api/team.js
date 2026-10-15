@@ -43,17 +43,17 @@ export async function listMembers(client, companyId) {
   return Array.isArray(data) ? data : [];
 }
 
-export async function updateMemberRole(client, memberId, role) {
+export async function updateMemberRole(client, companyId, memberId, role) {
   const c = mustBeConfigured(client);
   if (!TEAM_ROLE_ORDER.includes(role)) throw new Error('Função inválida');
-  const { data, error } = await c.from('company_members').update({ role }).eq('id', memberId).select().single();
+  const { data, error } = await c.from('company_members').update({ role }).eq('id', memberId).eq('company_id', requireCompanyId(companyId)).select().single();
   if (error) rpcError(error);
   return data;
 }
 
-export async function deactivateMember(client, memberId, active) {
+export async function deactivateMember(client, companyId, memberId, active) {
   const c = mustBeConfigured(client);
-  const { data, error } = await c.from('company_members').update({ active: !!active }).eq('id', memberId).select().single();
+  const { data, error } = await c.from('company_members').update({ active: !!active }).eq('id', memberId).eq('company_id', requireCompanyId(companyId)).select().single();
   if (error) rpcError(error);
   return data;
 }
@@ -84,9 +84,9 @@ export async function listDrivers(client, companyId) {
   return data || [];
 }
 
-export async function getDriver(client, id) {
+export async function getDriver(client, companyId, id) {
   const c = mustBeConfigured(client);
-  const { data, error } = await c.from('delivery_drivers').select('*').eq('id', id).maybeSingle();
+  const { data, error } = await c.from('delivery_drivers').select('*').eq('id', id).eq('company_id', requireCompanyId(companyId)).maybeSingle();
   if (error) rpcError(error);
   return data || null;
 }
@@ -103,13 +103,13 @@ export async function createDriver(client, companyId, data) {
   return row;
 }
 
-export async function updateDriver(client, id, data) {
+export async function updateDriver(client, companyId, id, data) {
   const c = mustBeConfigured(client);
-  const { data: row, error } = await c.from('delivery_drivers').update(toSupabaseDriverPatch(data)).eq('id', id).select().single();
+  const { data: row, error } = await c.from('delivery_drivers').update(toSupabaseDriverPatch(data)).eq('id', id).eq('company_id', requireCompanyId(companyId)).select().single();
   if (error) rpcError(error);
   return row;
 }
 
-export async function deactivateDriver(client, id, active) {
-  return updateDriver(client, id, { status: active ? 'ativo' : 'inativo' });
+export async function deactivateDriver(client, companyId, id, active) {
+  return updateDriver(client, companyId, id, { status: active ? 'ativo' : 'inativo' });
 }

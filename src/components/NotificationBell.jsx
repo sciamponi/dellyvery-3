@@ -48,7 +48,7 @@ export default function NotificationBell({ companyId, onSelectOrder }) {
   const markRead = async (notif) => {
     if (notif.read) return;
     try {
-      await markNotificationRead(supabase, notif.id);
+      await markNotificationRead(supabase, companyId, notif.id);
       setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
     } catch (err) { /* ignore */ }
   };

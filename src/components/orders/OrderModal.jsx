@@ -13,6 +13,7 @@ import PrintPromptModal from '@/components/orders/PrintPromptModal';
 import { normalizePrintSettings, markPrinted } from '@/lib/printSettings';
 import { decidePrintTrigger, openPrintWindow, printUrl, PRINT_FAILURE_MESSAGE } from '@/lib/printTrigger';
 import { formatAddress, resolveAdvanceFlow } from '@/lib/deliveryRoute';
+import { groupComplements, isFreeComplement, itemsComplementsTotal } from '@/lib/orderItemView';
 import { listDrivers } from '@/api/team';
 import { assignDriver as sbAssignDriver } from '@/api/orders';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
@@ -636,6 +637,11 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
             <span>
               <span className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pedido</span>
               <span className="font-heading text-3xl font-bold">#{order.order_number}</span>
+              {order.created_date && (
+                <span className="block text-xs text-muted-foreground mt-0.5">
+                  {new Date(order.created_date).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
             </span>
             <span className={`text-sm px-3 py-1.5 rounded-full font-semibold whitespace-nowrap ${STATUS_PILL[order.status] || STATUS_PILL.novo}`}>
               {stageName || STATUS_LABELS[order.status] || order.status}
@@ -860,6 +866,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-medium text-foreground truncate">
                         {driver?.name || (order.driver_id ? 'Vinculado' : 'Sem entregador')}
+                        {driver?.phone && <span className="text-muted-foreground"> • {driver.phone}</span>}
                         {order.driver_id && defaultDriverId && order.driver_id === defaultDriverId && (
                           <span className="ml-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Padrão</span>
                         )}
@@ -980,9 +987,20 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                           {item.quantity} {item.quantity === 1 ? 'unidade' : 'unidades'} • {fmtCurrency(item.unit_price)} cada
                         </p>
                         {item.complements && item.complements.length > 0 && (
-                          <p className="text-xs text-muted-foreground mt-1 break-words">
-                            + {item.complements.map(c => `${c.quantity > 1 ? `${c.quantity}x ` : ''}${c.option_name} (${fmtCurrency(c.price)})`).join(', ')}
-                          </p>
+                          <div className="mt-1.5 space-y-1">
+                            {groupComplements(item.complements).map((g, gi) => (
+                              <p key={gi} className="text-xs text-muted-foreground break-words">
+                                <span className="font-semibold">{g.group}: </span>
+                                {g.items.map((c, ci) => (
+                                  <span key={ci}>
+                                    {ci > 0 && ', '}
+                                    {Number(c.quantity) > 1 ? `${c.quantity}x ` : ''}{c.option_name || c.name}
+                                    {' '}({isFreeComplement(c) ? 'Grátis' : fmtCurrency(c.price)})
+                                  </span>
+                                ))}
+                              </p>
+                            ))}
+                          </div>
                         )}
                         {item.notes && <p className="text-xs text-muted-foreground italic mt-1 break-words">📝 {item.notes}</p>}
                       </div>
@@ -996,8 +1014,10 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
             {/* Totals */}
             <div className="rounded-2xl border border-border p-4 space-y-1 text-sm">
               <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{fmtCurrency(order.subtotal)}</span></div>
+              {itemsComplementsTotal(order.items) > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Adicionais inclusos</span><span>{fmtCurrency(itemsComplementsTotal(order.items))}</span></div>}
               {order.delivery_fee > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Taxa de entrega</span><span>{fmtCurrency(order.delivery_fee)}</span></div>}
               {order.discount > 0 && <div className="flex justify-between text-green-600"><span>Desconto</span><span>-{fmtCurrency(order.discount)}</span></div>}
+              {order.change_for != null && <div className="flex justify-between"><span className="text-muted-foreground">Troco para</span><span>{fmtCurrency(order.change_for)}</span></div>}
               <div className="flex items-baseline justify-between pt-2 border-t border-border">
                 <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total</span>
                 <span className="font-heading text-3xl font-bold">{fmtCurrency(order.total)}</span>
@@ -1010,6 +1030,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                 <Receipt className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="text-muted-foreground">Pagamento:</span>
                 <span className="font-medium truncate">{order.payment_method}</span>
+                {order.payment_status && <span className="text-muted-foreground">• {order.payment_status}</span>}
               </div>
             )}
             {order.notes && (

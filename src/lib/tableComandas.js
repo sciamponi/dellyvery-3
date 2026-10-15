@@ -62,34 +62,66 @@ export function comandasTotal(comandas) {
   return (comandas || []).reduce((s, c) => s + (Number(c.total) || 0), 0);
 }
 
+// Reconstrói a seleção V2 a partir do snapshot persistido (linhas com
+// step_id/option_id). Soma por opção: seguro porque, sem allow_repeat, o
+// servidor nunca gera linhas fracionadas (qty>1 ou duplicada seria
+// rejeitada na origem); com allow_repeat, a soma é a seleção original.
+// Sem ids (legado/misto) => undefined (caminho legado intacto).
+export function configFromSnapshot(complements) {
+  const list = Array.isArray(complements) ? complements : [];
+  if (list.length === 0) return undefined;
+  const byStep = new Map();
+  for (const c of list) {
+    if (!c?.step_id || !c?.option_id) return undefined;
+    if (!byStep.has(c.step_id)) byStep.set(c.step_id, new Map());
+    const opts = byStep.get(c.step_id);
+    opts.set(c.option_id, (opts.get(c.option_id) || 0) + (Number(c.quantity) || 0));
+  }
+  const steps = [...byStep.entries()].map(([step_id, opts]) => ({
+    step_id,
+    items: [...opts.entries()]
+      .filter(([, qty]) => qty > 0)
+      .map(([option_id, quantity]) => ({ option_id, quantity })),
+  })).filter((s) => s.items.length > 0);
+  if (steps.length === 0) return undefined;
+  return { steps };
+}
+
 // Achata itens de várias comandas no formato aceito por editOrder
-// (product_id/quantity/complements/notes). Não soma linhas: o backend
+// (product_id/quantity/complements/notes/config). Não soma linhas: o backend
 // recalcula preços/totais a partir do catálogo.
 export function mergeComandaItems(itemLists) {
   const out = [];
   for (const list of itemLists || []) {
     for (const i of list || []) {
       if (!i?.product_id || !(Number(i.quantity) > 0)) continue;
-      out.push({
+      const line = {
         product_id: i.product_id,
         quantity: Number(i.quantity),
         complements: Array.isArray(i.complements) ? i.complements : [],
         notes: i.notes || '',
-      });
+      };
+      const config = i.config || configFromSnapshot(i.complements);
+      if (config) line.config = config;
+      out.push(line);
     }
   }
   return out;
 }
 
 // Converte item do adapter (lista com itens) para rascunho editável do PDV.
+// id estável por linha (order_items.id; senão product_id).
 export function toPdvDraftItem(item) {
+  const complements = Array.isArray(item.complements) ? item.complements : [];
   return {
+    id: item.id || item.product_id,
     product_id: item.product_id,
     name: item.name || item.product_name || '',
     image_url: item.image_url || '',
     unit_price: Number(item.unit_price) || 0,
     quantity: Number(item.quantity) || 1,
-    complements: Array.isArray(item.complements) ? item.complements : [],
+    complements,
     notes: item.notes || '',
+    config: item.config || configFromSnapshot(complements),
   };
 }

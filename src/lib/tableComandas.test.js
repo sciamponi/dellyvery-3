@@ -9,6 +9,7 @@ import {
   comandasTotal,
   mergeComandaItems,
   toPdvDraftItem,
+  configFromSnapshot,
 } from './tableComandas.js';
 
 const O = (over = {}) => ({
@@ -82,5 +83,41 @@ describe('tableComandas — comandas derivadas de pedidos', () => {
     assert.equal(d.unit_price, 16);
     assert.equal(d.quantity, 2);
     assert.deepEqual(d.complements, []);
+    assert.equal(d.config, undefined);
+  });
+
+  it('configFromSnapshot reconstrói seleção V2 (com ids); legado => undefined', () => {
+    assert.equal(configFromSnapshot([]), undefined);
+    assert.equal(configFromSnapshot([{ group_name: 'G', option_name: 'X' }]), undefined);
+    assert.equal(
+      configFromSnapshot([
+        { group_name: 'G', option_name: 'X' },
+        { group_name: 'T', option_name: 'M', step_id: 's1', option_id: 'o1', price: 2, quantity: 1 },
+      ]),
+      undefined,
+    );
+    assert.deepEqual(
+      configFromSnapshot([
+        { group_name: 'Tamanho', option_name: 'M', price: 2, quantity: 1, step_id: 's1', option_id: 'o1' },
+        { group_name: 'Adicionais', option_name: 'Q', price: 0, quantity: 1, step_id: 's2', option_id: 'o2' },
+        { group_name: 'Adicionais', option_name: 'B', price: 3.5, quantity: 2, step_id: 's2', option_id: 'o3' },
+      ]),
+      { steps: [
+        { step_id: 's1', items: [{ option_id: 'o1', quantity: 1 }] },
+        { step_id: 's2', items: [{ option_id: 'o2', quantity: 1 }, { option_id: 'o3', quantity: 2 }] },
+      ] },
+    );
+  });
+
+  it('merge/toPdvDraft carregam config V2 junto', () => {
+    const comps = [
+      { group_name: 'T', option_name: 'M', price: 2, quantity: 1, step_id: 's1', option_id: 'o1' },
+    ];
+    const merged = mergeComandaItems([[{ product_id: 'p1', quantity: 1, complements: comps }]]);
+    assert.deepEqual(merged[0].config, { steps: [{ step_id: 's1', items: [{ option_id: 'o1', quantity: 1 }] }] });
+    const d = toPdvDraftItem({ product_id: 'p1', name: 'B', unit_price: 10, quantity: 1, complements: comps });
+    assert.deepEqual(d.config, merged[0].config);
+    const legacy = toPdvDraftItem({ product_id: 'p1', name: 'B', unit_price: 10, quantity: 1, complements: [] });
+    assert.equal(legacy.config, undefined);
   });
 });

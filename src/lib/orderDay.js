@@ -43,7 +43,9 @@ export function filterByDay(orders, date) {
 }
 
 export function calcPdvTotals(items, fee = 0) {
-  const subtotal = (items || []).reduce((s, x) => s + (Number(x.unit_price) || 0) * (Number(x.quantity) || 0), 0);
+  const lineTotal = (x) => (Number(x.unit_price) || 0) * (Number(x.quantity) || 0)
+    + (Array.isArray(x.complements) ? x.complements.reduce((s, c) => s + (Number(c.price) || 0) * (Number(c.quantity) || 0), 0) : 0);
+  const subtotal = (items || []).reduce((s, x) => s + lineTotal(x), 0);
   const total = subtotal + (Number(fee) || 0);
   const count = (items || []).reduce((s, x) => s + (Number(x.quantity) || 0), 0);
   return { subtotal, fee: Number(fee) || 0, total, count };

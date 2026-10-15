@@ -47,4 +47,32 @@ describe('orderDay — totais do PDV', () => {
   it('lista vazia zera tudo', () => {
     assert.deepEqual(calcPdvTotals([], 0), { subtotal: 0, fee: 0, total: 0, count: 0 });
   });
+
+  it('complementos V2 somam uma vez por linha (paridade servidor)', () => {
+    const t = calcPdvTotals([{
+      unit_price: 48, quantity: 1,
+      complements: [
+        { group_name: 'Tamanho', option_name: 'M', price: 2, quantity: 1 },
+        { group_name: 'Adicionais', option_name: 'Bacon', price: 3.5, quantity: 1 },
+        { group_name: 'Adicionais', option_name: 'Queijo', price: 0, quantity: 1 },
+      ],
+    }], 0);
+    assert.equal(t.subtotal, 53.5);
+    assert.equal(t.total, 53.5);
+  });
+
+  it('porções gratuitas (price 0) nunca somam: grátis em quantidade e mesma opção paga+grátis', () => {
+    // Convenção servidor + carrinho (v2PreviewLines): porção grátis vira
+    // linha price 0 separada; a mesma opção pode ter linha paga e linha grátis.
+    const t = calcPdvTotals([{
+      unit_price: 20, quantity: 1,
+      complements: [
+        { group_name: 'Adicionais', option_name: 'Banana', price: 0, quantity: 2 },
+        { group_name: 'Adicionais', option_name: 'Nutella', price: 4, quantity: 1 },
+        { group_name: 'Adicionais', option_name: 'Nutella', price: 0, quantity: 2 },
+      ],
+    }], 0);
+    assert.equal(t.subtotal, 24);
+    assert.equal(t.total, 24);
+  });
 });

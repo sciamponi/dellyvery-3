@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DRIVER_NOTIF_STATUSES, nextDriverNotifStatus,
-  getDriverNotification, markDriverNotified,
+  getDriverNotification, markDriverNotified, ensureDriverPending,
 } from './driverNotifications.js';
 
 function createMockClient({ existing = null, updated = null, inserted = null } = {}) {
@@ -53,5 +53,37 @@ describe('driverNotifications — máquina de status', () => {
     const out2 = await markDriverNotified(c2, 'c1', { orderId: 'o1' });
     assert.equal(out2.status, 'iniciado');
     assert.equal(c2.calls.update.length, 0);
+  });
+});
+
+describe('driverNotifications — pendente idempotente (auto na saída)', () => {
+  it('cria pendente com motivo quando não há registro', async () => {
+    const client = createMockClient({ existing: null, inserted: { id: 'n1', status: 'pendente' } });
+    const out = await ensureDriverPending(client, 'c1', { orderId: 'o1', driverId: 'd1', message: 'auto' });
+    assert.equal(out.status, 'pendente');
+    assert.equal(client.calls.insert[0].status, 'pendente');
+    assert.equal(client.calls.insert[0].driver_id, 'd1');
+    assert.equal(client.calls.insert[0].channel, 'whatsapp');
+    await assert.rejects(() => ensureDriverPending(client, '', { orderId: 'o1' }), /Empresa/);
+    await assert.rejects(() => ensureDriverPending(client, 'c1', {}), /Pedido/);
+  });
+
+  it('reutiliza pendente/iniciado do mesmo entregador (sem duplicar)', async () => {
+    const c1 = createMockClient({ existing: { id: 'n1', status: 'pendente', driver_id: 'd1' } });
+    assert.equal((await ensureDriverPending(c1, 'c1', { orderId: 'o1', driverId: 'd1' })).id, 'n1');
+    assert.equal(c1.calls.insert.length, 0);
+    const c2 = createMockClient({ existing: { id: 'n2', status: 'iniciado', driver_id: 'd1' } });
+    assert.equal((await ensureDriverPending(c2, 'c1', { orderId: 'o1', driverId: 'd1' })).id, 'n2');
+    assert.equal(c2.calls.insert.length, 0);
+  });
+
+  it('troca de entregador abre linha nova; confirmado não reabre', async () => {
+    const c1 = createMockClient({ existing: { id: 'n1', status: 'iniciado', driver_id: 'd1' }, inserted: { id: 'n2', status: 'pendente' } });
+    const out = await ensureDriverPending(c1, 'c1', { orderId: 'o1', driverId: 'd2' });
+    assert.equal(out.id, 'n2');
+    assert.equal(c1.calls.insert[0].driver_id, 'd2');
+    const c2 = createMockClient({ existing: { id: 'n9', status: 'confirmado', driver_id: 'd1' } });
+    assert.equal((await ensureDriverPending(c2, 'c1', { orderId: 'o1', driverId: 'd1' })).id, 'n9');
+    assert.equal(c2.calls.insert.length, 0);
   });
 });

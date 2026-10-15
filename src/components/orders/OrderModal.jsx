@@ -19,6 +19,9 @@ import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listCustomers as sbListCustomers } from '@/api/customers';
 import { editOrder as sbEditOrder, getOrderDetail as sbGetOrderDetail, listOrdersWithItems as sbListOrdersWithItems, linkOrderCustomer as sbLinkCustomer, linkOrderTable as sbLinkTable, setComandaName as sbSetComanda } from '@/api/orders';
+import { queueDriverNotifyForStatus, getDriverNotification, markDriverNotified as sbMarkNotified } from '@/api/driverNotifications';
+import { buildDriverDeliveryUrl } from '@/lib/driverMessage';
+import { getDriver as sbGetDriver } from '@/api/team';
 import { isComandaEditable, resolveComandaName } from '@/lib/comanda';
 import { filterLinkCustomers, resolveCustomerEnter } from '@/lib/linkEnter';
 import { createLinkOpTracker } from '@/lib/linkOp';
@@ -84,6 +87,12 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   // UX Kanban: gerenciar entregador direto no pedido (alterar/remover).
   const [managingDriver, setManagingDriver] = useState(false);
   // Vínculos de balcão: cliente e mesa (sem recriar o pedido).
+  // Aviso ao entregador (WhatsApp manual): pendente criado na saída para
+  // entrega; o envio é um clique explícito (nunca automático, sem provedor).
+  const [notifyPrompt, setNotifyPrompt] = useState(null);
+  const [notifyBusy, setNotifyBusy] = useState(false);
+  const [notifyMsg, setNotifyMsg] = useState('');
+  const notifyShownRef = useRef('');
   // Nome da comanda: texto livre p/ retirada sem cliente (sem cadastro).
   const [linking, setLinking] = useState(null);
   // Identidade de operação dos vínculos (condição de corrida): uma
@@ -132,6 +141,9 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setPrintPrompt(null);
     setComandaDraft('');
     setHistoryOpen(false);
+    setNotifyPrompt(null);
+    setNotifyMsg('');
+    notifyShownRef.current = '';
     statusBusyRef.current = false;
     setPhotoMap({});
     setCustHistory([]);
@@ -296,6 +308,28 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     return () => { cancelled = true; };
   }, [order?.id, order?.company_id, isOpen, sbActive]);
 
+  // Ao abrir um pedido já em rota (ex.: avançado pelo Kanban), oferece o
+  // aviso se houver pendente/iniciado para o entregador atual. Uma vez por
+  // abertura; falha de leitura nunca quebra o modal. Antes de qualquer
+  // return antecipado (regras dos Hooks).
+  useEffect(() => {
+    if (!isOpen || !order || order.order_type !== 'delivery' || order.status !== 'saiu_entrega' || !sbActive) return;
+    const key = `${order.id}:${order.driver_id || '-'}`;
+    if (notifyShownRef.current === key) return;
+    notifyShownRef.current = key;
+    (async () => {
+      try {
+        const rec = await getDriverNotification(supabase, order.company_id, order.id, order.driver_id || null);
+        if (rec && (rec.status === 'pendente' || rec.status === 'iniciado')
+            && (order.driver_id == null || rec.driver_id === order.driver_id)) {
+          setNotifyPrompt({ driverId: order.driver_id || null });
+          setNotifyMsg('');
+        }
+      } catch { /* sem prompt, sem quebrar */ }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, order?.id, order?.status, order?.driver_id, sbActive]);
+
   if (!order) return null;
 
   // FASE 1: com stages configuráveis, avançar/voltar navega UMA etapa por vez
@@ -348,6 +382,17 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
       const merged = detail || updated;
       onOrderUpdated(merged);
       toast({ title: action.id === 'accept' ? 'Pedido confirmado!' : `Pedido: ${STATUS_LABELS[action.next] || action.next}` });
+      // Saída para entrega (delivery): registra o aviso pendente e oferece
+      // o envio manual. Nunca bloqueia, nunca duplica, nunca reverte status.
+      if (action.next === 'saiu_entrega' && (merged?.order_type || order?.order_type) === 'delivery') {
+        const co = merged?.company_id || order?.company_id;
+        const did = merged?.driver_id ?? order?.driver_id ?? null;
+        if (co && sbActive) {
+          queueDriverNotifyForStatus(supabase, co, { ...(merged || order), driver_id: did }, 'saiu_entrega').catch(() => {});
+        }
+        setNotifyPrompt({ driverId: did });
+        setNotifyMsg('');
+      }
       // Impressão pós-aceite (mesma decisão do Kanban/fila): só após sucesso
       // confirmado, sem tocar de novo no status. Se a config ainda não
       // carregou, busca na hora (aceite rápido nunca cai no manual à toa).
@@ -445,6 +490,36 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
       setAssigning(false);
     }
     await runStatusAction(action);
+  };
+
+  // Envio manual explícito: monta a mensagem do pedido persistido, abre o
+  // wa.me e registra NO MÁXIMO "iniciado" (nunca "enviado"/confirmado).
+  // Sem telefone válido: informa o motivo, sem enviar. Falha: mantém o
+  // painel para reenvio controlado; o pedido segue intacto.
+  const sendDriverNotify = async () => {
+    const did = notifyPrompt?.driverId;
+    if (!did || notifyBusy) return;
+    setNotifyBusy(true);
+    setNotifyMsg('');
+    try {
+      const [drv, detail] = await Promise.all([
+        sbGetDriver(supabase, order.company_id, did).catch(() => null),
+        sbGetOrderDetail(supabase, order.company_id, order.id).catch(() => null),
+      ]);
+      const full = detail || order;
+      const url = buildDriverDeliveryUrl(full, drv || { phone: '' });
+      await sbMarkNotified(supabase, order.company_id, {
+        orderId: order.id, driverId: did,
+        message: `Conversa aberta no painel (pedido #${full.order_number ?? ''}).`,
+      });
+      window.open(url, '_blank', 'noopener');
+      toast({ title: 'WhatsApp aberto (envio manual)', description: 'Status: iniciado. A confirmação virá pela integração.' });
+      setNotifyPrompt(null);
+    } catch (err) {
+      setNotifyMsg(err?.message || 'Não foi possível preparar o envio. Tente de novo.');
+    } finally {
+      setNotifyBusy(false);
+    }
   };
 
   const startEdit = () => {
@@ -1094,8 +1169,34 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                     </div>
                   </div>
                 )}
-                {/* Barra de ações: icon-only. Mesmos handlers/validações;
-                    só apresentação muda. Regresso também icon-only. */}
+            {/* Aviso ao entregador: após saída para entrega (delivery).
+                Envio sempre manual via WhatsApp; abrir marca "iniciado". */}
+            {notifyPrompt && order.order_type === 'delivery' && order.status === 'saiu_entrega' && (
+              <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 mb-3 space-y-2" role="status">
+                {notifyPrompt.driverId ? (
+                  <>
+                    <p className="text-sm font-medium text-foreground">🛵 Avisar entregador no WhatsApp?</p>
+                    <p className="text-xs text-muted-foreground">
+                      Abre a conversa com pedido, endereço, total e pagamento. Abrir registra "iniciado" — o envio é manual.
+                    </p>
+                    {notifyMsg && <p className="text-xs text-red-600">{notifyMsg}</p>}
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" className="flex-1 min-h-10" onClick={() => setNotifyPrompt(null)}>Depois</Button>
+                      <Button size="sm" className="flex-1 min-h-10" onClick={sendDriverNotify} disabled={notifyBusy}>
+                        {notifyBusy ? 'Preparando...' : 'Avisar no WhatsApp'}
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-xs text-amber-800">⚠️ Saiu para entrega sem entregador atribuído — atribua um entregador para avisar no WhatsApp.</p>
+                    <Button variant="ghost" size="sm" className="h-7 shrink-0" onClick={() => setNotifyPrompt(null)}>OK</Button>
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Barra de ações: icon-only. Mesmos handlers/validações;
+                só apresentação muda. Regresso também icon-only. */}
                 <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
                   <TooltipProvider>
                   {regressAction && (

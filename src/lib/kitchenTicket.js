@@ -1,6 +1,7 @@
 // DELLVERY 3 — Dados do cupom de cozinha e etiqueta de pacote (puro, sem DOM).
 // Fonte única para impressão: o pedido PERSISTIDO (getOrderDetail). Reimprimir
 // é recarregar pelo mesmo id — nunca cria outro pedido.
+import { ticketComanda } from './comanda.js';
 
 export const TICKET_TYPE_LABELS = {
   mesa: 'Mesa/Comanda',
@@ -37,6 +38,10 @@ export function buildKitchenTicket(detail, company) {
     table: detail.table_number || '',
     customerName: detail.customer_name || '',
     customerPhone: detail.customer_phone || '',
+    // Selo 1º pedido no cupom (anexado na origem; sem selo = false).
+    firstOrder: !!detail.isFirstOrder,
+    // Comanda (retirada sem cliente): { kind: 'named', name } | { kind: 'avulso' } | null.
+    comanda: ticketComanda(detail),
     items: (detail.items || []).map((i) => ({
       quantity: i?.quantity || 1,
       name: i?.name || i?.product_name || 'Item',

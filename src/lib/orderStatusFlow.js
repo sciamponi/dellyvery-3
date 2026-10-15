@@ -9,7 +9,10 @@ import { changeOrderStatus as sbChangeOrderStatus } from '../api/orders.js';
  * O realtime apenas atualiza a UI — nunca dispara mudança de status.
  *
  * Efeitos colaterais externos (notificação persistente) acontecem no
- * backend (manageOrder), nunca na renderização.
+ * backend (manageOrder), nunca na renderização. O registro "pendente" do
+ * aviso ao entregador é criado pelos chamadores (Kanban/modal) via
+ * queueDriverNotifyForStatus após sucesso confirmado — idempotente e
+ * incapaz de reverter o status; o ENVIO segue manual (sem provedor).
  */
 
 export const ORDER_STATUSES = [

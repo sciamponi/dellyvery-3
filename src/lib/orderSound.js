@@ -1,10 +1,24 @@
 import newOrderAlertUrl from '@/assets/new-order-alert.wav';
+import { createSoundBlockGate, isAutoplayRejection } from './alertPolicy.js';
 
 let audioCtx = null;
 let alertAudio = null;
 let audioUnlocked = false;
 let lastPlayAt = 0;
 let queuedPlay = null;
+const soundBlockGate = createSoundBlockGate();
+
+// Estado honesto do desbloqueio (política de autoplay): false até o
+// primeiro gesto (pointerdown/keydown) confirmado no navegador.
+export function isAudioUnlocked() {
+  return audioUnlocked;
+}
+
+// Consome o aviso "som bloqueado" (true uma vez por sessão, após recusa
+// por falta de gesto). A UI decide como notificar, com discrição.
+export function consumeSoundBlockedNotice() {
+  return soundBlockGate.consumeNotice();
+}
 
 // Desbloqueia o áudio no primeiro gesto do usuário (política de autoplay).
 function ensureUnlock() {
@@ -59,6 +73,8 @@ export function playOrderSound() {
  * - Um som por chamada, sem sobreposição: chamadas com <800ms de intervalo
  *   são reagendadas em sequência em vez de tocarem juntas.
  * - Nunca gera erro se o navegador bloquear (mantém só o alerta visual).
+ * - Retorna false quando o play foi recusado por falta de gesto (a UI pode
+ *   consumir consumeSoundBlockedNotice() para avisar uma vez por sessão).
  */
 export function playNewOrderAlert() {
   try {
@@ -70,17 +86,26 @@ export function playNewOrderAlert() {
         queuedPlay = null;
         playNewOrderAlert();
       }, 800 - gap);
-      return;
+      return true;
     }
     lastPlayAt = now;
     const audio = getAlertAudio();
     audio.currentTime = 0;
     const p = audio.play();
     if (p && typeof p.catch === 'function') {
-      p.catch(() => playOrderSound());
+      p.catch((err) => {
+        if (isAutoplayRejection(err)) {
+          soundBlockGate.markBlocked();
+          return;
+        }
+        playOrderSound();
+      });
+      return true;
     }
+    return true;
   } catch (e) {
     try { playOrderSound(); } catch (e2) { /* visual apenas */ }
+    return true;
   }
 }
 

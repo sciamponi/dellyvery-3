@@ -1,7 +1,9 @@
 // DELLVERY 3 — Mensagem de entrega ao entregador (pura, sem rede).
 // Usa SOMENTE dados reais persistidos no pedido. Nunca inventa endereço,
-// valor, entregador ou pagamento. Envio é manual via wa.me (sem integração
-// automática validada no projeto — ver u17 em breve).
+// valor, entregador ou pagamento. Envio é manual via wa.me (sem provedor
+// de WhatsApp validado no projeto): abrir o link registra NO MÁXIMO
+// "iniciado", nunca "enviado". Sem encurtador próprio: link completo do
+// Google Maps (sem chave, sem segredo).
 
 export function onlyDigits(value) {
   return String(value || '').replace(/\D/g, '');
@@ -24,9 +26,38 @@ export function formatAddressLines(order) {
   return { street, rest };
 }
 
+// Texto completo do endereço para pesquisa (mesmos campos, sem inventar).
+export function fullAddressText(order) {
+  const da = order?.delivery_address && typeof order.delivery_address === 'object'
+    ? order.delivery_address : {};
+  return [da.street, da.number, da.complement, da.neighborhood, da.city, da.zip_code]
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
 function finiteNum(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// Link do Google Maps: prefere coordenadas explícitas válidas
+// ({lat, lng}); sem elas, pesquisa pelo endereço textual codificado.
+// (0,0) é tratado como ausente (padrão inválido comum). Sem coordenadas
+// e sem endereço, retorna '' (a linha do mapa é omitida, sem inventar).
+export function buildMapsLink(input) {
+  const lat = finiteNum(input?.lat ?? input?.latitude);
+  const lng = finiteNum(input?.lng ?? input?.longitude ?? input?.lon);
+  if (lat !== null && lng !== null
+      && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
+      && !(lat === 0 && lng === 0)) {
+    return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  }
+  const addr = input && typeof input === 'object' && !Array.isArray(input) && ('delivery_address' in input || 'customer_name' in input)
+    ? fullAddressText(input)
+    : (typeof input === 'string' ? input.trim() : '');
+  if (!addr) return '';
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`;
 }
 
 // Pagamento em dinheiro? Só então o troco se aplica.

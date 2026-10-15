@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   formatAddressLines, formatOrderItems,
   buildDriverDeliveryMessage, buildDriverDeliveryUrl,
-  buildDriverMapsLink,
+  buildDriverMapsLink, buildMapsLink, fullAddressText, isCashPayment,
 } from './driverMessage.js';
 
 const order = {
@@ -89,5 +89,56 @@ describe('driverMessage — montagem com dados reais', () => {
     const url = buildDriverDeliveryUrl(order, driver);
     assert.ok(url.startsWith('https://wa.me/5511988887777?text='));
     assert.ok(url.includes(encodeURIComponent('Pedido #42').slice(0, 12)));
+  });
+});
+
+describe('driverMessage — localização (sem coordenadas inventadas)', () => {
+  it('coordenadas válidas viram link direto; (0,0) é tratado como ausente', () => {
+    assert.equal(
+      buildMapsLink({ lat: -23.55, lng: -46.63 }),
+      'https://www.google.com/maps/search/?api=1&query=-23.55,-46.63',
+    );
+    assert.equal(buildMapsLink({ lat: 0, lng: 0 }), '');
+    assert.equal(buildMapsLink({ lat: 91, lng: 0 }), '');
+    assert.equal(buildMapsLink(null), '');
+  });
+
+  it('sem coordenadas, pesquisa pelo endereço codificado (ou omite)', () => {
+    const url = buildMapsLink(order);
+    assert.ok(url.startsWith('https://www.google.com/maps/search/?api=1&query='));
+    assert.ok(url.includes(encodeURIComponent('Rua A, 10')));
+    assert.equal(buildMapsLink({ id: 'x', items: [] }), '');
+  });
+
+  it('mensagem sem segredos; mapa textual removido (só coords explícitas)', () => {
+    const { text } = buildDriverDeliveryMessage(order, driver);
+    assert.ok(!/key=|token=|secret|password/i.test(text));
+    assert.ok(!text.includes('Mapa:'));
+  });
+});
+
+describe('driverMessage — troco só no dinheiro, com cálculo', () => {
+  it('dinheiro mostra solicitado + calculado; Pix/cartão omitem', () => {
+    const cash = buildDriverDeliveryMessage(order, driver);
+    assert.ok(cash.text.includes('Troco para:'));
+    assert.ok(cash.text.includes('Troco calculado:'));
+    const pix = buildDriverDeliveryMessage(
+      { ...order, payment_method: 'Pix (na entrega)', change_for: 100 },
+      driver,
+    );
+    assert.ok(!pix.text.includes('Troco'));
+    const card = buildDriverDeliveryMessage(
+      { ...order, payment_method: 'Cartão (na entrega)' },
+      driver,
+    );
+    assert.ok(!card.text.includes('Troco'));
+  });
+
+  it('isCashPayment só casa dinheiro (case-insensitive)', () => {
+    assert.equal(isCashPayment('Dinheiro'), true);
+    assert.equal(isCashPayment('DINHEIRO'), true);
+    assert.equal(isCashPayment('Pix'), false);
+    assert.equal(isCashPayment(''), false);
+    assert.equal(isCashPayment(null), false);
   });
 });

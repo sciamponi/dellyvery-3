@@ -3,6 +3,7 @@ import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom'
 import { supabase } from '@/api/supabaseClient';
 import { useCompany } from '@/hooks/useCompany';
 import { getOrderDetail } from '@/api/orders';
+import { attachFirstOrderFlag } from '@/lib/customerHistory';
 import { buildKitchenTicket, buildPackageLabel } from '@/lib/kitchenTicket';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Printer } from 'lucide-react';
@@ -41,7 +42,9 @@ export default function Impressao() {
   useEffect(() => {
     if (!company?.id || !orderId) return;
     let active = true;
+    // Selo 1º pedido no cupom (1 consulta; falha = sem selo).
     getOrderDetail(supabase, company.id, orderId)
+      .then((d) => attachFirstOrderFlag(supabase, company.id, d))
       .then((d) => { if (active) { if (!d) setError('Pedido não encontrado.'); else setDetail(d); } })
       .catch((err) => { if (active) setError(err?.message || 'Erro ao carregar pedido.'); });
     return () => { active = false; };
@@ -140,6 +143,11 @@ export default function Impressao() {
             <div className="text-sm">
               <p><b>Pedido #{ticket.orderNumber}</b> • {fmtDateTime(ticket.createdAt)}</p>
               {ticket.table && <p><b>Mesa/Comanda:</b> {ticket.table}</p>}
+              {ticket.firstOrder && <p><b>🥇 PRIMEIRA COMPRA</b></p>}
+              {ticket.comanda?.kind === 'named' && (
+                <p className="text-base"><b>COMANDA: {ticket.comanda.name}</b></p>
+              )}
+              {ticket.comanda?.kind === 'avulso' && <p>Avulso</p>}
               {(ticket.customerName || ticket.customerPhone) && (
                 <p>{ticket.customerName}{ticket.customerPhone ? ` • ${ticket.customerPhone}` : ''}</p>
               )}

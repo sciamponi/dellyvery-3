@@ -1,4 +1,5 @@
 import { supabase as defaultClient } from './supabaseClient.js';
+import { shouldQueueDriverNotify, missingDriverReason } from '../lib/driverNotify.js';
 
 // DELLVERY 3 — Adapter driver_notifications (operação/entrega).
 // Registra o encaminhamento do pedido ao entregador com status explícito:
@@ -32,6 +33,34 @@ export function nextDriverNotifStatus(current) {
   return null;
 }
 
+// Garante UM registro pendente por pedido+entregador (idempotente):
+// re-renderizações, retries e transições repetidas reutilizam a linha
+// existente em vez de duplicar. Troca de entregador abre linha nova
+// (histórico preservado). 'confirmado' é terminal (não reabre).
+// Falha de rede aqui NÃO deve reverter o status do pedido: o chamador
+// trata o erro e mantém a operação (reenvio controlado depois).
+export async function ensureDriverPending(client, companyId, { orderId, driverId = null, message = '' }) {
+  const c = mustBeConfigured(client);
+  if (!orderId) throw new Error('Pedido não identificado');
+  const company_id = requireCompanyId(companyId);
+  const existing = await getDriverNotification(c, company_id, orderId, driverId);
+  if (existing
+      && (existing.status === 'pendente' || existing.status === 'iniciado')
+      && (driverId == null || existing.driver_id === driverId)) {
+    return existing;
+  }
+  if (existing && existing.status === 'confirmado'
+      && (driverId == null || existing.driver_id === driverId)) {
+    return existing;
+  }
+  const { data, error } = await c.from('driver_notifications').insert({
+    company_id, order_id: orderId, driver_id: driverId, channel: 'whatsapp',
+    status: 'pendente', message: message || null,
+  }).select().maybeSingle();
+  if (error) rpcError(error);
+  return data;
+}
+
 export async function getDriverNotification(client, companyId, orderId, driverId) {
   const c = mustBeConfigured(client);
   let q = c.from('driver_notifications').select('*')
@@ -43,8 +72,7 @@ export async function getDriverNotification(client, companyId, orderId, driverId
   return data || null;
 }
 
-export async function markDriverNotified(client, companyId, { orderId, driverId = null, message = '' }) {
-  const c = mustBeConfigured(client);
+export async function markDriverNotified(client, companyId, { orderId, driverId = null, message = '' }) {  const c = mustBeConfigured(client);
   if (!orderId) throw new Error('Pedido não identificado');
   const company_id = requireCompanyId(companyId);
   const existing = await getDriverNotification(c, company_id, orderId, driverId);
@@ -65,4 +93,21 @@ export async function markDriverNotified(client, companyId, { orderId, driverId 
   }).select().maybeSingle();
   if (error) rpcError(error);
   return data;
+}
+
+// Enfileira o aviso na transição para saiu_entrega (delivery).
+// Com entregador: garante o pendente (idempotente). Sem entregador:
+// registra o motivo (auditoria) em vez de enviar. Fora desses casos:
+// null, sem tocar no banco. Falha de rede lança (o chamador decide;
+// nunca reverter o status por causa do aviso).
+export async function queueDriverNotifyForStatus(client, companyId, order, newStatus) {
+  const c = mustBeConfigured(client);
+  const cid = requireCompanyId(companyId);
+  if (!order?.id) throw new Error('Pedido não identificado');
+  if (shouldQueueDriverNotify(order, newStatus)) {
+    return ensureDriverPending(c, cid, { orderId: order.id, driverId: order.driver_id });
+  }
+  const reason = missingDriverReason(order, newStatus);
+  if (!reason) return null;
+  return ensureDriverPending(c, cid, { orderId: order.id, driverId: null, message: reason });
 }

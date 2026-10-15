@@ -43,9 +43,41 @@ describe('kitchenTicket — cupom de produção', () => {
     assert.equal(mesa.typeLabel, 'Mesa/Comanda');
     assert.equal(mesa.table, '7');
     assert.equal(mesa.address, '');
+    assert.equal(mesa.comanda, null);
     const label = buildPackageLabel(detail);
     assert.equal(label.orderNumber, 12);
     assert.equal(label.customer, 'Maria');
     assert.deepEqual(label.itemsSummary, ['2x X-Bacon', '1x Coca']);
+  });
+
+  it('retirada com nome imprime COMANDA; sem nome, avulso', () => {
+    const comNome = buildKitchenTicket(
+      { ...detail, order_type: 'retirada', customer_id: null, customer_name: 'André', customer_phone: '' },
+      company,
+    );
+    assert.deepEqual(comNome.comanda, { kind: 'named', name: 'André' });
+    assert.equal(comNome.address, '');
+    const semNome = buildKitchenTicket(
+      { ...detail, order_type: 'retirada', customer_id: null, customer_name: '', customer_phone: '' },
+      company,
+    );
+    assert.deepEqual(semNome.comanda, { kind: 'avulso' });
+  });
+
+  it('delivery com cadastro ignora comanda (fluxo intacto)', () => {
+    const t = buildKitchenTicket(detail, company);
+    assert.equal(t.comanda, null);
+    assert.equal(t.customerName, 'Maria');
+    assert.equal(t.firstOrder, false);
+    const comCliente = buildKitchenTicket(
+      { ...detail, order_type: 'retirada', customer_id: 'c9', customer_name: 'Cadastrado' },
+      company,
+    );
+    assert.equal(comCliente.comanda, null);
+  });
+
+  it('selo de primeira compra vai ao cupom quando anexado', () => {
+    const t = buildKitchenTicket({ ...detail, isFirstOrder: true }, company);
+    assert.equal(t.firstOrder, true);
   });
 });

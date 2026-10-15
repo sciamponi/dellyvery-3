@@ -18,12 +18,14 @@ import OrderModal from '@/components/orders/OrderModal';
 import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
 import NewOrderAlert from '@/components/orders/NewOrderAlert';
 import NewOrdersQueue from '@/components/orders/NewOrdersQueue';
-import { playNewOrderAlert, requestNotificationPermission, showOrderNotification } from '@/lib/orderSound';
+import { playNewOrderAlert, requestNotificationPermission, showOrderNotification, consumeSoundBlockedNotice } from '@/lib/orderSound';
 import { getAlertPrefs } from '@/lib/alertPrefs';
+import { isFreshForAlert } from '@/lib/alertPolicy';
 import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
 import { changeOrderStatus, getAvailableActions, STATUS_LABELS } from '@/lib/orderStatusFlow';
+import { queueDriverNotifyForStatus } from '@/api/driverNotifications';
 import { formatOrderTotal, isMissingTotal } from '@/lib/money';
-import { isFirstOrder } from '@/lib/customerHistory';
+import { attachFirstOrderFlag, resolveFirstOrderFlags, freezeFirstFlags } from '@/lib/customerHistory';
 import {
   LEGACY_STAGE_SEED,
   listStages as sbListStages,
@@ -136,6 +138,13 @@ export default function Pedidos() {
   );
 
   const seenOrderIdsRef = useRef(new Set());
+  // Selo 1º pedido com vida útil = ciclo do pedido: classificação congelada
+  // na primeira visão (lote único, persistido); nunca true→false por um
+  // 2º pedido. A UI oculta em finalizado/cancelado.
+  const [firstFlags, setFirstFlags] = useState(() => new Map());
+  const freezeFlags = (flags) => {
+    setFirstFlags((prev) => freezeFirstFlags(prev, flags));
+  };
   const highlightTimerRef = useRef(null);
   const alertPrefsRef = useRef({ sound: true, visual: true });
   const autoAssignRunner = useRef(null);
@@ -192,6 +201,12 @@ export default function Pedidos() {
         const ords = await listOrdersWithItems(supabase, companyId, 100);
         setOrders(ords);
         ords.forEach(o => seenOrderIdsRef.current.add(o.id));
+        // Selo: classifica o lote uma vez (1 consulta) e congela.
+        if (sbActive) {
+          resolveFirstOrderFlags(supabase, companyId, ords)
+            .then(freezeFlags)
+            .catch(() => {});
+        }
         // FASE 5.5-B3: mapa de entregadores para a linha 🛵 do card.
         if (sbActive) {
           sbListDrivers(supabase, companyId)
@@ -205,7 +220,7 @@ export default function Pedidos() {
     };
     load();
 
-    const handleRealtimeEvent = (event) => {
+    const handleRealtimeEvent = async (event) => {
       if (!companyIdRef.current) return;
       if (event.data?.company_id && event.data.company_id !== companyIdRef.current) return;
       if (event.type === 'create') {
@@ -214,16 +229,33 @@ export default function Pedidos() {
         setOrders(prev => [event.data, ...prev.filter(o => o.id !== event.data.id)]);
         // Som + alerta + destaque SOMENTE na primeira vez que o pedido aparece
         // (seenOrderIds). Updates/realtime/re-renders/refresh do mesmo pedido
-        // não repetem; pedidos antigos nunca disparam (created_date < 120s).
-        // Sem janela de tempo: painel aberto há horas também deve alertar.
-        const createdAt = event.data.created_date ? new Date(event.data.created_date).getTime() : 0;
-        const isFresh = createdAt > 0 && (Date.now() - createdAt) < 120000;
+        // não repetem; pedidos antigos nunca disparam. Timestamps futuros
+        // (relógio adiantado) confiam na chegada (alertPolicy).
+        const isFresh = isFreshForAlert(event.data.created_date);
         if (isNew && isFresh) {
           const prefs = alertPrefsRef.current;
-          if (prefs.sound) playNewOrderAlert();
+          if (prefs.sound) {
+            playNewOrderAlert();
+            // Aviso honesto e único por sessão (sem alegar som habilitado).
+            if (consumeSoundBlockedNotice()) {
+              toast({
+                title: 'Som bloqueado pelo navegador',
+                description: 'Clique em qualquer lugar da página para ativar o som de novos pedidos.',
+              });
+            }
+          }
+          // Selo via contagem persistida (1 consulta); falha = sem selo,
+          // nunca bloqueia o alerta. Congela para a vida útil do ciclo.
+          const flagged = sbActive
+            ? await attachFirstOrderFlag(supabase, companyIdRef.current, event.data)
+            : event.data;
+          freezeFlags(new Map([[flagged.id, !!flagged.isFirstOrder]]));
           if (prefs.visual) {
-            showOrderNotification(event.data);
-            setAlertQueue(prev => prev.some(o => o.id === event.data.id) ? prev : [...prev, event.data]);
+            // Falha na Notification API nunca pode engolir o modal.
+            try {
+              showOrderNotification(flagged);
+            } catch { /* segue para o modal */ }
+            setAlertQueue(prev => prev.some(o => o.id === flagged.id) ? prev : [...prev, flagged]);
           }
           setHighlightId(event.data.id);
           if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
@@ -385,6 +417,12 @@ export default function Pedidos() {
         setOrders(prev => mergeUpdated(prev, detail || updated));
         toast({ title: action.id === 'accept' ? 'Pedido confirmado!' : `Pedido: ${action.label?.replace(/^→ /, '') || STATUS_LABELS[action.next]}` });
         maybeTriggerPrint(order.id, action.next);
+        // Saída para entrega: registra o aviso pendente (nunca bloqueia,
+        // nunca duplica; falha silenciosa com reenvio pelo modal).
+        if (action.next === 'saiu_entrega') {
+          const done = detail || updated;
+          queueDriverNotifyForStatus(supabase, companyIdRef.current, done, 'saiu_entrega').catch(() => {});
+        }
       }
     } catch (err) {
       toast({ title: 'Erro ao atualizar pedido', description: err?.message, variant: 'destructive' });
@@ -432,6 +470,11 @@ export default function Pedidos() {
         }
         setOrders(prev => mergeUpdated(prev, { ...(detail || updated), id: draggableId }));
         maybeTriggerPrint(draggableId, newStatus);
+        // Saída para entrega via arraste: mesmo registro pendente idempotente.
+        if (newStatus === 'saiu_entrega') {
+          const done = detail || updated;
+          queueDriverNotifyForStatus(supabase, companyIdRef.current, done, 'saiu_entrega').catch(() => {});
+        }
       }
     } catch (err) {
       toast({ title: 'Erro ao atualizar pedido', variant: 'destructive' });
@@ -510,7 +553,10 @@ export default function Pedidos() {
                           const isDelayed = wtNum > 30 && !['finalizado', 'cancelado'].includes(col.mapsTo);
                           const cardPrimary = getCardPrimary(order);
                           const cardCancel = !['finalizado', 'cancelado'].includes(order.status);
-                          const firstOrder = isFirstOrder(order, orders);
+                          // Selo congelado na 1ª visão (vida útil = ciclo); some
+                          // só na conclusão. Sem selo em finalizado/cancelado.
+                          const firstOrder = firstFlags.get(order.id) === true
+                            && !['finalizado', 'cancelado'].includes(order.status);
                           return (
                             <Draggable key={order.id} draggableId={order.id} index={index}>
                               {(prov, snapshot) => (

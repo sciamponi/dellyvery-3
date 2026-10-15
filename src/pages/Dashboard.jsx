@@ -15,10 +15,12 @@ import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
 import OrdersListModal from '@/components/orders/OrdersListModal';
 import NewOrderAlert from '@/components/orders/NewOrderAlert';
 import PdvAnnouncement, { hasSeenPdv } from '@/components/PdvAnnouncement';
-import { playNewOrderAlert, requestNotificationPermission, showOrderNotification } from '@/lib/orderSound';
 import WhatsNewModal from '@/components/WhatsNewModal';
 import { hasSeenWhatsNew } from '@/lib/whatsNew';
+import { playNewOrderAlert, requestNotificationPermission, showOrderNotification, consumeSoundBlockedNotice } from '@/lib/orderSound';
 import { getAlertPrefs } from '@/lib/alertPrefs';
+import { attachFirstOrderFlag } from '@/lib/customerHistory';
+import { isFreshForAlert } from '@/lib/alertPolicy';
 import { createAutoAssignRunner } from '@/lib/autoAssignRealtime';
 import { getQueueOrders, getDelayedOrders, getFinalizedByType, getCanceled, filterByDriver } from '@/lib/orderQueue';
 import { getDashboardModal, isNovosAlertCard, filterNovosOrders } from '@/lib/dashboardModals';
@@ -163,29 +165,29 @@ export default function Dashboard() {
         setOrders(prev => [event.data, ...prev.filter(o => o.id !== event.data.id)].slice(0, 50));
         // Som + alerta + destaque SOMENTE na primeira vez que o pedido aparece
         // (seenOrderIds). Pedidos antigos no carregamento inicial nunca
-        // disparam (isFresh < 120s). Sem janela de tempo: painel aberto há
-        // horas também deve alertar.
-        const createdAt = event.data.created_date ? new Date(event.data.created_date).getTime() : 0;
-        const isFresh = createdAt > 0 && (Date.now() - createdAt) < 120000;
+        // disparam. Timestamps futuros (relógio adiantado) confiam na chegada.
+        const isFresh = isFreshForAlert(event.data.created_date);
         if (isNew && isFresh) {
           const prefs = alertPrefsRef.current;
-          if (prefs.sound) playNewOrderAlert();
-          // Selo de primeiro pedido: 1 consulta agregada por chegada
-          // (sem N+1 por render); falha = sem selo, nunca bloqueia o alerta.
-          let firstFlag;
-          if (event.data.customer_id && companyIdRef.current) {
-            try {
-              const prior = await countCustomerOrders(
-                supabase, companyIdRef.current, event.data.customer_id, event.data.id,
-              );
-              firstFlag = prior === 0;
-            } catch { firstFlag = undefined; }
+          if (prefs.sound) {
+            playNewOrderAlert();
+            if (consumeSoundBlockedNotice()) {
+              toast({
+                title: 'Som bloqueado pelo navegador',
+                description: 'Clique em qualquer lugar da página para ativar o som de novos pedidos.',
+              });
+            }
           }
-          const alertItem = firstFlag === undefined
-            ? event.data
-            : { ...event.data, isFirstOrder: firstFlag };
+          // Selo de primeiro pedido: helper compartilhado (1 consulta por
+          // chegada, sem N+1); falha = sem selo, nunca bloqueia o alerta.
+          const alertItem = sbActive
+            ? await attachFirstOrderFlag(supabase, companyIdRef.current, event.data)
+            : event.data;
           if (prefs.visual) {
-            showOrderNotification(alertItem);
+            // Falha na Notification API nunca pode engolir o modal.
+            try {
+              showOrderNotification(alertItem);
+            } catch { /* segue para o modal */ }
             setAlertQueue(prev => prev.some(o => o.id === alertItem.id) ? prev : [...prev, alertItem]);
           }
           setHighlightId(event.data.id);

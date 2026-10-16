@@ -926,50 +926,6 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                       </div>
                     )}
                   </div>
-                  {linking === 'customer' && (
-                    <div className="space-y-2">
-                      <div className="relative">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                        <Input
-                          value={custQuery}
-                          onChange={(e) => setCustQuery(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleCustomerSearchEnter();
-                            }
-                          }}
-                          placeholder="Buscar cliente por nome ou telefone..."
-                          className="pl-8 h-9 text-sm"
-                        />
-                      </div>
-                      <div className="max-h-40 overflow-y-auto rounded-lg border border-border divide-y divide-border">
-                        {filterLinkCustomers(custResults, custQuery)
-                          .map((c) => (
-                            <button
-                              key={c.id}
-                              type="button"
-                              onClick={() => setCustSelected(c.id)}
-                              className={`w-full text-left px-3 py-2 text-sm hover:bg-muted ${custSelected === c.id ? 'bg-muted font-medium' : ''}`}
-                            >
-                              {c.name || 'Sem nome'}
-                              {c.phone && <span className="text-muted-foreground"> • {c.phone}</span>}
-                            </button>
-                          ))}
-                        {custResults.length === 0 && (
-                          <p className="px-3 py-2 text-xs text-muted-foreground">Nenhum cliente encontrado.</p>
-                        )}
-                      </div>
-                      <Button
-                        size="sm"
-                        className="w-full"
-                        disabled={!custSelected || linkBusy}
-                        onClick={confirmLinkCustomer}
-                      >
-                        {linkBusy ? 'Salvando...' : 'Confirmar vínculo'}
-                      </Button>
-                    </div>
-                  )}
                   {linking === 'table' && order.order_type === 'mesa' && (
                     <div className="space-y-2">
                       <Select value={tableSelected} onValueChange={setTableSelected}>
@@ -2070,6 +2026,60 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+      {/* Vínculo de cliente em modal independente: o card mantém altura. */}
+      <Dialog open={linking === 'customer'} onOpenChange={(open) => { if (!open) { linkOp().userNavigated(); setLinking(null); } }}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="pr-6">Vincular cliente</DialogTitle>
+            <p className="text-xs text-muted-foreground">Atual: {order.customer_name || 'Avulso'}</p>
+          </DialogHeader>
+            <div className="space-y-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  value={custQuery}
+                  onChange={(e) => setCustQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCustomerSearchEnter();
+                    }
+                  }}
+                  placeholder="Buscar cliente por nome ou telefone..."
+                  className="pl-8 h-9 text-sm"
+                />
+              </div>
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-border divide-y divide-border">
+                {filterLinkCustomers(custResults, custQuery)
+                  .map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setCustSelected(c.id)}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-muted ${custSelected === c.id ? 'bg-muted font-medium' : ''}`}
+                    >
+                      {c.name || 'Sem nome'}
+                      {c.phone && <span className="text-muted-foreground"> • {c.phone}</span>}
+                    </button>
+                  ))}
+                {custResults.length === 0 && (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">Nenhum cliente encontrado.</p>
+                )}
+              </div>
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={!custSelected || linkBusy}
+                onClick={confirmLinkCustomer}
+              >
+                {linkBusy ? 'Salvando...' : 'Confirmar vínculo'}
+              </Button>
+            </div>
+          <Button variant="ghost" size="sm" className="w-full mt-2" disabled={linkBusy} onClick={() => { linkOp().userNavigated(); setLinking(null); }}>
+            Cancelar
+          </Button>
         </DialogContent>
       </Dialog>
     </Dialog>

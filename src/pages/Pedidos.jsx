@@ -574,7 +574,7 @@ export default function Pedidos() {
               return (
                 <Droppable key={col.id} droppableId={col.id}>
                   {(provided) => (
-                    <div ref={provided.innerRef} {...provided.droppableProps} className="w-60 xl:w-72 shrink-0 min-w-0 max-h-[60dvh] lg:max-h-full overflow-y-auto lg:h-full rounded-xl">
+                    <div ref={provided.innerRef} {...provided.droppableProps} className="w-56 xl:w-64 shrink-0 min-w-0 max-h-[60dvh] lg:max-h-full overflow-y-auto lg:h-full rounded-xl">
                       {col.mapsTo === 'novo' ? (
                         <button
                           type="button"
@@ -619,7 +619,7 @@ export default function Pedidos() {
                                   {...prov.dragHandleProps}
                                   role="button"
                                   tabIndex={0}
-                                  className={`w-full min-w-0 rounded-xl border bg-card p-2.5 sm:p-3 text-left shadow-sm transition-shadow cursor-pointer hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${snapshot.isDragging ? 'shadow-lg border-primary' : 'border-border'} ${isDelayed ? 'border-l-4 border-l-red-500' : ''} ${highlightId === order.id ? 'ring-2 ring-primary border-primary' : ''}`}
+                                  className={`w-full min-w-0 rounded-xl border bg-card p-2 sm:p-2.5 text-left shadow-sm transition-shadow cursor-pointer hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${snapshot.isDragging ? 'shadow-lg border-primary' : 'border-border'} ${isDelayed ? 'border-l-4 border-l-red-500' : ''} ${highlightId === order.id ? 'ring-2 ring-primary border-primary' : ''}`}
                                   onClick={() => !snapshot.isDragging && setSelectedOrder(order)}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter' || e.key === ' ') {
@@ -692,7 +692,7 @@ export default function Pedidos() {
                                     const pay = paymentBadgeState({ paymentStatus: order.payment_status, hasReceipt: recs.length > 0 });
                                     const rec = recs[0];
                                     return (
-                                      <p className="text-xs mt-1 truncate">
+                                      <p className="text-xs mt-1 break-words">
                                         <span className="font-bold">{pay.icon} {pay.label}</span>
                                         {order.payment_method && <span className="text-muted-foreground"> • {paymentMethodIcon(order.payment_method)} {order.payment_method}</span>}
                                         {rec && pay.key === 'registered' && (

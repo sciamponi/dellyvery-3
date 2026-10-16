@@ -4,7 +4,9 @@ import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listTables, createTable, updateTable, setTableActive, deleteTable, getTableBlockers } from '@/api/tables';
 import { listOrdersWithItems } from '@/api/orders';
 import { getPaymentReceiptsForOrders } from '@/api/payments';
-import { orderStatusView, isOpenOrder } from '@/lib/orderStatusView';
+import { orderStatusView } from '@/lib/orderStatusView';
+import { filterOpenTableOrders } from '@/lib/tableView';
+import { groupComplements, isFreeComplement } from '@/lib/orderItemView';
 import { paymentBadgeState, paymentMethodIcon } from '@/lib/paymentBadge';
 import OrderModal from '@/components/orders/OrderModal';
 import { buildTableQrUrl, resolvePublicBaseUrl } from '@/lib/tableQr';
@@ -80,7 +82,7 @@ export default function Mesas() {
     setTableOrdersLoading(true);
     try {
       const all = await listOrdersWithItems(supabase, companyId, 100);
-      const open = (all || []).filter((o) => o.table_id === t.id && isOpenOrder(o));
+      const open = filterOpenTableOrders(all, t.id);
       setTableOrders(open);
       try {
         setTableReceipts(await getPaymentReceiptsForOrders(supabase, companyId, open.map((o) => o.id)));
@@ -524,6 +526,24 @@ export default function Mesas() {
                       <p className="text-xs text-muted-foreground mt-0.5">
                         {o.created_date ? new Date(o.created_date).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''} • {o.items?.length || 0} {(o.items?.length || 0) === 1 ? 'item' : 'itens'}
                       </p>
+                      {(o.items?.length || 0) > 0 && (
+                        <div className="mt-1 space-y-0.5">
+                          {o.items.slice(0, 4).map((it, ii) => (
+                            <p key={ii} className="text-xs text-foreground break-words">
+                              <span className="font-medium">{it.quantity || 1}x {it.name}</span>
+                              {(it.complements?.length || 0) > 0 && (
+                                <span className="text-muted-foreground">
+                                  {' '}({groupComplements(it.complements).map((g) => g.items.map((c) => `${Number(c.quantity) > 1 ? `${c.quantity}x ` : ''}${c.option_name || c.name}${isFreeComplement(c) ? ' (Grátis)' : ''}`).join(', ')).join(' • ')})
+                                </span>
+                              )}
+                              {it.notes && <span className="text-muted-foreground italic"> 📝 {it.notes}</span>}
+                            </p>
+                          ))}
+                          {o.items.length > 4 && (
+                            <p className="text-xs text-muted-foreground">+ {o.items.length - 4} itens no detalhe</p>
+                          )}
+                        </div>
+                      )}
                       <p className="text-xs mt-0.5 truncate">
                         <span className="font-bold">{pay.icon} {pay.label}</span>
                         {o.payment_method && <span className="text-muted-foreground"> • {paymentMethodIcon(o.payment_method)} {o.payment_method}</span>}
@@ -544,7 +564,11 @@ export default function Mesas() {
           onClose={() => setSelectedOrder(null)}
           onOrderUpdated={(updated) => {
             if (updated?.id) {
-              setTableOrders((prev) => prev.map((o) => (o.id === updated.id ? { ...o, ...updated } : o)));
+              // Baixa/cancelamento tira o pedido da lista de abertos.
+              setTableOrders((prev) => {
+                const merged = prev.map((o) => (o.id === updated.id ? { ...o, ...updated } : o));
+                return filterOpenTableOrders(merged, ordersTable?.id);
+              });
               setSelectedOrder(updated);
             }
           }}

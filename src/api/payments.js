@@ -49,18 +49,13 @@ export function validateReceipt({ amount, method }) {
 
 /** Recebimentos declarados do pedido (mais recente primeiro). */
 export async function getPaymentReceipts(client, companyId, orderId) {
-  const c = mustBeConfigured(client);
-  const cid = requireCompanyId(companyId);
   if (!orderId) throw new Error('Pedido não identificado');
-  const { data, error } = await c.from('audit_logs')
-    .select('id,user_id,metadata,created_at')
-    .eq('company_id', cid)
-    .eq('entity', 'order')
-    .eq('entity_id', orderId)
-    .eq('action', RECEIPT_ACTION)
-    .order('created_at', { ascending: false });
-  if (error) rpcError(error);
-  return (data || []).map((r) => ({
+  const map = await getPaymentReceiptsForOrders(client, companyId, [orderId]);
+  return map[orderId] || [];
+}
+
+function mapReceiptRow(r) {
+  return {
     id: r.id,
     userId: r.user_id || null,
     amount: Number(r.metadata?.amount) || 0,
@@ -68,7 +63,31 @@ export async function getPaymentReceipts(client, companyId, orderId) {
     notes: r.metadata?.notes || '',
     orderTotal: Number(r.metadata?.order_total) || 0,
     createdAt: r.created_at,
-  }));
+  };
+}
+
+/**
+ * Recebimentos de vários pedidos em 1 consulta (sem N+1).
+ * Retorna { [orderId]: [receipts desc] }.
+ */
+export async function getPaymentReceiptsForOrders(client, companyId, orderIds) {
+  const c = mustBeConfigured(client);
+  const cid = requireCompanyId(companyId);
+  const ids = (orderIds || []).filter(Boolean);
+  if (ids.length === 0) return {};
+  const { data, error } = await c.from('audit_logs')
+    .select('id,user_id,metadata,created_at,entity_id')
+    .eq('company_id', cid)
+    .eq('entity', 'order')
+    .eq('action', RECEIPT_ACTION)
+    .in('entity_id', ids)
+    .order('created_at', { ascending: false });
+  if (error) rpcError(error);
+  const map = {};
+  for (const r of data || []) {
+    (map[r.entity_id] = map[r.entity_id] || []).push(mapReceiptRow(r));
+  }
+  return map;
 }
 
 /**

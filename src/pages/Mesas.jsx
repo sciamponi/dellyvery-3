@@ -2,6 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listTables, createTable, updateTable, setTableActive, deleteTable, getTableBlockers } from '@/api/tables';
+import { listOrdersWithItems } from '@/api/orders';
+import { getPaymentReceiptsForOrders } from '@/api/payments';
+import { orderStatusView, isOpenOrder } from '@/lib/orderStatusView';
+import { paymentBadgeState, paymentMethodIcon } from '@/lib/paymentBadge';
+import OrderModal from '@/components/orders/OrderModal';
 import { buildTableQrUrl, resolvePublicBaseUrl } from '@/lib/tableQr';
 import { FLYER_PRINT_CSS } from '@/lib/printCss';
 import { buildFlyerModel, renderFlyerPng, DEFAULT_TABLE_TITLE, DEFAULT_INSTRUCTION } from '@/lib/flyer';
@@ -59,6 +64,35 @@ export default function Mesas() {
   const [qrInstruction, setQrInstruction] = useState('');
   const [qrCoverStatus, setQrCoverStatus] = useState('idle');
   const qrCoverUrl = currentCompany?.cover_url || '';
+  // Pedidos em aberto da mesa (vínculo real por table_id; sem cancelados
+  // nem finalizados) + detalhe via OrderModal.
+  const [ordersTable, setOrdersTable] = useState(null);
+  const [tableOrders, setTableOrders] = useState([]);
+  const [tableOrdersLoading, setTableOrdersLoading] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [tableReceipts, setTableReceipts] = useState({});
+
+  const openTableOrders = async (t) => {
+    setSelectedOrder(null);
+    setOrdersTable(t);
+    setTableOrders([]);
+    if (!t?.id || !companyId) return;
+    setTableOrdersLoading(true);
+    try {
+      const all = await listOrdersWithItems(supabase, companyId, 100);
+      const open = (all || []).filter((o) => o.table_id === t.id && isOpenOrder(o));
+      setTableOrders(open);
+      try {
+        setTableReceipts(await getPaymentReceiptsForOrders(supabase, companyId, open.map((o) => o.id)));
+      } catch {
+        setTableReceipts({});
+      }
+    } catch (err) {
+      toast({ title: 'Erro ao carregar pedidos', description: err?.message, variant: 'destructive' });
+    } finally {
+      setTableOrdersLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!qrTarget) return;
@@ -254,7 +288,14 @@ export default function Mesas() {
               <div key={t.id} className="rounded-2xl border border-border bg-card p-4">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="font-heading font-bold text-foreground truncate">{t.name}</p>
+                    <button
+                      type="button"
+                      onClick={() => openTableOrders(t)}
+                      title={`Ver pedidos em aberto de ${t.name}`}
+                      className="font-heading font-bold text-foreground truncate hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+                    >
+                      {t.name}
+                    </button>
                     <p className="text-xs text-muted-foreground truncate">
                       {[t.code && `Cód. ${t.code}`, t.notes].filter(Boolean).join(' • ') || 'Sem detalhes'}
                     </p>
@@ -434,7 +475,7 @@ export default function Mesas() {
             </div>
           )}
           <div className="no-print flex gap-2 mt-4">
-            <Button variant="outline" className="flex-1" onClick={printTableFlyer} disabled={!qrDataUrl || printing}>
+            <Button variant="outline" className="flex-1" onClick={printTableFlyer} disabled={!qrDataUrl}>
               <Printer className="h-4 w-4" /> {printing ? 'Preparando...' : 'Imprimir'}
             </Button>
             <Button
@@ -447,6 +488,69 @@ export default function Mesas() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Pedidos em aberto da mesa (vínculo real table_id). */}
+      <Dialog open={!!ordersTable} onOpenChange={(v) => { if (!v) { setOrdersTable(null); setSelectedOrder(null); } }}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="pr-6">
+              Pedidos em aberto — {ordersTable?.name || ''}
+            </DialogTitle>
+          </DialogHeader>
+          {tableOrdersLoading ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>
+          ) : tableOrders.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Nenhum pedido em aberto nesta mesa.</p>
+          ) : (
+            <div className="space-y-2">
+              {tableOrders.map((o) => {
+                const st = orderStatusView(o.status);
+                const recs = tableReceipts[o.id] || [];
+                const pay = paymentBadgeState({ paymentStatus: o.payment_status, hasReceipt: recs.length > 0 });
+                return (
+                  <button
+                    key={o.id}
+                    type="button"
+                    onClick={() => setSelectedOrder(o)}
+                    className="flex w-full items-center justify-between gap-2 rounded-xl border border-border p-3 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-semibold text-foreground">
+                        Pedido #{o.order_number}{' '}
+                        <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${st.className}`}>
+                          {o.status === 'aguardando_retirada' ? '🟣 ' : ''}{st.label}
+                        </span>
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {o.created_date ? new Date(o.created_date).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''} • {o.items?.length || 0} {(o.items?.length || 0) === 1 ? 'item' : 'itens'}
+                      </p>
+                      <p className="text-xs mt-0.5 truncate">
+                        <span className="font-bold">{pay.icon} {pay.label}</span>
+                        {o.payment_method && <span className="text-muted-foreground"> • {paymentMethodIcon(o.payment_method)} {o.payment_method}</span>}
+                      </p>
+                    </div>
+                    <p className="font-bold shrink-0 whitespace-nowrap">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(o.total || 0)}</p>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+      {selectedOrder && (
+        <OrderModal
+          order={selectedOrder}
+          isOpen={!!selectedOrder}
+          onClose={() => setSelectedOrder(null)}
+          onOrderUpdated={(updated) => {
+            if (updated?.id) {
+              setTableOrders((prev) => prev.map((o) => (o.id === updated.id ? { ...o, ...updated } : o)));
+              setSelectedOrder(updated);
+            }
+          }}
+          company={currentCompany}
+        />
+      )}
     </div>
   );
 }

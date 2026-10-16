@@ -42,6 +42,7 @@ export function fromSupabaseOrder(row) {
     delivery_zone_id: row.delivery_zone_id,
     driver_id: row.driver_id,
     order_type: row.order_type,
+    table_id: row.table_id || null,
     table_number: row.table_number || '',
     status: row.status,
     payment_method: row.payment_method || '',

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  validateReceipt, getPaymentReceipts, registerOrderPayment,
+  validateReceipt, getPaymentReceipts, getPaymentReceiptsForOrders, registerOrderPayment,
   SUPPORTED_PAYMENT_METHODS, RECEIPT_ACTION,
 } from './payments.js';
 
@@ -10,6 +10,7 @@ function createMockClient({ rows = [], insertRow = null, insertError = null, use
   const chain = {
     select: (...a) => { calls.select.push(a); return chain; },
     eq: () => chain,
+    in: () => chain,
     order: () => chain,
     insert: (p) => { calls.insert.push(p); return chain; },
     single: async () => {
@@ -42,13 +43,25 @@ describe('payments — validação', () => {
 describe('payments — leitura de recebimentos', () => {
   it('mapeia linhas de auditoria', async () => {
     const client = createMockClient({ rows: [
-      { id: 'r1', user_id: 'u9', metadata: { amount: 50, method: 'Pix', notes: 'ok' }, created_at: 't' },
+      { id: 'r1', entity_id: 'o1', user_id: 'u9', metadata: { amount: 50, method: 'Pix', notes: 'ok' }, created_at: 't' },
     ] });
     const out = await getPaymentReceipts(client, 'co', 'o1');
     assert.equal(out.length, 1);
     assert.equal(out[0].amount, 50);
     assert.equal(out[0].method, 'Pix');
     await assert.rejects(() => getPaymentReceipts(client, 'co', ''), /identificado/);
+  });
+
+  it('lote: 1 consulta para N pedidos, sem N+1', async () => {
+    const client = createMockClient({ rows: [
+      { id: 'r1', entity_id: 'o1', user_id: 'u1', metadata: { amount: 10, method: 'Pix' }, created_at: 't' },
+      { id: 'r2', entity_id: 'o2', user_id: 'u1', metadata: { amount: 20, method: 'Dinheiro' }, created_at: 't' },
+    ] });
+    const map = await getPaymentReceiptsForOrders(client, 'co', ['o1', 'o2', 'o3']);
+    assert.equal(map.o1.length, 1);
+    assert.equal(map.o2[0].amount, 20);
+    assert.equal(map.o3, undefined);
+    assert.deepEqual(await getPaymentReceiptsForOrders(client, 'co', []), {});
   });
 });
 

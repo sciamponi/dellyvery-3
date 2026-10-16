@@ -8,6 +8,9 @@ import {
   fromSupabaseOrder,
 } from '@/api/orders';
 import { listDrivers as sbListDrivers } from '@/api/team';
+import { listTables as sbListTables } from '@/api/tables';
+import { resolveTableName } from '@/lib/tableView';
+import { getSkipPrintPrompt, setSkipPrintPrompt } from '@/lib/printPrefs';
 import { useCompany } from '@/hooks/useCompany';
 import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -26,6 +29,8 @@ import { changeOrderStatus, getAvailableActions, STATUS_LABELS } from '@/lib/ord
 import { queueDriverNotifyForStatus } from '@/api/driverNotifications';
 import { formatOrderTotal, isMissingTotal } from '@/lib/money';
 import { paymentBadgeState, paymentMethodIcon } from '@/lib/paymentBadge';
+import { getPaymentReceiptsForOrders } from '@/api/payments';
+import { orderStatusView } from '@/lib/orderStatusView';
 import { attachFirstOrderFlag, resolveFirstOrderFlags, freezeFirstFlags } from '@/lib/customerHistory';
 import {
   LEGACY_STAGE_SEED,
@@ -110,6 +115,7 @@ export default function Pedidos() {
   });
   const [orders, setOrders] = useState([]);
   const [driversById, setDriversById] = useState({});
+  const [tablesById, setTablesById] = useState({});
   const [dataLoading, setDataLoading] = useState(true);
   const companyIdRef = useRef(null);
   const [, setTick] = useState(0);
@@ -143,6 +149,29 @@ export default function Pedidos() {
   // na primeira visão (lote único, persistido); nunca true→false por um
   // 2º pedido. A UI oculta em finalizado/cancelado.
   const [firstFlags, setFirstFlags] = useState(() => new Map());
+  // Recebimentos declarados por pedido (1 consulta em lote, sem N+1).
+  // Recarrega quando o conjunto de pedidos muda (ação, realtime, reload).
+  const [receiptsByOrder, setReceiptsByOrder] = useState({});
+  const orderIdsKey = (orders || []).map((o) => o.id).filter(Boolean).sort().join(',');
+  useEffect(() => {
+    if (!orderIdsKey || !company?.id) {
+      if (!orderIdsKey) setReceiptsByOrder({});
+      return;
+    }
+    let cancelled = false;
+    getPaymentReceiptsForOrders(supabase, company.id, orderIdsKey.split(','))
+      .then((map) => { if (!cancelled) setReceiptsByOrder(map); })
+      .catch(() => { if (!cancelled) setReceiptsByOrder({}); });
+    return () => { cancelled = true; };
+  }, [orderIdsKey, company?.id]);
+  // Destaque do ÚLTIMO PEDIDO EDITADO pelo operador (nunca por realtime
+  // externo, reload ou re-render). Troca a cada edição; some após 8s.
+  const markEdited = (id) => {
+    if (!id) return;
+    setHighlightId(id);
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => setHighlightId(null), 8000);
+  };
   const freezeFlags = (flags) => {
     setFirstFlags((prev) => freezeFirstFlags(prev, flags));
   };
@@ -213,6 +242,10 @@ export default function Pedidos() {
           sbListDrivers(supabase, companyId)
             .then(list => setDriversById(Object.fromEntries((list || []).map(d => [d.id, d]))))
             .catch(() => {});
+          // Mapa de mesas para a linha 🪑 do card (1 consulta, sem N+1).
+          sbListTables(supabase, companyId)
+            .then(list => setTablesById(Object.fromEntries((list || []).map(t => [t.id, t]))))
+            .catch(() => {});
         }
       } catch (err) { console.error(err); }
       finally {
@@ -258,9 +291,6 @@ export default function Pedidos() {
             } catch { /* segue para o modal */ }
             setAlertQueue(prev => prev.some(o => o.id === flagged.id) ? prev : [...prev, flagged]);
           }
-          setHighlightId(event.data.id);
-          if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
-          highlightTimerRef.current = setTimeout(() => setHighlightId(null), 8000);
           // Motoboy padrão: atribui na chegada (somente delivery novo, sem driver).
           if (sbActive) void autoAssignRunner.current?.maybeAssign(event.data);
         }
@@ -376,6 +406,8 @@ export default function Pedidos() {
   // Reimpressão manual (rota /impressao) nunca passa por aqui.
   // Decisão centralizada em printTrigger (mesma usada no modal e na fila).
   const maybeTriggerPrint = (orderId, toStatus) => {
+    // Opt-out "não mostrar mais" (por empresa): nem pergunta, nem abre.
+    if (getSkipPrintPrompt(null, companyIdRef.current)) return;
     const d = decidePrintTrigger({ printCfg, displayStages, toStatus, orderId });
     if (d.kind === 'none') return;
     if (d.kind === 'prompt') {
@@ -427,6 +459,7 @@ export default function Pedidos() {
           detail = null;
         }
         setOrders(prev => mergeUpdated(prev, detail || updated));
+        markEdited((detail || updated)?.id);
         toast({ title: action.id === 'accept' ? 'Pedido confirmado!' : `Pedido: ${action.label?.replace(/^→ /, '') || STATUS_LABELS[action.next]}` });
         maybeTriggerPrint(order.id, action.next);
         // Saída para entrega: registra o aviso pendente (nunca bloqueia,
@@ -488,6 +521,7 @@ export default function Pedidos() {
           detail = null;
         }
         setOrders(prev => mergeUpdated(prev, { ...(detail || updated), id: draggableId }));
+        markEdited(draggableId);
         maybeTriggerPrint(draggableId, newStatus);
         // Saída para entrega via arraste: mesmo registro pendente idempotente.
         if (newStatus === 'saiu_entrega') {
@@ -534,13 +568,13 @@ export default function Pedidos() {
           </span>
         </div>
         <DragDropContext onDragEnd={onDragEnd}>
-          <div ref={kanbanRef} className="flex gap-3 sm:gap-4 overflow-x-auto kanban-scroll pb-4 -mx-1 px-1 lg:flex-1 lg:min-h-0 lg:overflow-y-hidden lg:pb-2">
+          <div ref={kanbanRef} className="flex gap-2 sm:gap-3 overflow-x-auto kanban-scroll pb-4 -mx-1 px-1 lg:flex-1 lg:min-h-0 lg:overflow-y-hidden lg:pb-2">
             {displayStages.map(col => {
               const colOrders = orders.filter(o => stageForStatus(displayStages, o.status)?.id === col.id);
               return (
                 <Droppable key={col.id} droppableId={col.id}>
                   {(provided) => (
-                    <div ref={provided.innerRef} {...provided.droppableProps} className="w-64 sm:w-72 shrink-0 min-w-0 max-h-[60dvh] lg:max-h-full overflow-y-auto lg:h-full rounded-xl">
+                    <div ref={provided.innerRef} {...provided.droppableProps} className="w-60 xl:w-72 shrink-0 min-w-0 max-h-[60dvh] lg:max-h-full overflow-y-auto lg:h-full rounded-xl">
                       {col.mapsTo === 'novo' ? (
                         <button
                           type="button"
@@ -598,6 +632,14 @@ export default function Pedidos() {
                                   <div className="flex items-center justify-between gap-2 mb-2">
                                     <span className="flex items-center gap-1.5 min-w-0">
                                       <span className="font-heading font-bold text-sm text-foreground truncate">#{order.order_number || '—'}</span>
+                                      {(() => {
+                                        const st = orderStatusView(order.status);
+                                        return (
+                                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${st.className}`}>
+                                            {order.status === 'aguardando_retirada' ? '🟣 ' : ''}{st.label}
+                                          </span>
+                                        );
+                                      })()}
                                       {order.status === 'novo' && (
                                         <span className="flex shrink-0 items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold text-white">
                                           <span className="h-1.5 w-1.5 rounded-full bg-white" /> NOVO
@@ -614,6 +656,15 @@ export default function Pedidos() {
                                   {order.driver_id && driversById[order.driver_id] && (
                                     <p className="text-xs text-muted-foreground mt-0.5 truncate">🛵 {driversById[order.driver_id].name}</p>
                                   )}
+                                  {order.order_type === 'mesa' && (() => {
+                                    const t = resolveTableName(order, tablesById);
+                                    if (!order.table_id && !order.table_number) return null;
+                                    return (
+                                      <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                                        🪑 {t.name ? `Mesa ${t.name}` : 'Mesa —'}
+                                      </p>
+                                    );
+                                  })()}
                                   {order.order_type === 'delivery' && shortAddress(order) && (
                                     <p className="text-xs text-muted-foreground mt-0.5 truncate">📍 {shortAddress(order)}</p>
                                   )}
@@ -636,7 +687,20 @@ export default function Pedidos() {
                                     <span className="shrink-0">•</span>
                                     <span className="truncate">{order.items?.length || 0} {order.items?.length === 1 ? 'item' : 'itens'}</span>
                                   </div>
-                                  {order.payment_method && <p className="text-xs text-muted-foreground mt-1 truncate">{paymentMethodIcon(order.payment_method)} {order.payment_method} • {paymentBadgeState({ paymentStatus: order.payment_status }).label}</p>}
+                                  {(() => {
+                                    const recs = receiptsByOrder[order.id] || [];
+                                    const pay = paymentBadgeState({ paymentStatus: order.payment_status, hasReceipt: recs.length > 0 });
+                                    const rec = recs[0];
+                                    return (
+                                      <p className="text-xs mt-1 truncate">
+                                        <span className="font-bold">{pay.icon} {pay.label}</span>
+                                        {order.payment_method && <span className="text-muted-foreground"> • {paymentMethodIcon(order.payment_method)} {order.payment_method}</span>}
+                                        {rec && pay.key === 'registered' && (
+                                          <span className="text-muted-foreground"> • {fmtCurrency(rec.amount)}{rec.createdAt ? ` em ${new Date(rec.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+                                        )}
+                                      </p>
+                                    );
+                                  })()}
                                   {order.notes && <p className="text-xs text-muted-foreground mt-1 italic truncate">📝 {order.notes}</p>}
                                   {/* Total + selo: linha própria, nunca truncada nem disputada */}
                                   <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-border">
@@ -731,6 +795,7 @@ export default function Pedidos() {
           onOrderUpdated={(updated) => {
             setOrders(prev => mergeUpdated(prev, updated));
             setSelectedOrder(prev => (prev ? mergeUpdated([prev], updated)[0] : updated));
+            markEdited(updated?.id);
           }}
           onCancel={() => setCancelOrderData(selectedOrder)}
           onSelectOrder={(o) => setSelectedOrder(o)}
@@ -744,6 +809,7 @@ export default function Pedidos() {
           onCancelled={(updated) => {
             setOrders(prev => mergeUpdated(prev, updated));
             setSelectedOrder(null);
+            markEdited(updated?.id);
           }}
         />
       )}
@@ -767,8 +833,13 @@ export default function Pedidos() {
           onOpenChange={(open) => { if (!open) setPrintPrompt(null); }}
           orderNumber={orders.find((o) => o.id === printPrompt.orderId)?.order_number}
           stageName={printPrompt.stageName}
-          onSkip={() => setPrintPrompt(null)}
-          onPrint={() => {
+          order={orders.find((o) => o.id === printPrompt.orderId) || null}
+          onSkip={(dontShow) => {
+            if (dontShow) setSkipPrintPrompt(null, companyIdRef.current, true);
+            setPrintPrompt(null);
+          }}
+          onPrint={(dontShow) => {
+            if (dontShow) setSkipPrintPrompt(null, companyIdRef.current, true);
             const { orderId, stageId, stageName } = printPrompt;
             const r = openPrintWindow(printUrl(orderId, stageName));
             if (r.ok) {

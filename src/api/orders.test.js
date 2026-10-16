@@ -124,6 +124,11 @@ describe('orders — mapeamento', () => {
     assert.deepEqual(o.status_history, []);
   });
 
+  it('mapeia table_id (vínculo real mesa↔pedido), null quando ausente', () => {
+    assert.equal(fromSupabaseOrder({ id: '1', table_id: 't9' }).table_id, 't9');
+    assert.equal(fromSupabaseOrder({ id: '1' }).table_id, null);
+  });
+
   it('item: total->price, options->complements', () => {
     const i = fromSupabaseOrderItem({ id: 'i', product_name: 'X', quantity: 2, unit_price: '5', total: '10', options: [{ a: 1 }] });
     assert.equal(i.name, 'X');

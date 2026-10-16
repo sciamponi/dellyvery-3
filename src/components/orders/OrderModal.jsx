@@ -12,6 +12,7 @@ import RouteModal from '@/components/orders/RouteModal';
 import PrintPromptModal from '@/components/orders/PrintPromptModal';
 import { normalizePrintSettings, markPrinted } from '@/lib/printSettings';
 import { decidePrintTrigger, openPrintWindow, printUrl, PRINT_FAILURE_MESSAGE } from '@/lib/printTrigger';
+import { getSkipPrintPrompt, setSkipPrintPrompt } from '@/lib/printPrefs';
 import { formatAddress, resolveAdvanceFlow } from '@/lib/deliveryRoute';
 import { groupComplements, isFreeComplement, itemsComplementsTotal, itemNavState } from '@/lib/orderItemView';
 import { listDrivers } from '@/api/team';
@@ -476,6 +477,9 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
       });
       if (d.kind === 'none') {
         if (shouldAutoCloseOnAction(action.id)) onClose();
+      } else if (getSkipPrintPrompt(null, order.company_id)) {
+        // Opt-out "não mostrar mais" (por empresa): nem pergunta, nem abre.
+        if (shouldAutoCloseOnAction(action.id)) onClose();
       } else {
         setPrintPrompt({
           orderId: merged?.id || order.id,
@@ -815,7 +819,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl max-h-[90vh] overflow-hidden p-0 gap-0 flex flex-col">
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-4xl max-h-[90vh] overflow-hidden p-0 gap-0 flex flex-col">
         <DialogHeader className="shrink-0 px-4 pt-3 sm:px-6 sm:pt-4">
           <button
             type="button"
@@ -838,7 +842,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
             <span className={`text-sm px-3 py-1.5 rounded-full font-semibold whitespace-nowrap ${STATUS_PILL[order.status] || STATUS_PILL.novo}`}>
               {stageName || STATUS_LABELS[order.status] || order.status}
             </span>
-            <span className={`text-xs px-2.5 py-1 rounded-full font-bold whitespace-nowrap ${paymentBadgeClass(payBadge)}`}>{payBadge.label}</span>
+            <span className={`text-xs px-2.5 py-1 rounded-full font-bold whitespace-nowrap ${paymentBadgeClass(payBadge)}`}>{payBadge.icon} {payBadge.label}</span>
           </DialogTitle>
         </DialogHeader>
 
@@ -846,8 +850,8 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
           <>
           <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4 space-y-5">
             {/* Cliente + operação: duas colunas no desktop, empilhadas no mobile. */}
-            <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-2xl bg-muted/50 p-3.5 space-y-1.5">
+            <div className="grid gap-3 lg:grid-cols-3">
+            <div className="rounded-2xl bg-muted/50 p-3.5 space-y-1.5 min-w-0">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Cliente</p>
               <p className="font-heading text-xl font-bold text-foreground break-words">{order.customer_name}</p>
               {order.customer_id && order.status !== 'cancelado' && histOk &&
@@ -894,10 +898,9 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
             </div>
             {(order.order_type === 'retirada' || order.order_type === 'mesa'
               || (order.status !== 'finalizado' && order.status !== 'cancelado' && sbActive)) && (
-            <div className="rounded-2xl bg-muted/50 p-3.5 space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Vínculos e operação</p>
-              {/* Vínculos e entregador lado a lado no desktop; empilhados no mobile. */}
-              <div className="grid gap-2 lg:grid-cols-2">
+            <>
+            <div className="rounded-2xl bg-muted/50 p-3.5 space-y-2 min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Vínculos</p>
               {order.status !== 'finalizado' && order.status !== 'cancelado' && sbActive && (
                 <div className="rounded-xl border border-border p-2.5 space-y-2">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">🔗 Vínculos</p>
@@ -1060,6 +1063,9 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                   )}
                 </div>
               )}
+            </div>
+            <div className="rounded-2xl bg-muted/50 p-3.5 space-y-2 min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Operação</p>
               {order.order_type === 'delivery' && order.status !== 'finalizado' && order.status !== 'cancelado' && sbActive && (
                 <div className="rounded-xl border border-border p-2.5 space-y-2">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">🛵 Entregador</p>
@@ -1154,7 +1160,6 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                   )}
                 </div>
               )}
-              </div>
               {order.order_type === 'retirada' && (
                 <p className="flex items-center gap-2 text-sm font-semibold text-foreground pt-1">
                   <ShoppingBag className="h-4 w-4 shrink-0" /> 🛍️ RETIRADA no balcão
@@ -1166,6 +1171,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                 </p>
               )}
             </div>
+            </>
             )}
             </div>
 
@@ -1263,7 +1269,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                 <Receipt className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="text-muted-foreground">Pagamento:</span>
                 <span className="font-medium truncate">{paymentMethodIcon(order.payment_method)} {order.payment_method || '—'}</span>
-                <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${paymentBadgeClass(payBadge)}`}>{payBadge.label}</span>
+                <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${paymentBadgeClass(payBadge)}`}>{payBadge.icon} {payBadge.label}</span>
               </div>
             )}
             {latestReceipt && !isPaid && (
@@ -1680,11 +1686,14 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
           }}
           orderNumber={printPrompt.orderNumber}
           stageName={printPrompt.stageName}
-          onSkip={() => {
+          order={order}
+          onSkip={(dontShow) => {
+            if (dontShow) setSkipPrintPrompt(null, order.company_id, true);
             setPrintPrompt(null);
             if (printPrompt.autoClose) onClose();
           }}
-          onPrint={() => {
+          onPrint={(dontShow) => {
+            if (dontShow) setSkipPrintPrompt(null, order.company_id, true);
             const r = openPrintWindow(printPrompt.url);
             if (r.ok) {
               markPrinted(printPrompt.orderId, printPrompt.stageId);
@@ -1992,7 +2001,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
           ) : latestReceipt ? (
             <div className="space-y-2">
               <p className="text-sm">
-                <span className="inline-block text-xs px-2.5 py-1 rounded-full font-bold bg-amber-100 text-amber-800">RECEBIMENTO REGISTRADO</span>
+                <span className="inline-block text-xs px-2.5 py-1 rounded-full font-bold bg-amber-500 text-white">REGISTRADO</span>
               </p>
               <div className="rounded-xl border border-border p-3 text-sm space-y-1">
                 <div className="flex justify-between"><span className="text-muted-foreground">Valor</span><span className="font-bold">{fmtCurrency(latestReceipt.amount)}</span></div>

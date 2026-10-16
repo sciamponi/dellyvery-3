@@ -1,9 +1,11 @@
 // DELLVERY 3 — Selo de pagamento (puro, testável).
 // Hierarquia de verdade: status oficial primeiro; declaração em auditoria
 // NUNCA vira PAGO. Sem método: sem emoji (sem excesso).
-// - paid => PAGO (verde), independente de declaração.
-// - hasReceipt (sem quitação) => RECEBIMENTO REGISTRADO (âmbar).
-// - failed/refunded => rótulos próprios; demais => A RECEBER (vermelho).
+// - paid => 🟢 PAGO (verde), independente de declaração.
+// - hasReceipt (sem quitação) => 🟡 REGISTRADO (âmbar sólido).
+// - failed => ❌ PAGAMENTO FALHOU (vermelho).
+// - refunded => ↩️ ESTORNADO (cinza).
+// - demais => 🔴 A RECEBER (vermelho).
 
 export function paymentMethodIcon(method) {
   const m = String(method || '').toLowerCase();
@@ -16,24 +18,24 @@ export function paymentMethodIcon(method) {
 
 export function paymentBadgeState({ paymentStatus, hasReceipt = false } = {}) {
   if (paymentStatus === 'paid') {
-    return { key: 'paid', label: 'PAGO', tone: 'green' };
+    return { key: 'paid', label: 'PAGO', icon: '🟢', tone: 'green' };
   }
   if (hasReceipt) {
-    return { key: 'registered', label: 'RECEBIMENTO REGISTRADO', tone: 'amber' };
+    return { key: 'registered', label: 'REGISTRADO', icon: '🟡', tone: 'amber' };
   }
   if (paymentStatus === 'failed') {
-    return { key: 'failed', label: 'FALHOU', tone: 'amber' };
+    return { key: 'failed', label: 'PAGAMENTO FALHOU', icon: '❌', tone: 'red' };
   }
   if (paymentStatus === 'refunded') {
-    return { key: 'refunded', label: 'ESTORNADO', tone: 'gray' };
+    return { key: 'refunded', label: 'ESTORNADO', icon: '↩️', tone: 'gray' };
   }
-  return { key: 'pending', label: 'A RECEBER', tone: 'red' };
+  return { key: 'pending', label: 'A RECEBER', icon: '🔴', tone: 'red' };
 }
 
 const TONE_CLASSES = {
   green: 'bg-green-600 text-white',
   red: 'bg-red-600 text-white',
-  amber: 'bg-amber-100 text-amber-800',
+  amber: 'bg-amber-500 text-white',
   gray: 'bg-muted text-muted-foreground',
 };
 

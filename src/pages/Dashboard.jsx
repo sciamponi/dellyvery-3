@@ -345,7 +345,7 @@ export default function Dashboard() {
           <h1 className="font-heading text-2xl font-bold text-foreground">{company.name}</h1>
           <p className="text-sm text-muted-foreground">{company.slogan || 'Bem-vindo de volta!'}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button asChild variant="outline" size="sm">
             <Link to={`/cardapio/${company.slug}`}>
               <Store className="h-4 w-4 mr-2" /> Ver cardápio

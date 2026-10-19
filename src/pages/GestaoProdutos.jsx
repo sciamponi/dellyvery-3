@@ -346,7 +346,7 @@ export default function GestaoProdutos() {
       </PageHeader>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        <TabsList className="max-w-full justify-start overflow-x-auto no-scrollbar sm:justify-center sm:overflow-visible">
           <TabsTrigger value="produtos">Produtos ({products.length})</TabsTrigger>
           <TabsTrigger value="categorias">Categorias ({categories.length})</TabsTrigger>
           <TabsTrigger value="complementos">Complementos</TabsTrigger>

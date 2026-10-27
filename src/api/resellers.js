@@ -42,9 +42,11 @@ export function resellerStatusLabel(status) {
 const RESELLER_TRANSITIONS = {
   criado: ['enviado', 'revogado'],
   enviado: ['revogado'],
+  // "aprovado" nesta transição representa somente a solicitacao de aprovacao
+  // na UI; o backend bloqueia a escrita direta e exige a Edge Function.
   aguardando_aprovacao: ['aprovado', 'recusado'],
-  aprovado: ['suspenso'],
-  suspenso: ['aprovado'],
+  aprovado: ['suspenso', 'revogado'],
+  suspenso: ['aprovado', 'revogado'],
   recusado: [],
   expirado: [],
   revogado: [],
@@ -80,6 +82,18 @@ export function validateInviteForm({ name, phone }) {
   return null;
 }
 
+// E-mail do vinculo de acesso: unica chave aceita pela Edge Function.
+export function validateResellerEmail(email) {
+  const value = String(email || '').trim().toLowerCase();
+  if (!value) return 'Informe o e-mail do revendedor';
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) return 'E-mail do revendedor inválido';
+  return null;
+}
+
+export function normalizeResellerEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
 export function buildResellerInviteLink(origin, token) {
   const base = String(origin || '').replace(/\/$/, '');
   if (!base) throw new Error('Origem inválida para o link do convite');
@@ -110,6 +124,44 @@ export function buildResellerInviteUrl({ phone, name, link }) {
   const to = toWaNumber(phone);
   if (!to) throw new Error('WhatsApp do interessado inválido');
   return buildWaUrl(to, buildResellerInviteMessage({ name, link }));
+}
+
+// Mensagem de acesso aprovado. O link e o unico canal de entrada na area e
+// deve ser enviado manualmente pelo WhatsApp (sem SMTP nesta etapa).
+export function buildResellerAccessMessage({ name, link }) {
+  const first = String(name || '').trim().split(/\s+/)[0] || 'tudo bem?';
+  return [
+    `Olá, ${first}! Tudo bem?`,
+    '',
+    'Seu acesso de revendedor Dellyvery foi aprovado.',
+    '',
+    'Crie sua senha e entre na Área do Revendedor pelo link pessoal abaixo:',
+    '',
+    link,
+    '',
+    'Este link é pessoal e expira em breve. Se você não reconhece este acesso, ignore esta mensagem.',
+  ].join('\n');
+}
+
+export function buildResellerAccessUrl({ phone, name, link }) {
+  const to = toWaNumber(phone);
+  if (!to) throw new Error('WhatsApp do revendedor inválido');
+  return buildWaUrl(to, buildResellerAccessMessage({ name, link }));
+}
+
+export function fromSupabaseReseller(row) {
+  if (!row) return row;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    invite_id: row.invite_id,
+    status: row.status || 'ativo',
+    approved_by: row.approved_by || null,
+    approved_at: row.approved_at || null,
+    suspended_at: row.suspended_at || null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
 }
 
 // Normaliza linha do banco para o formulário/ficha.
@@ -191,6 +243,19 @@ export async function listResellerInvites(client, { status = null, limit = 200 }
   const { data, error } = await q;
   if (error) rpcError(error);
   return (data || []).map(fromSupabaseInvite);
+}
+
+// Vinculos de acesso. Visivel ao Master via RLS; usado para exibir se o
+// convite aprovado ja tem conta ativa/suspensa e para liberar o reenvio.
+export async function listResellers(client, { limit = 200 } = {}) {
+  const c = mustBeConfigured(client);
+  const { data, error } = await c
+    .from('resellers')
+    .select('id, user_id, invite_id, status, approved_by, approved_at, suspended_at, created_at, updated_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) rpcError(error);
+  return (data || []).map(fromSupabaseReseller);
 }
 
 // Varredura de expirados (admin, transação própria no servidor).

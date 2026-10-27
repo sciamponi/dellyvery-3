@@ -238,22 +238,28 @@ begin
   if v_count <> 1 then raise exception 'FAIL E5c: histórico apagado'; end if;
   v_n := v_n + 1; raise notice 'PASS E5 (%/18)', v_n;
 
-  -- F1: update direto admin permitido pelo RLS (transições finas validadas
-  -- no frontend — mesmo padrão de commercial_adhesions).
+  -- F1: aprovação pendente -> aprovado NÃO pode ser feita pelo navegador
+  -- (mesmo como admin); somente Edge Function/service_role.
   execute 'set role authenticated';
   perform set_config('request.jwt.claim.sub', v_admin::text, false);
-  update public.reseller_invites set status = 'aprovado', decided_at = now() where id = v_id;
+  begin
+    update public.reseller_invites set status = 'aprovado', decided_at = now() where id = v_id;
+    raise exception 'FAIL F1: aprovação direta pelo navegador passou';
+  exception when others then
+    if sqlerrm not ilike '%fluxo de acesso do revendedor%' then raise; end if;
+  end;
   execute 'reset role';
   perform set_config('request.jwt.claim.sub', '', false);
-  select count(*) into v_count from public.reseller_invites where id = v_id and status = 'aprovado';
-  if v_count <> 1 then raise exception 'FAIL F1: admin não atualizou'; end if;
+  if (select status from public.reseller_invites where id = v_id) <> 'aguardando_aprovacao' then
+    raise exception 'FAIL F1: status alterado após bloqueio';
+  end if;
   v_n := v_n + 1; raise notice 'PASS F1 (%/18)', v_n;
 
   -- F2: update direto como anon não altera (using(false) → 0 linhas).
   execute 'set role anon';
   update public.reseller_invites set status = 'recusado' where id = v_id;
   execute 'reset role';
-  if (select status from public.reseller_invites where id = v_id) <> 'aprovado' then
+  if (select status from public.reseller_invites where id = v_id) <> 'aguardando_aprovacao' then
     raise exception 'FAIL F2: status corrompido';
   end if;
   v_n := v_n + 1; raise notice 'PASS F2 (%/18)', v_n;

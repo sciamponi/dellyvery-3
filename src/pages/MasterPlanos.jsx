@@ -141,7 +141,22 @@ export default function MasterPlanos() {
         </div>
       )}
         {plans.map(p => (
-          <div key={p.id} className={`rounded-2xl border bg-card p-5 ${p.is_popular ? 'border-primary' : 'border-border'} ${!p.active ? 'opacity-60' : ''}`}>
+          <div
+            key={p.id}
+            role="button"
+            tabIndex={0}
+            aria-haspopup="dialog"
+            aria-label={`Editar plano ${p.name}`}
+            onClick={() => openEdit(p)}
+            onKeyDown={(e) => {
+              if (e.target !== e.currentTarget) return;
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openEdit(p);
+              }
+            }}
+            className={`rounded-2xl border bg-card p-5 cursor-pointer transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${p.is_popular ? 'border-primary' : 'border-border'} ${!p.active ? 'opacity-60' : ''}`}
+          >
             <div className="flex items-start justify-between">
               <div>
                 <h3 className="font-heading font-bold text-foreground flex items-center gap-2">
@@ -154,9 +169,13 @@ export default function MasterPlanos() {
                 )}
                 {p.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{p.description}</p>}
               </div>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="icon" onClick={() => openEdit(p)}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
-                <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(p)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+              <div
+                className="flex items-center gap-1"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <Button variant="ghost" size="icon" onClick={() => openEdit(p)} aria-label={`Editar ${p.name}`}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
+                <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(p)} aria-label={`Excluir ${p.name}`}><Trash2 className="h-4 w-4 text-destructive" /></Button>
               </div>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
@@ -165,7 +184,11 @@ export default function MasterPlanos() {
               <span>Pedidos: {p.limits_orders === -1 ? '∞' : p.limits_orders}</span>
               <span>WhatsApp: {p.limits_whatsapp === -1 ? '∞' : p.limits_whatsapp}</span>
             </div>
-            <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
+            <div
+              className="mt-3 pt-3 border-t border-border flex items-center justify-between"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
               <div className="flex items-center gap-2">
                 <Switch checked={!!p.active} onCheckedChange={() => toggleActive(p)} />
                 <span className="text-xs text-muted-foreground">{p.active ? 'Ativo' : 'Inativo'}</span>

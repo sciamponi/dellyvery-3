@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LogIn, Mail, Lock, Loader2 } from "lucide-react";
 import AuthLayout from "@/components/AuthLayout";
-import { safeReturnTo } from "@/lib/authReturnTo";
+import { safeNextPath, safeReturnTo } from "@/lib/authReturnTo";
 
 function safePath(path) {
   if (!path || typeof path !== "string") return null;
@@ -22,7 +22,7 @@ export default function Login() {
   const { refresh: refreshSb } = useSupabaseAuth();
 
   const requestedFrom =
-    safePath(location.state?.from) || safeReturnTo();
+    safePath(location.state?.from) || safeNextPath("") || safeReturnTo();
 
   const from =
     requestedFrom && requestedFrom !== "/"

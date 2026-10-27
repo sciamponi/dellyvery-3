@@ -6,9 +6,11 @@ import {
   RESELLER_PRODUCT, RESELLER_MODALITY,
   resellerStatusLabel, allowedResellerTransitions,
   buildResellerInviteLink, buildResellerInviteUrl,
-  listResellerInvites, createResellerInvite, updateResellerInvite,
+  buildResellerAccessUrl, validateResellerEmail, normalizeResellerEmail,
+  listResellerInvites, listResellers, createResellerInvite, updateResellerInvite,
   sweepExpiredInvites,
 } from '@/api/resellers';
+import { approveResellerAccess } from '@/api/resellerAccess';
 import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
@@ -19,7 +21,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useToast } from '@/components/ui/use-toast';
 import {
   ShieldAlert, RefreshCw, UserPlus, MessageCircle, ChevronDown,
-  Check, X, Pause, RotateCcw, Pencil, Copy, ExternalLink, AlertTriangle,
+  X, Pause, RotateCcw, Pencil, Copy, ExternalLink, AlertTriangle,
+  Send, Link2,
 } from 'lucide-react';
 
 function Spinner() {
@@ -47,6 +50,19 @@ const STATUS_TONE = {
   revogado: 'bg-muted text-muted-foreground',
 };
 
+const ACCESS_TONE = {
+  ativo: 'bg-green-100 text-green-800',
+  suspenso: 'bg-orange-100 text-orange-800',
+  inativo: 'bg-muted text-muted-foreground',
+};
+
+function accessStatusLabel(status) {
+  if (status === 'ativo') return 'Acesso ativo';
+  if (status === 'suspenso') return 'Acesso suspenso';
+  if (status === 'inativo') return 'Acesso inativo';
+  return 'Sem acesso vinculado';
+}
+
 function fmtDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -66,10 +82,20 @@ export default function MasterRevenda() {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [invites, setInvites] = useState([]);
+  const [resellers, setResellers] = useState([]);
   const [tab, setTab] = useState('visao');
   const [expanded, setExpanded] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Aprovacao com e-mail editavel. A escrita do e-mail ocorre antes da Edge
+  // Function; o link magico so existe em memoria e nunca e persistido.
+  const [approval, setApproval] = useState(null);
+  const [approvalEmail, setApprovalEmail] = useState('');
+  const [approvalError, setApprovalError] = useState('');
+  const [approvalSaving, setApprovalSaving] = useState(false);
+  const [access, setAccess] = useState(null); // { invite, link, whatsappUrl, email }
+  const [resendingId, setResendingId] = useState(null);
 
   // Modal de convite (criar ou editar pré-inscrição).
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -86,7 +112,15 @@ export default function MasterRevenda() {
     try {
       // Marca expirados em transação própria antes de listar.
       await sweepExpiredInvites(supabase).catch(() => null);
-      setInvites(await listResellerInvites(supabase, {}));
+      const [inviteRows, resellerRows] = await Promise.all([
+        listResellerInvites(supabase, {}),
+        // A tabela de vínculos pode não existir antes da migration local;
+        // nesse caso os convites continuam visíveis e a aprovação falha
+        // com mensagem do backend.
+        listResellers(supabase).catch(() => []),
+      ]);
+      setInvites(inviteRows);
+      setResellers(resellerRows);
     } catch (err) {
       setLoadError(err?.message || 'Não foi possível carregar os convites.');
     }
@@ -119,6 +153,11 @@ export default function MasterRevenda() {
     [invites],
   );
 
+  const resellerByInvite = useMemo(
+    () => new Map(resellers.map((r) => [r.invite_id, r])),
+    [resellers],
+  );
+
   if (loading) return <Spinner />;
 
   if (!isAdmin) {
@@ -145,6 +184,98 @@ export default function MasterRevenda() {
     setInvitePhone(invite.phone || '');
     setCreated(null);
     setInviteOpen(true);
+  };
+
+  const openApproval = (invite) => {
+    setApproval(invite);
+    setApprovalEmail(normalizeResellerEmail(invite?.registration?.email));
+    setApprovalError('');
+  };
+
+  const presentAccess = (invite, out) => {
+    const email = normalizeResellerEmail(out?.email || invite?.registration?.email || '');
+    const enriched = {
+      ...invite,
+      registration: { ...(invite?.registration || {}), email },
+    };
+    let whatsappUrl = null;
+    try {
+      whatsappUrl = buildResellerAccessUrl({
+        phone: enriched.phone,
+        name: enriched.name,
+        link: out.accessLink,
+      });
+    } catch {
+      // Sem WhatsApp válido, o link ainda pode ser copiado manualmente.
+    }
+    setAccess({ invite: enriched, link: out.accessLink, whatsappUrl, email });
+  };
+
+  const handleApprove = async () => {
+    if (!approval) return;
+    const emailError = validateResellerEmail(approvalEmail);
+    if (emailError) {
+      setApprovalError(emailError);
+      return;
+    }
+    const current = invites.find((i) => i.id === approval.id) || approval;
+    const reg = { ...(current.registration || {}) };
+    const nextEmail = normalizeResellerEmail(approvalEmail);
+    setApprovalSaving(true);
+    setApprovalError('');
+    try {
+      // A Edge Function lê o e-mail da inscrição; por isso a edição é salva
+      // antes. O convite permanece aguardando aprovação até o vínculo.
+      if (normalizeResellerEmail(reg.email) !== nextEmail) {
+        await updateResellerInvite(
+          supabase,
+          current.id,
+          { registration: { ...reg, email: nextEmail } },
+          { action: 'email_acesso_editado', detail: { email: nextEmail } },
+          sbUser?.id,
+        );
+        reg.email = nextEmail;
+        setInvites((prev) => prev.map((i) => (
+          i.id === current.id ? { ...i, registration: { ...reg } } : i
+        )));
+      }
+      const out = await approveResellerAccess(supabase, current.id);
+      presentAccess({ ...current, registration: reg }, out);
+      setApproval(null);
+      notify({
+        title: current.status === 'aguardando_aprovacao' ? 'Acesso aprovado' : 'Link gerado',
+        description: 'Envie pelo WhatsApp ao revendedor.',
+      });
+      await load();
+    } catch (err) {
+      setApprovalError(err?.message || 'Não foi possível aprovar o acesso.');
+    } finally {
+      setApprovalSaving(false);
+    }
+  };
+
+  const handleResendAccess = async (invite) => {
+    setResendingId(invite.id);
+    try {
+      const out = await approveResellerAccess(supabase, invite.id);
+      presentAccess(invite, out);
+      notify({ title: 'Novo link gerado', description: 'Envie pelo WhatsApp ao revendedor.' });
+      await load();
+    } catch (err) {
+      notify({ title: 'Erro ao gerar link', description: err?.message, variant: 'destructive' });
+    } finally {
+      setResendingId(null);
+    }
+  };
+
+  const handleCopyAccessLink = async () => {
+    if (!access?.link) return;
+    try {
+      await navigator.clipboard.writeText(access.link);
+      notify({ title: 'Link copiado!' });
+    } catch {
+      notify({ title: 'Não foi possível copiar', description: access.link, variant: 'destructive' });
+    }
   };
 
   const handleCreateInvite = async () => {
@@ -220,6 +351,13 @@ export default function MasterRevenda() {
   const handleConfirmTransition = async () => {
     if (!confirm) return;
     const { invite, to } = confirm;
+    // Aprovação de convite pendente exige e-mail + Edge Function; nunca é
+    // feita por update direto (o trigger do banco também bloqueia).
+    if (to === 'aprovado' && invite.status === 'aguardando_aprovacao') {
+      setConfirm(null);
+      openApproval(invite);
+      return;
+    }
     setSaving(true);
     try {
       const patch = { status: to };
@@ -238,12 +376,13 @@ export default function MasterRevenda() {
 
   const renderActions = (invite) => {
     const allowed = allowedResellerTransitions(invite.status);
+    const binding = resellerByInvite.get(invite.id);
     return (
       <div className="mt-3 flex flex-wrap gap-1.5">
         {invite.status === 'aguardando_aprovacao' && (
           <>
-            <Button size="sm" className="h-8 text-xs" onClick={() => askTransition(invite, 'aprovado')}>
-              <Check className="h-3.5 w-3.5" /> Aprovar
+            <Button size="sm" className="h-8 text-xs" onClick={() => openApproval(invite)}>
+              <Send className="h-3.5 w-3.5" /> Aprovar e gerar link
             </Button>
             <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => askTransition(invite, 'recusado')}>
               <X className="h-3.5 w-3.5" /> Recusar
@@ -251,14 +390,46 @@ export default function MasterRevenda() {
           </>
         )}
         {invite.status === 'aprovado' && (
-          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => askTransition(invite, 'suspenso')}>
-            <Pause className="h-3.5 w-3.5" /> Suspender
-          </Button>
+          <>
+            {binding?.status === 'ativo' && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs"
+                disabled={resendingId === invite.id}
+                onClick={() => handleResendAccess(invite)}
+              >
+                <Link2 className="h-3.5 w-3.5" /> {resendingId === invite.id ? 'Gerando...' : 'Novo link'}
+              </Button>
+            )}
+            {!binding && (
+              <Button size="sm" className="h-8 text-xs" onClick={() => openApproval(invite)}>
+                <Send className="h-3.5 w-3.5" /> Finalizar acesso
+              </Button>
+            )}
+            {binding?.status === 'ativo' && (
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => askTransition(invite, 'suspenso')}>
+                <Pause className="h-3.5 w-3.5" /> Suspender
+              </Button>
+            )}
+            {allowed.includes('revogado') && (
+              <Button size="sm" variant="ghost" className="h-8 text-xs text-destructive" onClick={() => askTransition(invite, 'revogado')}>
+                <X className="h-3.5 w-3.5" /> Revogar acesso
+              </Button>
+            )}
+          </>
         )}
         {invite.status === 'suspenso' && (
-          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => askTransition(invite, 'aprovado')}>
-            <RotateCcw className="h-3.5 w-3.5" /> Reativar
-          </Button>
+          <>
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => askTransition(invite, 'aprovado')}>
+              <RotateCcw className="h-3.5 w-3.5" /> Reativar
+            </Button>
+            {allowed.includes('revogado') && (
+              <Button size="sm" variant="ghost" className="h-8 text-xs text-destructive" onClick={() => askTransition(invite, 'revogado')}>
+                <X className="h-3.5 w-3.5" /> Revogar acesso
+              </Button>
+            )}
+          </>
         )}
         {['criado', 'enviado'].includes(invite.status) && (
           <>
@@ -275,7 +446,15 @@ export default function MasterRevenda() {
             )}
           </>
         )}
-        <Button variant="outline" size="sm" className="h-8" onClick={() => setExpanded(expanded === invite.id ? null : invite.id)}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8"
+          onClick={() => setExpanded(expanded === invite.id ? null : invite.id)}
+          aria-expanded={expanded === invite.id}
+          aria-controls={`revenda-detalhes-${invite.id}`}
+          aria-label={expanded === invite.id ? 'Ocultar detalhes' : 'Ver detalhes'}
+        >
           <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded === invite.id ? 'rotate-180' : ''}`} />
         </Button>
       </div>
@@ -285,22 +464,52 @@ export default function MasterRevenda() {
   const renderCard = (invite) => {
     const isOpen = expanded === invite.id;
     const reg = invite.registration || {};
+    const binding = resellerByInvite.get(invite.id);
+    const toggleExpanded = () => setExpanded(isOpen ? null : invite.id);
     return (
-      <div key={invite.id} className="rounded-2xl border border-border bg-card p-4 min-w-0">
+      <div
+        key={invite.id}
+        role="button"
+        tabIndex={0}
+        aria-expanded={isOpen}
+        aria-controls={`revenda-detalhes-${invite.id}`}
+        onClick={toggleExpanded}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleExpanded();
+          }
+        }}
+        className="rounded-2xl border border-border bg-card p-4 min-w-0 cursor-pointer transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="font-heading font-bold text-foreground truncate">{invite.name || 'Sem nome'}</p>
             <p className="text-xs text-muted-foreground truncate">{fmtPhone(invite.phone)}</p>
           </div>
-          <Badge className={`shrink-0 ${STATUS_TONE[invite.status] || ''}`}>{resellerStatusLabel(invite.status)}</Badge>
+          <div className="shrink-0 flex flex-col items-end gap-1">
+            <Badge className={STATUS_TONE[invite.status] || ''}>{resellerStatusLabel(invite.status)}</Badge>
+            {invite.status === 'aprovado' && (
+              <Badge className={ACCESS_TONE[binding?.status] || ACCESS_TONE.inativo}>
+                {accessStatusLabel(binding?.status)}
+              </Badge>
+            )}
+          </div>
         </div>
         <div className="mt-2 space-y-1 text-xs text-muted-foreground">
           <p>{RESELLER_PRODUCT.label} • {RESELLER_MODALITY.label}</p>
           <p>Convite em {fmtDate(invite.created_at)}{invite.claimed_at ? ` • Inscrição em ${fmtDate(invite.claimed_at)}` : ''}</p>
         </div>
         {isOpen && (
-          <dl className="mt-2 rounded-xl bg-muted/50 p-3 space-y-1 text-xs">
-            {reg.email && <div className="flex justify-between gap-2"><dt className="text-muted-foreground">E-mail</dt><dd className="font-medium text-right break-all">{reg.email}</dd></div>}
+          <dl id={`revenda-detalhes-${invite.id}`} className="mt-2 rounded-xl bg-muted/50 p-3 space-y-1 text-xs">
+            <div className="flex justify-between gap-2"><dt className="text-muted-foreground">E-mail de acesso</dt><dd className="font-medium text-right break-all">{reg.email || 'não informado'}</dd></div>
+            {binding && (
+              <div className="flex justify-between gap-2">
+                <dt className="text-muted-foreground">Vínculo</dt>
+                <dd className="font-medium text-right">{accessStatusLabel(binding.status)}{binding.approved_at ? ` • ${fmtDate(binding.approved_at)}` : ''}</dd>
+              </div>
+            )}
             {reg.document && <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Documento</dt><dd className="font-medium text-right">{reg.document}</dd></div>}
             {(reg.city || reg.state) && <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Cidade/UF</dt><dd className="font-medium text-right">{[reg.city, reg.state].filter(Boolean).join(' • ')}</dd></div>}
             {reg.notes && <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Observações</dt><dd className="font-medium text-right">{reg.notes}</dd></div>}
@@ -319,7 +528,9 @@ export default function MasterRevenda() {
             )}
           </dl>
         )}
-        {renderActions(invite)}
+        <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+          {renderActions(invite)}
+        </div>
       </div>
     );
   };
@@ -457,6 +668,95 @@ export default function MasterRevenda() {
         </DialogContent>
       </Dialog>
 
+      {/* Aprovação com e-mail de acesso editável (Edge Function) */}
+      <Dialog
+        open={!!approval}
+        onOpenChange={(v) => { if (!v && !approvalSaving) setApproval(null); }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              {approval?.status === 'aguardando_aprovacao'
+                ? 'Aprovar acesso do revendedor'
+                : 'E-mail de acesso do revendedor'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              {approval?.status === 'aguardando_aprovacao'
+                ? 'O acesso é vinculado exclusivamente ao e-mail abaixo. Se a conta não existir, ela será criada já confirmada; depois o link de acesso será gerado.'
+                : 'Atualize o e-mail e gere um novo link de acesso. O convite já está aprovado.'}
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="approval-email">E-mail de acesso</Label>
+              <Input
+                id="approval-email"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                placeholder="revendedor@exemplo.com"
+                value={approvalEmail}
+                onChange={(e) => setApprovalEmail(e.target.value)}
+                disabled={approvalSaving}
+              />
+            </div>
+            {approvalError && (
+              <div className="rounded-lg bg-destructive/10 p-2.5 text-xs text-destructive">
+                {approvalError}
+              </div>
+            )}
+            <Button className="w-full h-9 text-sm" onClick={handleApprove} disabled={approvalSaving}>
+              <Send className="h-4 w-4" />
+              {approvalSaving
+                ? 'Gerando acesso...'
+                : approval?.status === 'aguardando_aprovacao'
+                  ? 'Aprovar e gerar link'
+                  : 'Salvar e gerar novo link'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Link mágico: exibido apenas em memória, nunca persistido/logado */}
+      <Dialog open={!!access} onOpenChange={(v) => { if (!v) setAccess(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Link de acesso do revendedor</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Envie este link pessoal pelo WhatsApp. Ele abre a criação de senha e, depois, a Área do Revendedor.
+            </p>
+            <div className="flex justify-between gap-2 text-xs">
+              <span className="text-muted-foreground">E-mail</span>
+              <span className="font-medium text-right break-all">{access?.email || '—'}</span>
+            </div>
+            <div className="rounded-xl bg-muted/50 p-3 text-xs break-all">{access?.link}</div>
+            {!access?.whatsappUrl && (
+              <p className="text-[11px] text-amber-700">
+                WhatsApp não disponível para este convite. Copie o link e envie manualmente.
+              </p>
+            )}
+            <div className="flex gap-2">
+              {access?.whatsappUrl && (
+                <Button
+                  className="flex-1 h-9 text-sm"
+                  onClick={() => window.open(access.whatsappUrl, '_blank', 'noopener')}
+                >
+                  <MessageCircle className="h-4 w-4" /> Abrir WhatsApp
+                </Button>
+              )}
+              <Button variant="outline" className="h-9" onClick={handleCopyAccessLink} aria-label="Copiar link de acesso">
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              O link não é armazenado. Ao fechar esta janela, gere outro se precisar.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Confirmação de transição */}
       <ConfirmDialog
         open={!!confirm}
@@ -464,10 +764,12 @@ export default function MasterRevenda() {
         title={`${resellerStatusLabel(confirm?.to)} — ${confirm?.invite?.name || ''}`}
         description={
           confirm?.to === 'aprovado'
-            ? 'Aprovar este parceiro? Ele passará a constar como revendedor aprovado (sem permissões automáticas nesta fase).'
+            ? 'Reativar este revendedor? O vínculo de acesso voltará a ficar ativo.'
             : confirm?.to === 'recusado'
               ? 'Recusar esta inscrição? O histórico do convite será preservado.'
-              : `Alterar o status para "${resellerStatusLabel(confirm?.to)}"?`
+              : confirm?.to === 'revogado'
+                ? 'Revogar o acesso deste revendedor? Esta ação é terminal nesta etapa e o vínculo ficará inativo.'
+                : `Alterar o status para "${resellerStatusLabel(confirm?.to)}"?`
         }
         confirmLabel={resellerStatusLabel(confirm?.to)}
         onConfirm={handleConfirmTransition}

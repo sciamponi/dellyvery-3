@@ -304,7 +304,8 @@ export default function MasterContratos() {
             key={a.id}
             type="button"
             onClick={() => openEdit(a.id)}
-            className="rounded-2xl border border-border bg-card p-4 text-left hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={`Abrir contratação de ${a.full_name || 'sem nome'}`}
+            className="rounded-2xl border border-border bg-card p-4 text-left cursor-pointer transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <div className="flex items-center justify-between gap-2">
               <p className="font-heading font-bold truncate">{a.full_name || 'Sem nome'}</p>

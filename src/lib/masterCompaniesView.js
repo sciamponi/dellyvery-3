@@ -17,6 +17,7 @@ export const SUBSCRIPTION_STATUS_OPTIONS = [
   { value: 'cancelado', label: 'Cancelado' },
   { value: 'suspenso', label: 'Suspenso' },
   { value: 'expirado', label: 'Expirado' },
+  { value: 'expiring', label: 'Vencendo em 7 dias' },
   { value: 'none', label: 'Sem assinatura/plano' },
 ];
 

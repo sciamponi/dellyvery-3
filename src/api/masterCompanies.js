@@ -162,6 +162,7 @@ export async function listMasterCompanies(client, {
   const c = mustBeConfigured(client);
   const term = normalizeMasterSearch(search);
   const ownerCompanyIds = term ? await findOwnerCompanyIds(c, term) : [];
+  const expiring = subscriptionStatus === 'expiring';
   const needsInner = (subscriptionStatus !== 'all' && subscriptionStatus !== 'none')
     || (planId !== 'all' && planId !== '');
 
@@ -175,6 +176,13 @@ export async function listMasterCompanies(client, {
 
   if (subscriptionStatus === 'none') {
     query = query.is('subscriptions', null);
+  } else if (expiring) {
+    const now = new Date();
+    const inSevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    query = query
+      .in('subscriptions.status', ['trial', 'ativo'])
+      .gte('subscriptions.expires_at', now.toISOString())
+      .lte('subscriptions.expires_at', inSevenDays.toISOString());
   } else if (subscriptionStatus !== 'all') {
     query = query.eq('subscriptions.status', subscriptionStatus);
   }

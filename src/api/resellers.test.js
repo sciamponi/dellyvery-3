@@ -5,9 +5,11 @@ import {
   resellerStatusLabel, allowedResellerTransitions, validateResellerTransition,
   isValidInviteToken, validateInviteForm,
   buildResellerInviteLink, buildResellerInviteMessage, buildResellerInviteUrl,
-  fromSupabaseInvite, appendResellerEvent,
+  buildResellerAccessMessage, buildResellerAccessUrl,
+  validateResellerEmail, normalizeResellerEmail,
+  fromSupabaseInvite, fromSupabaseReseller, appendResellerEvent,
   createResellerInvite, resolveResellerInvite, claimResellerInvite,
-  listResellerInvites, getResellerInvite, updateResellerInvite,
+  listResellerInvites, listResellers, getResellerInvite, updateResellerInvite,
   sweepExpiredInvites,
 } from './resellers.js';
 
@@ -56,14 +58,18 @@ describe('resellers — catálogo e ciclo de vida', () => {
   it('transições: aprovação/recusa só de pendente; sem pular etapas', () => {
     assert.deepEqual(allowedResellerTransitions('criado'), ['enviado', 'revogado']);
     assert.deepEqual(allowedResellerTransitions('aguardando_aprovacao'), ['aprovado', 'recusado']);
-    assert.deepEqual(allowedResellerTransitions('aprovado'), ['suspenso']);
-    assert.deepEqual(allowedResellerTransitions('suspenso'), ['aprovado']);
+    assert.deepEqual(allowedResellerTransitions('aprovado'), ['suspenso', 'revogado']);
+    assert.deepEqual(allowedResellerTransitions('suspenso'), ['aprovado', 'revogado']);
     assert.deepEqual(allowedResellerTransitions('recusado'), []);
+    assert.deepEqual(allowedResellerTransitions('revogado'), []);
     assert.equal(validateResellerTransition('aguardando_aprovacao', 'aprovado'), null);
     assert.equal(validateResellerTransition('aguardando_aprovacao', 'recusado'), null);
+    assert.equal(validateResellerTransition('aprovado', 'revogado'), null);
+    assert.equal(validateResellerTransition('suspenso', 'revogado'), null);
     assert.match(validateResellerTransition('criado', 'aprovado'), /inválida/);
     assert.match(validateResellerTransition('enviado', 'aprovado'), /inválida/);
     assert.match(validateResellerTransition('recusado', 'aprovado'), /inválida/);
+    assert.match(validateResellerTransition('revogado', 'aprovado'), /inválida/);
     assert.match(validateResellerTransition('criado', 'xx'), /inválido/);
   });
 });
@@ -111,6 +117,35 @@ describe('resellers — convite e WhatsApp', () => {
     assert.ok(url.startsWith('https://wa.me/5511999999999?text='));
     assert.throws(() => buildResellerInviteUrl({ phone: 'invalido', name: 'J', link: 'https://x' }), /inválido/);
   });
+
+  it('e-mail de acesso é validado e normalizado (chave exata do vínculo)', () => {
+    assert.equal(validateResellerEmail('  REVENDEDOR@Exemplo.COM '), null);
+    assert.equal(normalizeResellerEmail('  REVENDEDOR@Exemplo.COM '), 'revendedor@exemplo.com');
+    assert.match(validateResellerEmail(''), /Informe/);
+    assert.match(validateResellerEmail('sem-arroba'), /inválido/i);
+    assert.match(validateResellerEmail('a@b'), /inválido/i);
+  });
+
+  it('mensagem de acesso aprovado usa link pessoal e não promete envio', () => {
+    const msg = buildResellerAccessMessage({ name: 'Maria Souza', link: 'https://x/magic' });
+    assert.ok(msg.includes('Maria'));
+    assert.ok(msg.includes('https://x/magic'));
+    assert.ok(msg.includes('Área do Revendedor'));
+    assert.ok(!/mensagem enviada|enviado com sucesso|entregue/i.test(msg));
+  });
+
+  it('URL de acesso normaliza WhatsApp e rejeita telefone inválido', () => {
+    const url = buildResellerAccessUrl({
+      phone: '5511999999999',
+      name: 'Maria',
+      link: 'https://x/magic',
+    });
+    assert.ok(url.startsWith('https://wa.me/5511999999999?text='));
+    assert.throws(
+      () => buildResellerAccessUrl({ phone: '', name: 'M', link: 'https://x' }),
+      /inválido/,
+    );
+  });
 });
 
 describe('resellers — mapeamento e eventos', () => {
@@ -132,6 +167,21 @@ describe('resellers — mapeamento e eventos', () => {
     assert.equal(prev.length, 1);
     assert.equal(next.length, 2);
     assert.equal(next[1].by, 'u1');
+  });
+
+  it('fromSupabaseReseller normaliza o vínculo de acesso', () => {
+    const r = fromSupabaseReseller({
+      id: 'r1',
+      user_id: 'u1',
+      invite_id: 'i1',
+      status: 'suspenso',
+      approved_at: '2026-10-01T00:00:00Z',
+      suspended_at: '2026-10-02T00:00:00Z',
+    });
+    assert.equal(r.status, 'suspenso');
+    assert.equal(r.invite_id, 'i1');
+    assert.equal(r.approved_at, '2026-10-01T00:00:00Z');
+    assert.equal(fromSupabaseReseller({}).status, 'ativo');
   });
 });
 
@@ -204,5 +254,22 @@ describe('resellers — adapter (RPCs + RLS admin)', () => {
     const out = await sweepExpiredInvites(client);
     assert.equal(out.swept, 2);
     assert.equal(client.calls.rpc[0].fn, 'sweep_expired_reseller_invites');
+  });
+
+  it('listResellers lê o vínculo via RLS e normaliza', async () => {
+    const client = createMockClient({
+      rows: {
+        resellers: {
+          list: {
+            data: [{ id: 'r1', user_id: 'u1', invite_id: 'i1', status: 'ativo' }],
+            error: null,
+          },
+        },
+      },
+    });
+    const list = await listResellers(client);
+    assert.equal(list.length, 1);
+    assert.equal(list[0].invite_id, 'i1');
+    assert.equal(list[0].status, 'ativo');
   });
 });

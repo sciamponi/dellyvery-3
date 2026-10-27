@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   AlertTriangle,
   Building2,
@@ -44,14 +45,28 @@ function fmtDate(value) {
   return value ? new Date(value).toLocaleDateString('pt-BR') : '—';
 }
 
-function MetricCard({ icon: Icon, label, value, detail = null }) {
-  return (
-    <div className="rounded-2xl border border-border bg-card p-4">
+function MetricCard({ icon: Icon, label, value, detail = null, onClick }) {
+  const content = (
+    <>
       <Icon className="h-5 w-5 text-muted-foreground mb-2" />
       <p className="font-heading text-2xl font-bold text-foreground">{value == null ? '—' : value}</p>
       <p className="text-xs text-muted-foreground">{label}</p>
       {detail && <p className="text-[11px] text-muted-foreground mt-0.5">{detail}</p>}
-    </div>
+    </>
+  );
+
+  if (!onClick) {
+    return <div className="rounded-2xl border border-border bg-card p-4">{content}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-2xl border border-border bg-card p-4 text-left transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {content}
+    </button>
   );
 }
 
@@ -103,10 +118,16 @@ function SubscriptionDates({ subscription }) {
   );
 }
 
-function CompanyCard({ company }) {
+function CompanyCard({ company, onOpen }) {
   const status = companyStatusMeta(company.active);
   return (
-    <article className="rounded-2xl border border-border bg-card p-4">
+    <button
+      type="button"
+      onClick={() => onOpen(company)}
+      aria-haspopup="dialog"
+      aria-label={`Ver detalhes de ${company.name || 'empresa'}`}
+      className="rounded-2xl border border-border bg-card p-4 text-left transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-heading font-bold text-foreground truncate">{company.name || 'Empresa sem nome'}</p>
@@ -136,7 +157,7 @@ function CompanyCard({ company }) {
       <div className="mt-2">
         <SubscriptionDates subscription={company.subscription} />
       </div>
-    </article>
+    </button>
   );
 }
 
@@ -146,6 +167,7 @@ export default function MasterEmpresas() {
   const [error, setError] = useState('');
   const [data, setData] = useState({ items: [], hasMore: false, metrics: null });
   const [plans, setPlans] = useState([]);
+  const [selectedCompany, setSelectedCompany] = useState(null);
 
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -199,7 +221,15 @@ export default function MasterEmpresas() {
 
   const handleSubscriptionChange = (value) => {
     setSubscriptionStatus(value);
-    if (value === 'none') setPlanId('all');
+    if (value === 'none' || value === 'expiring') setPlanId('all');
+  };
+
+  const applyMetricFilter = ({ company = 'all', subscription = 'all' }) => {
+    setSearchInput('');
+    setSearch('');
+    setPlanId('all');
+    setCompanyStatus(company);
+    setSubscriptionStatus(subscription);
   };
 
   const clearFilters = () => {
@@ -224,16 +254,37 @@ export default function MasterEmpresas() {
   });
 
   const cards = [
-    { icon: Building2, label: 'Total de empresas', value: metrics?.totalCompanies },
+    {
+      icon: Building2,
+      label: 'Total de empresas',
+      value: metrics?.totalCompanies,
+      onClick: () => applyMetricFilter({}),
+    },
     {
       icon: CheckCircle2,
       label: 'Empresas ativas',
       value: metrics?.activeCompanies,
       detail: metrics ? `${metrics.inactiveCompanies} inativas` : null,
+      onClick: () => applyMetricFilter({ company: 'active' }),
     },
-    { icon: Clock, label: 'Em trial', value: metrics?.trials },
-    { icon: CalendarClock, label: 'Vencendo em 7 dias', value: metrics?.expiringSoon },
-    { icon: AlertTriangle, label: 'Sem assinatura/plano', value: metrics?.withoutSubscriptionOrPlan },
+    {
+      icon: Clock,
+      label: 'Em trial',
+      value: metrics?.trials,
+      onClick: () => applyMetricFilter({ subscription: 'trial' }),
+    },
+    {
+      icon: CalendarClock,
+      label: 'Vencendo em 7 dias',
+      value: metrics?.expiringSoon,
+      onClick: () => applyMetricFilter({ subscription: 'expiring' }),
+    },
+    {
+      icon: AlertTriangle,
+      label: 'Sem assinatura/plano',
+      value: metrics?.withoutSubscriptionOrPlan,
+      onClick: () => applyMetricFilter({ subscription: 'none' }),
+    },
   ];
 
   return (
@@ -336,7 +387,20 @@ export default function MasterEmpresas() {
                   {data.items.map((company) => {
                     const status = companyStatusMeta(company.active);
                     return (
-                      <tr key={company.id} className="align-top hover:bg-muted/30">
+                      <tr
+                        key={company.id}
+                        tabIndex={0}
+                        aria-label={`Ver detalhes de ${company.name || 'empresa'}`}
+                        onClick={() => setSelectedCompany(company)}
+                        onKeyDown={(e) => {
+                          if (e.target !== e.currentTarget) return;
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setSelectedCompany(company);
+                          }
+                        }}
+                        className="align-top hover:bg-muted/30 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                      >
                         <td className="px-4 py-3">
                           <p className="font-medium text-foreground">{company.name || 'Empresa sem nome'}</p>
                           <p className="text-xs text-muted-foreground">
@@ -364,11 +428,55 @@ export default function MasterEmpresas() {
             </div>
 
             <div className="lg:hidden grid gap-3">
-              {data.items.map((company) => <CompanyCard key={company.id} company={company} />)}
+              {data.items.map((company) => (
+                <CompanyCard key={company.id} company={company} onOpen={setSelectedCompany} />
+              ))}
             </div>
           </>
         )}
       </div>
+
+      <Dialog open={!!selectedCompany} onOpenChange={(open) => { if (!open) setSelectedCompany(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="truncate pr-6">{selectedCompany?.name || 'Empresa'}</DialogTitle>
+          </DialogHeader>
+          {selectedCompany && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className={companyStatusMeta(selectedCompany.active).className}>
+                  {companyStatusMeta(selectedCompany.active).label}
+                </Badge>
+                <SubscriptionBadge status={selectedCompany.subscription?.status} />
+              </div>
+              <div className="text-xs text-muted-foreground space-y-0.5">
+                <p>{selectedCompany.slug ? `/${selectedCompany.slug}` : 'Slug não informado'}</p>
+                {selectedCompany.segment && <p>Segmento: {selectedCompany.segment}</p>}
+                <p>Criada em {fmtDate(selectedCompany.createdAt)}</p>
+              </div>
+              <div className="rounded-xl bg-muted/40 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Proprietário</p>
+                <OwnerBlock owner={selectedCompany.owner} />
+              </div>
+              <div className="rounded-xl bg-muted/40 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Plano</p>
+                <PlanBlock company={selectedCompany} />
+              </div>
+              <div className="rounded-xl bg-muted/40 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Assinatura</p>
+                <SubscriptionDates subscription={selectedCompany.subscription} />
+              </div>
+              {selectedCompany.slug && (
+                <Button className="w-full" asChild>
+                  <a href={`/cardapio/${selectedCompany.slug}`} target="_blank" rel="noopener">
+                    <Store className="h-4 w-4" /> Abrir cardápio
+                  </a>
+                </Button>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

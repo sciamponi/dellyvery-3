@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
-import { listLeads, setLeadStatus, LEAD_STATUSES, leadStatusLabel, leadPaymentLabel, leadBillingLabel } from '@/api/leads';
+import { listLeads, setLeadStatus, LEAD_STATUSES, LEAD_BILLING_PERIODS, leadStatusLabel, leadPaymentLabel, leadBillingLabel } from '@/api/leads';
 import { buildLeadFollowUpUrl } from '@/lib/whatsapp';
 import { isPlatformAdmin } from '@/api/plans';
 import PageHeader from '@/components/PageHeader';
@@ -22,11 +23,13 @@ function Spinner() {
 export default function MasterInteressados() {
   const { toast } = useToast();
   const { user: sbUser } = useSupabaseAuth();
+  const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [leads, setLeads] = useState([]);
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterService, setFilterService] = useState('all');
+  const [filterBilling, setFilterBilling] = useState('all');
   const [updating, setUpdating] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [expanded, setExpanded] = useState(null);
@@ -42,10 +45,16 @@ export default function MasterInteressados() {
 
   useEffect(() => {
     const init = async () => {
+      const statusParam = searchParams.get('status');
+      const initialStatus = LEAD_STATUSES.some((s) => s.id === statusParam) ? statusParam : 'all';
+      const billingParam = searchParams.get('billing');
+      setFilterStatus(initialStatus);
+      setFilterService(searchParams.get('service') || 'all');
+      setFilterBilling(LEAD_BILLING_PERIODS.some((p) => p.id === billingParam) ? billingParam : 'all');
       try {
         const admin = await isPlatformAdmin(supabase, sbUser?.id);
         setIsAdmin(admin);
-        if (admin) await load('all');
+        if (admin) await load(initialStatus);
       } catch (e) { console.error(e); }
       finally { setLoading(false); }
     };
@@ -77,7 +86,10 @@ export default function MasterInteressados() {
     }
   };
 
-  const visible = leads.filter(l => filterService === 'all' || l.service === filterService);
+  const visible = leads.filter(l => (
+    (filterService === 'all' || l.service === filterService)
+    && (filterBilling === 'all' || l.billing_period === filterBilling)
+  ));
   const services = [...new Set(leads.map(l => l.service).filter(Boolean))];
 
   return (
@@ -101,6 +113,13 @@ export default function MasterInteressados() {
             {services.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Select value={filterBilling} onValueChange={setFilterBilling}>
+          <SelectTrigger className="w-44"><SelectValue placeholder="Periodicidade" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todas as periodicidades</SelectItem>
+            {LEAD_BILLING_PERIODS.map(p => <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
       </div>
 
       {loadError && (
@@ -121,8 +140,24 @@ export default function MasterInteressados() {
             const isOpen = expanded === lead.id;
             const address = lead.address || {};
             const addressLine = [address.street, address.number, address.complement, address.neighborhood, address.city, address.state, address.zip_code].filter(Boolean).join(' • ');
+            const toggleExpanded = () => setExpanded(isOpen ? null : lead.id);
             return (
-            <div key={lead.id} className="rounded-2xl border border-border bg-card p-4">
+            <div
+              key={lead.id}
+              role="button"
+              tabIndex={0}
+              aria-expanded={isOpen}
+              aria-controls={`lead-detalhes-${lead.id}`}
+              onClick={toggleExpanded}
+              onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggleExpanded();
+                }
+              }}
+              className="rounded-2xl border border-border bg-card p-4 cursor-pointer transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="font-heading font-bold text-foreground truncate">{lead.full_name}</p>
@@ -148,7 +183,7 @@ export default function MasterInteressados() {
                 <p>Cadastrado em {lead.created_at ? new Date(lead.created_at).toLocaleDateString('pt-BR') : '—'}</p>
               </div>
               {isOpen && (
-                <dl className="mt-2 rounded-xl bg-muted/50 p-3 space-y-1 text-xs">
+                <dl id={`lead-detalhes-${lead.id}`} className="mt-2 rounded-xl bg-muted/50 p-3 space-y-1 text-xs">
                   {lead.cpf && <div className="flex justify-between gap-2"><dt className="text-muted-foreground">CPF</dt><dd className="font-medium text-right">{lead.cpf}</dd></div>}
                   {lead.role && <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Cargo</dt><dd className="font-medium text-right">{lead.role}</dd></div>}
                   {lead.state_registration && <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Inscr. estadual</dt><dd className="font-medium text-right">{lead.state_registration}</dd></div>}
@@ -157,14 +192,26 @@ export default function MasterInteressados() {
                   {lead.consent_at && <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Consentimento</dt><dd className="font-medium text-right">{new Date(lead.consent_at).toLocaleDateString('pt-BR')}</dd></div>}
                 </dl>
               )}
-              <div className="mt-3 flex gap-2">
+              <div
+                className="mt-3 flex gap-2"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
                 <Select value={lead.status} disabled={updating === lead.id} onValueChange={v => handleStatus(lead, v)}>
                   <SelectTrigger className="h-8 text-xs flex-1"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {LEAD_STATUSES.map(s => <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <Button variant="outline" size="sm" className="h-8" onClick={() => setExpanded(isOpen ? null : lead.id)} aria-label={isOpen ? 'Ocultar detalhes' : 'Ver detalhes'}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => setExpanded(isOpen ? null : lead.id)}
+                  aria-expanded={isOpen}
+                  aria-controls={`lead-detalhes-${lead.id}`}
+                  aria-label={isOpen ? 'Ocultar detalhes' : 'Ver detalhes'}
+                >
                   <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                 </Button>
                 {waUrl ? (

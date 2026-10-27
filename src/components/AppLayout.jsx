@@ -3,6 +3,7 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { supabase } from '@/api/supabaseClient';
 import { isPlatformAdmin } from '@/api/plans';
+import { getResellerAccess } from '@/api/resellerAccess';
 import NotificationBell from '@/components/NotificationBell';
 import SelectGuard from '@/components/SelectGuard';
 import {
@@ -37,18 +38,31 @@ const MASTER_NAV = [
   { label: 'Revenda', path: '/master/revenda', icon: Handshake },
 ];
 
+// Navegação da área do revendedor (contexto /revenda). Clientes, créditos e
+// ativações ficam visíveis como "em breve", sem criar módulos nesta etapa.
+const RESELLER_NAV = [
+  { label: 'Visão geral', path: '/revenda', icon: LayoutDashboard },
+  { label: 'Clientes', path: '/revenda/clientes', icon: Users, soon: true },
+  { label: 'Créditos', path: '/revenda/creditos', icon: Wallet, soon: true },
+  { label: 'Ativações', path: '/revenda/ativacoes', icon: CreditCard, soon: true },
+];
+
 export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [company, setCompany] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   // Empresa/usuário vêm do contexto Supabase (RLS).
-  const { user: sbUser, currentCompany: sbCompany, signOut: sbSignOut } = useSupabaseAuth();
+  const { user: sbUser, currentCompany: sbCompany, memberships, signOut: sbSignOut } = useSupabaseAuth();
   // Área Master: o layout alterna para a navegação administrativa.
   const inMaster = location.pathname.startsWith('/master');
+  // Área do revendedor: navegação própria, sem controles de empresa.
+  const inReseller = location.pathname.startsWith('/revenda');
   // Acesso Master confirmado pela consulta segura (RLS), nunca por e-mail
   // ou estado local. Invisível até a confirmação (padrão: oculto).
   const [isAdmin, setIsAdmin] = useState(false);
+  // Atalho de revenda apenas quando o vínculo ativo é confirmado pela RLS.
+  const [isReseller, setIsReseller] = useState(false);
 
   useEffect(() => {
     setCompany(sbCompany || null);
@@ -61,6 +75,16 @@ export default function AppLayout() {
     isPlatformAdmin(supabase, sbUser.id)
       .then((ok) => { if (active) setIsAdmin(!!ok); })
       .catch(() => { if (active) setIsAdmin(false); });
+    return () => { active = false; };
+  }, [sbUser?.id]);
+
+  useEffect(() => {
+    let active = true;
+    setIsReseller(false);
+    if (!sbUser?.id) return undefined;
+    getResellerAccess(supabase, sbUser.id)
+      .then((access) => { if (active) setIsReseller(access.status === 'allowed'); })
+      .catch(() => { if (active) setIsReseller(false); });
     return () => { active = false; };
   }, [sbUser?.id]);
 
@@ -79,8 +103,9 @@ export default function AppLayout() {
     }
   };
 
-  const homePath = inMaster ? '/master' : '/dashboard';
-  const navItems = inMaster ? MASTER_NAV : NAV_ITEMS;
+  const homePath = inMaster ? '/master' : inReseller ? '/revenda' : '/dashboard';
+  const navItems = inMaster ? MASTER_NAV : inReseller ? RESELLER_NAV : NAV_ITEMS;
+  const companyHomePath = memberships?.length ? '/dashboard' : '/criar-restaurante';
 
   return (
     <div className="min-h-screen bg-background lg:h-screen lg:overflow-hidden">
@@ -90,13 +115,13 @@ export default function AppLayout() {
           <button
             type="button"
             onClick={() => navigate(homePath)}
-            aria-label={inMaster ? 'Ir para o Dashboard Master' : 'Ir para o Dashboard'}
+            aria-label={inMaster ? 'Ir para o Dashboard Master' : inReseller ? 'Ir para a Área do Revendedor' : 'Ir para o Dashboard'}
             className="flex items-center gap-2 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary font-heading text-lg font-bold text-primary-foreground">D</div>
             <span className="font-heading font-bold text-sidebar-foreground">DELLYVERY</span>
           </button>
-          {!inMaster && (
+          {!inMaster && !inReseller && (
             <span className="ml-auto">
               <NotificationBell companyId={company?.id} onSelectOrder={handleSelectNotification} />
             </span>
@@ -104,6 +129,9 @@ export default function AppLayout() {
         </div>
         {inMaster && (
           <p className="px-5 pt-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Master</p>
+        )}
+        {inReseller && (
+          <p className="px-5 pt-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Revenda</p>
         )}
         <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
           {navItems.map((item, i) => (
@@ -128,11 +156,27 @@ export default function AppLayout() {
             <button onClick={() => navigate('/dashboard')} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors">
               <Undo2 className="h-5 w-5" /> Voltar ao sistema
             </button>
+          ) : inReseller ? (
+            <>
+              <button onClick={() => navigate(companyHomePath)} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
+                <Store className="h-5 w-5" /> Meu sistema
+              </button>
+              {isAdmin && (
+                <button onClick={() => navigate('/master')} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
+                  <ShieldCheck className="h-5 w-5" /> Acessar Master
+                </button>
+              )}
+            </>
           ) : (
             <>
               {isAdmin && (
                 <button onClick={() => navigate('/master')} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
                   <ShieldCheck className="h-5 w-5" /> Acessar Master
+                </button>
+              )}
+              {isReseller && (
+                <button onClick={() => navigate('/revenda')} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
+                  <Handshake className="h-5 w-5" /> Área do Revendedor
                 </button>
               )}
               {company && (
@@ -153,7 +197,7 @@ export default function AppLayout() {
   <button
     type="button"
     onClick={() => navigate(homePath)}
-    aria-label={inMaster ? 'Ir para o Dashboard Master' : 'Ir para o Dashboard'}
+    aria-label={inMaster ? 'Ir para o Dashboard Master' : inReseller ? 'Ir para a Área do Revendedor' : 'Ir para o Dashboard'}
     className="flex items-center gap-2 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   >
     <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary font-heading text-sm font-bold text-primary-foreground">
@@ -165,7 +209,7 @@ export default function AppLayout() {
   </button>
 
   <div className="flex items-center gap-1">
-    {!inMaster && <NotificationBell companyId={company?.id} onSelectOrder={handleSelectNotification} />}
+    {!inMaster && !inReseller && <NotificationBell companyId={company?.id} onSelectOrder={handleSelectNotification} />}
       <button
         onClick={() => setMobileOpen(true)}
         className="relative z-50 flex h-12 w-12 items-center justify-center rounded-xl hover:bg-muted active:scale-95 transition-all"
@@ -182,7 +226,7 @@ export default function AppLayout() {
           <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
           <div className="relative flex w-72 flex-col bg-sidebar">
             <div className="flex h-14 items-center justify-between border-b border-sidebar-border px-4">
-              <span className="font-heading font-bold text-sidebar-foreground">{inMaster ? 'Master' : 'Menu'}</span>
+              <span className="font-heading font-bold text-sidebar-foreground">{inMaster ? 'Master' : inReseller ? 'Revenda' : 'Menu'}</span>
               <button onClick={() => setMobileOpen(false)} className="p-2"><X className="h-10 w-10 text-sidebar-foreground" /></button>
             </div>
             <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
@@ -208,11 +252,27 @@ export default function AppLayout() {
                 <button onClick={() => { navigate('/dashboard'); setMobileOpen(false); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors">
                   <Undo2 className="h-5 w-5" /> Voltar ao sistema
                 </button>
+              ) : inReseller ? (
+                <>
+                  <button onClick={() => { navigate(companyHomePath); setMobileOpen(false); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
+                    <Store className="h-5 w-5" /> Meu sistema
+                  </button>
+                  {isAdmin && (
+                    <button onClick={() => { navigate('/master'); setMobileOpen(false); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
+                      <ShieldCheck className="h-5 w-5" /> Acessar Master
+                    </button>
+                  )}
+                </>
               ) : (
                 <>
                   {isAdmin && (
                     <button onClick={() => { navigate('/master'); setMobileOpen(false); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
                       <ShieldCheck className="h-5 w-5" /> Acessar Master
+                    </button>
+                  )}
+                  {isReseller && (
+                    <button onClick={() => { navigate('/revenda'); setMobileOpen(false); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
+                      <Handshake className="h-5 w-5" /> Área do Revendedor
                     </button>
                   )}
                   {company && (

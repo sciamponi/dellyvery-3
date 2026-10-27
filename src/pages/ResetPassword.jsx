@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Lock, Loader2, AlertTriangle } from "lucide-react";
 import AuthLayout from "@/components/AuthLayout";
+import { safeNextPath } from "@/lib/authReturnTo";
 
 export default function ResetPassword() {
   // Sessão criada pelo link de recuperação (detectSessionInUrl).
@@ -63,7 +64,7 @@ export default function ResetPassword() {
     setLoading(true);
     try {
       await updatePassword(supabase, newPassword);
-      window.location.href = "/login";
+      window.location.href = safeNextPath("/login");
     } catch (err) {
       setError(err.message || "Failed to reset password");
     } finally {

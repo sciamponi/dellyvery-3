@@ -42,21 +42,28 @@ export default function MasterDashboard() {
   const stats = summarizeLeads(leads);
 
   const cards = [
-    { icon: Users, label: 'Interessados', value: stats.total },
-    { icon: UserPlus, label: 'Novos cadastros', value: stats.novos },
-    { icon: LayoutGrid, label: 'Serviços', value: stats.byService.length },
-    { icon: CalendarClock, label: 'Periodicidades', value: stats.byBilling.filter((b) => b.label !== '—').length },
+    { icon: Users, label: 'Interessados', value: stats.total, to: '/master/interessados' },
+    { icon: UserPlus, label: 'Novos cadastros', value: stats.novos, to: '/master/interessados?status=novo' },
+    { icon: LayoutGrid, label: 'Serviços', value: stats.byService.length, to: '/master/interessados' },
+    { icon: CalendarClock, label: 'Periodicidades', value: stats.byBilling.filter((b) => b.label !== '—').length, to: '/master/interessados' },
   ];
 
-  const distBlock = (title, rows, emptyHint) => (
+  const distBlock = (title, rows, emptyHint, rowTo) => (
     <div className="rounded-2xl border border-border bg-card p-4">
-      <h3 className="font-heading font-bold text-sm text-foreground mb-3">{title}</h3>
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <h3 className="font-heading font-bold text-sm text-foreground">{title}</h3>
+        <Link to="/master/interessados" className="text-[11px] text-primary hover:underline">Ver todos</Link>
+      </div>
       {rows.length === 0 ? (
         <p className="text-xs text-muted-foreground">{emptyHint}</p>
       ) : (
         <div className="space-y-2">
           {rows.map((r) => (
-            <div key={r.label}>
+            <Link
+              key={r.label}
+              to={rowTo(r)}
+              className="block rounded-lg -mx-1 px-1 py-0.5 hover:bg-muted/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
               <div className="flex justify-between text-xs mb-1">
                 <span className="text-muted-foreground truncate">{r.label}</span>
                 <span className="font-semibold text-foreground ml-2">{r.count}</span>
@@ -67,7 +74,7 @@ export default function MasterDashboard() {
                   style={{ width: `${stats.total > 0 ? Math.round((r.count / stats.total) * 100) : 0}%` }}
                 />
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       )}
@@ -90,21 +97,40 @@ export default function MasterDashboard() {
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
         {cards.map((c) => (
-          <div key={c.label} className="rounded-2xl border border-border bg-card p-4">
+          <Link
+            key={c.label}
+            to={c.to}
+            className="rounded-2xl border border-border bg-card p-4 transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
             <c.icon className="h-5 w-5 text-muted-foreground mb-2" />
             <p className="font-heading text-2xl font-bold text-foreground">{c.value}</p>
             <p className="text-xs text-muted-foreground">{c.label}</p>
-          </div>
+          </Link>
         ))}
       </div>
 
       <div className="grid gap-3 md:grid-cols-3 mb-4">
-        {distBlock('Por serviço', stats.byService, 'Nenhum cadastro ainda.')}
-        {distBlock('Por periodicidade', stats.byBilling, 'Nenhuma periodicidade informada.')}
+        {distBlock(
+          'Por serviço',
+          stats.byService,
+          'Nenhum cadastro ainda.',
+          (r) => (r.label && r.label !== '—'
+            ? `/master/interessados?service=${encodeURIComponent(r.label)}`
+            : '/master/interessados'),
+        )}
+        {distBlock(
+          'Por periodicidade',
+          stats.byBilling.map((r) => ({ ...r, billing: r.label, label: leadBillingLabel(r.label) })),
+          'Nenhuma periodicidade informada.',
+          (r) => (r.billing && r.billing !== '—'
+            ? `/master/interessados?billing=${encodeURIComponent(r.billing)}`
+            : '/master/interessados'),
+        )}
         {distBlock(
           'Por status',
-          stats.byStatus.map((r) => ({ ...r, label: leadStatusLabel(r.label) })),
+          stats.byStatus.map((r) => ({ ...r, status: r.label, label: leadStatusLabel(r.label) })),
           'Nenhum cadastro ainda.',
+          (r) => `/master/interessados?status=${encodeURIComponent(r.status)}`,
         )}
       </div>
 
@@ -118,7 +144,11 @@ export default function MasterDashboard() {
         ) : (
           <div className="space-y-2">
             {stats.recent.map((lead) => (
-              <div key={lead.id} className="flex items-center gap-3 rounded-xl bg-muted/40 px-3 py-2">
+              <Link
+                key={lead.id}
+                to={`/master/interessados?status=${encodeURIComponent(lead.status || '')}`}
+                className="flex items-center gap-3 rounded-xl bg-muted/40 px-3 py-2 transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-foreground truncate">{lead.full_name}</p>
                   <p className="text-xs text-muted-foreground truncate">
@@ -128,7 +158,7 @@ export default function MasterDashboard() {
                   </p>
                 </div>
                 <Badge variant="secondary" className="shrink-0">{leadStatusLabel(lead.status)}</Badge>
-              </div>
+              </Link>
             ))}
           </div>
         )}

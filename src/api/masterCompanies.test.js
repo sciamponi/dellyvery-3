@@ -192,6 +192,21 @@ describe('masterCompanies — lista e relacionamentos', () => {
     assert.ok(client.calls.some((c) => c.op === 'is' && c.args[0] === 'subscriptions' && c.args[1] === null));
   });
 
+  it('filtra assinaturas vencendo nos próximos 7 dias', async () => {
+    const client = createMockClient({
+      tables: {
+        companies: { data: [], error: null },
+        company_members: { data: [], error: null },
+      },
+    });
+    await listMasterCompanies(client, { subscriptionStatus: 'expiring' });
+    const select = client.calls.find((c) => c.table === 'companies' && c.op === 'select');
+    assert.match(select.args[0], /subscriptions!inner/);
+    assert.ok(client.calls.some((c) => c.op === 'in' && c.args[0] === 'subscriptions.status' && c.args[1].includes('trial')));
+    assert.ok(client.calls.some((c) => c.op === 'gte' && c.args[0] === 'subscriptions.expires_at'));
+    assert.ok(client.calls.some((c) => c.op === 'lte' && c.args[0] === 'subscriptions.expires_at'));
+  });
+
   it('normaliza busca e mapeia relações retornadas como array', () => {
     assert.equal(normalizeMasterSearch('  a,(b)  '), 'a b');
     const mapped = mapMasterCompany({

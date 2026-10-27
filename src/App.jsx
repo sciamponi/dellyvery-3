@@ -12,6 +12,7 @@ import ForgotPassword from '@/pages/ForgotPassword';
 import ResetPassword from '@/pages/ResetPassword';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import MasterRoute from '@/components/MasterRoute';
+import ResellerRoute from '@/components/ResellerRoute';
 import { CartProvider } from '@/lib/CartContext';
 import Landing from './pages/Landing';
 import Planos from './pages/Planos';
@@ -39,6 +40,7 @@ import MasterContratos from './pages/MasterContratos';
 import MasterDashboard from './pages/MasterDashboard';
 import MasterEmpresas from './pages/MasterEmpresas';
 import MasterRevenda from './pages/MasterRevenda';
+import ResellerDashboard from './pages/ResellerDashboard';
 import Cadastro from './pages/Cadastro';
 import Privacidade from './pages/Privacidade';
 
@@ -97,6 +99,13 @@ function App() {
                 <Route path="/master/interessados" element={<MasterInteressados />} />
                 <Route path="/master/contratos" element={<MasterContratos />} />
                 <Route path="/master/revenda" element={<MasterRevenda />} />
+              </Route>
+            </Route>
+
+            {/* Área do revendedor — gate próprio (sessão + vínculo ativo) */}
+            <Route element={<ResellerRoute />}>
+              <Route element={<AppLayout />}>
+                <Route path="/revenda" element={<ResellerDashboard />} />
               </Route>
             </Route>
 

@@ -1,11 +1,16 @@
 import { Outlet, useLocation } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useReducer } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
-import { isPlatformAdmin } from '@/api/plans';
+import { getPlatformAdminAccess } from '@/api/plans';
+import {
+  classifyMasterAccessError,
+  createMasterGateState,
+  masterGateReducer,
+} from '@/lib/masterGate';
 import { Button } from '@/components/ui/button';
 import MasterLogin from '@/pages/MasterLogin';
-import { ShieldAlert } from 'lucide-react';
+import { AlertTriangle, ShieldAlert } from 'lucide-react';
 
 // Gate exclusivo das rotas /master/*: sessão + PLATFORM_ADMIN.
 // Sem sessão -> login dedicado (com retorno à rota solicitada).
@@ -14,36 +19,37 @@ import { ShieldAlert } from 'lucide-react';
 export default function MasterRoute() {
   const location = useLocation();
   const { user: sbUser, loading: sbLoading, signOut } = useSupabaseAuth();
-  const [checking, setChecking] = useState(false);
-  const [allowed, setAllowed] = useState(null);
-  const [loadError, setLoadError] = useState('');
+  const [gate, dispatch] = useReducer(masterGateReducer, undefined, createMasterGateState);
   const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     let active = true;
     if (sbLoading) return undefined;
     if (!sbUser) {
-      setAllowed(null);
-      setLoadError('');
+      dispatch({ type: 'check:reset' });
       return undefined;
     }
-    setChecking(true);
-    setLoadError('');
-    isPlatformAdmin(supabase, sbUser.id)
-      .then((ok) => { if (active) setAllowed(!!ok); })
+    dispatch({ type: 'check:start' });
+    getPlatformAdminAccess(supabase, sbUser.id)
+      .then((access) => {
+        if (!active) return;
+        dispatch({
+          type: 'check:result',
+          status: access.status,
+          error: access.error?.message || '',
+        });
+      })
       .catch((err) => {
         if (!active) return;
-        // Falha de rede/sessão não é "sem permissão": distingue para a UI.
-        const msg = `${err?.message || ''}`.toLowerCase();
-        if (msg.includes('failed to fetch') || msg.includes('fetch failed') || msg.includes('network')) {
-          setLoadError('network');
-        } else {
-          setAllowed(false);
-        }
-      })
-      .finally(() => { if (active) setChecking(false); });
+        // Falha de infraestrutura não é "sem permissão": distingue para a UI.
+        dispatch({
+          type: 'check:result',
+          status: classifyMasterAccessError(err),
+          error: err?.message || '',
+        });
+      });
     return () => { active = false; };
-  }, [sbLoading, sbUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sbLoading, sbUser?.id, gate.attempt]);
 
   const handleSwitchAccount = async () => {
     setSigningOut(true);
@@ -54,7 +60,7 @@ export default function MasterRoute() {
     }
   };
 
-  if (sbLoading || (sbUser && (checking || (allowed === null && !loadError)))) {
+  if (sbLoading || (sbUser && (gate.status === 'idle' || gate.status === 'checking'))) {
     return (
       <div className="fixed inset-0 flex items-center justify-center">
         <div className="w-6 h-6 border-[3px] border-slate-200 border-t-slate-800 rounded-full animate-spin" />
@@ -66,20 +72,30 @@ export default function MasterRoute() {
     return <MasterLogin returnTo={location.pathname} />;
   }
 
-  if (loadError === 'network') {
+  if (gate.status === 'network' || gate.status === 'error') {
+    const network = gate.status === 'network';
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
         <div className="text-center max-w-xs">
-          <ShieldAlert className="h-8 w-8 text-amber-500 mx-auto mb-2" />
-          <h2 className="font-heading text-base font-bold text-foreground">Sem conexão</h2>
+          {network
+            ? <ShieldAlert className="h-8 w-8 text-amber-500 mx-auto mb-2" />
+            : <AlertTriangle className="h-8 w-8 text-amber-500 mx-auto mb-2" />}
+          <h2 className="font-heading text-base font-bold text-foreground">
+            {network ? 'Sem conexão' : 'Não foi possível verificar o acesso'}
+          </h2>
           <p className="text-xs text-muted-foreground mt-1">
-            Não foi possível verificar sua permissão. Verifique se o Supabase local está ativo.
+            {network
+              ? 'Não foi possível consultar sua permissão. Verifique a conexão e tente de novo.'
+              : 'A consulta de permissão falhou. Tente novamente; se persistir, verifique o Supabase.'}
           </p>
+          {!network && gate.error && (
+            <p className="mt-2 text-[11px] text-muted-foreground break-words">{gate.error}</p>
+          )}
           <Button
             variant="outline"
             size="sm"
             className="mt-3"
-            onClick={() => { setLoadError(''); setAllowed(null); setChecking(true); }}
+            onClick={() => dispatch({ type: 'check:retry' })}
           >
             Tentar de novo
           </Button>
@@ -88,7 +104,7 @@ export default function MasterRoute() {
     );
   }
 
-  if (!allowed) {
+  if (gate.status !== 'allowed') {
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
         <div className="text-center max-w-xs">

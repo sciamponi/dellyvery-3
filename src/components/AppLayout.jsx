@@ -3,13 +3,13 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { supabase } from '@/api/supabaseClient';
 import { isPlatformAdmin } from '@/api/plans';
-import { Button } from '@/components/ui/button';
 import NotificationBell from '@/components/NotificationBell';
 import SelectGuard from '@/components/SelectGuard';
 import {
   LayoutDashboard, ShoppingBag, UtensilsCrossed, Users, User,
   Settings, LogOut, Menu as MenuIcon, X, Store, Wallet, CreditCard, LayoutGrid,
-  ContactRound, Megaphone, UserPlus, ShieldCheck, Undo2, Armchair, FileText
+  ContactRound, Megaphone, UserPlus, ShieldCheck, Undo2, Armchair, FileText,
+  Handshake, Building2
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -30,9 +30,11 @@ const NAV_ITEMS = [
 // administrativas + volta ao sistema (sem encerrar a sessão).
 const MASTER_NAV = [
   { label: 'Dashboard', path: '/master', icon: LayoutDashboard },
+  { label: 'Empresas', path: '/master/empresas', icon: Building2 },
   { label: 'Interessados', path: '/master/interessados', icon: UserPlus },
   { label: 'Planos', path: '/master/planos', icon: LayoutGrid },
   { label: 'Contratos', path: '/master/contratos', icon: FileText },
+  { label: 'Revenda', path: '/master/revenda', icon: Handshake },
 ];
 
 export default function AppLayout() {
@@ -164,11 +166,11 @@ export default function AppLayout() {
 
   <div className="flex items-center gap-1">
     {!inMaster && <NotificationBell companyId={company?.id} onSelectOrder={handleSelectNotification} />}
-    <button
-      onClick={() => setMobileOpen(true)}
-      className="relative z-50 -mr-2 flex h-12 w-12 items-center justify-center rounded-xl hover:bg-muted active:scale-95 transition-all"
-      aria-label="Abrir menu"
-    >
+      <button
+        onClick={() => setMobileOpen(true)}
+        className="relative z-50 flex h-12 w-12 items-center justify-center rounded-xl hover:bg-muted active:scale-95 transition-all"
+        aria-label="Abrir menu"
+      >
       <MenuIcon className="h-7 w-7 text-foreground" />
     </button>
   </div>

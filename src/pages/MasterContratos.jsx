@@ -8,6 +8,7 @@ import {
   ADHESION_STATUSES, ADHESION_PAYMENTS,
   fmtBRL, fmtDateBR, validateAdhesion, missingContractFields,
   buildContractModel, buildContractShareText,
+  normalizeAddress, mergeAddress,
 } from '@/lib/contract';
 import { toWaNumber, buildWaUrl } from '@/lib/whatsapp';
 import PageHeader from '@/components/PageHeader';
@@ -40,7 +41,13 @@ const CONTRACT_PRINT_CSS = `
 const emptyForm = () => ({
   lead_id: null,
   full_name: '', trade_name: '', person_type: 'pf', document: '', phone: '', email: '',
-  address: { street: '', city: '', state: '', zip: '' },
+  // Shape canônico do endereço (compat com leads.address jsonb).
+  // `zip` é espelho legado de `zip_code`; country/reference só
+  // compatibilidade de leitura (sem inputs próprios).
+  address: {
+    street: '', number: '', complement: '', neighborhood: '',
+    city: '', state: '', zip_code: '', zip: '', country: '', reference: '',
+  },
   plan_id: '', plan_name: '', adhesion_fee: '', monthly_fee: '', discount_text: '',
   start_date: '', due_day: '', payment_method: '', status: 'rascunho',
   provider: { razao_social: '', document: '', address: '', city: '', phone: '', email: '' },
@@ -126,7 +133,8 @@ export default function MasterContratos() {
       setEditingId(id);
       setForm({
         ...emptyForm(), ...a,
-        address: { street: '', city: '', state: '', zip: '', ...(a.address || {}) },
+        // Preserva o salvo: normalize sem sobrescrever com vazio.
+        address: mergeAddress(emptyForm().address, a.address),
         provider: { razao_social: '', document: '', address: '', city: '', phone: '', email: '', ...(a.provider || {}) },
       });
       setLeadQuery('');
@@ -137,21 +145,27 @@ export default function MasterContratos() {
   };
 
   // Busca sem duplicar: ver hook leadMatches no topo (antes dos returns).
+  // Importação campo a campo do leads.address (objeto) para o formulário
+  // da adesão. Preserva o que já foi digitado (não sobrescreve com vazio)
+  // e nunca atribui o objeto inteiro a `street` (causa do [object Object]).
   const pickLead = (l) => {
-    setForm((prev) => ({
-      ...prev,
-      lead_id: l.id,
-      full_name: prev.full_name || l.full_name || '',
-      trade_name: prev.trade_name || l.trade_name || '',
-      person_type: l.person_type || prev.person_type || 'pf',
-      document: prev.document || l.cpf || l.cnpj || '',
-      phone: prev.phone || l.phone || '',
-      email: prev.email || l.email || '',
-      address: {
-        ...prev.address,
-        street: prev.address.street || l.address || '',
-      },
-    }));
+    const leadAddr = normalizeAddress(l.address);
+    setForm((prev) => {
+      const prevAddr = normalizeAddress(prev.address);
+      // prev (digitado) tem prioridade; lead preenche os vazios.
+      const address = mergeAddress(leadAddr, prevAddr);
+      return {
+        ...prev,
+        lead_id: l.id,
+        full_name: prev.full_name || l.full_name || '',
+        trade_name: prev.trade_name || l.trade_name || '',
+        person_type: l.person_type || prev.person_type || 'pf',
+        document: prev.document || l.cpf || l.cnpj || '',
+        phone: prev.phone || l.phone || '',
+        email: prev.email || l.email || '',
+        address,
+      };
+    });
     setLeadQuery('');
   };
 
@@ -186,7 +200,7 @@ export default function MasterContratos() {
     setSaving(true);
     try {
       const plan = plans.find((p) => p.id === form.plan_id);
-      const payload = { ...form, plan_name: plan?.name || form.plan_name };
+      const payload = { ...form, plan_name: plan?.name || form.plan_name, address: normalizeAddress(form.address) };
       let saved;
       if (editingId) {
         saved = await updateAdhesion(supabase, editingId, payload,
@@ -197,7 +211,11 @@ export default function MasterContratos() {
         setEditingId(saved.id);
         toast({ title: 'Contratação registrada!' });
       }
-      setForm((prev) => ({ ...emptyForm(), ...saved }));
+      setForm(() => ({
+        ...emptyForm(), ...saved,
+        address: mergeAddress(emptyForm().address, saved.address),
+        provider: { razao_social: '', document: '', address: '', city: '', phone: '', email: '', ...(saved.provider || {}) },
+      }));
       const ads = await listAdhesions(supabase, {});
       setAdhesions(ads);
     } catch (e) {
@@ -224,7 +242,11 @@ export default function MasterContratos() {
       const saved = await updateAdhesion(supabase, editingId,
         { contract_snapshot: snapshot, contract_issued_at: new Date().toISOString() },
         { action: 'contrato_emitido', detail: { plan: snapshot.plan.name } }, sbUser?.id);
-      setForm((prev) => ({ ...emptyForm(), ...saved }));
+      setForm(() => ({
+        ...emptyForm(), ...saved,
+        address: mergeAddress(emptyForm().address, saved.address),
+        provider: { razao_social: '', document: '', address: '', city: '', phone: '', email: '', ...(saved.provider || {}) },
+      }));
       const ads = await listAdhesions(supabase, {});
       setAdhesions(ads);
       toast({ title: 'Contrato emitido! Use Imprimir para gerar o PDF.' });
@@ -334,10 +356,13 @@ export default function MasterContratos() {
             <div className="space-y-1.5"><Label>Telefone *</Label><Input value={form.phone} onChange={(e) => upd({ phone: e.target.value })} /></div>
             <div className="space-y-1.5"><Label>E-mail</Label><Input value={form.email} onChange={(e) => upd({ email: e.target.value })} /></div>
             <div className="space-y-1.5"><Label>Endereço</Label><Input value={form.address.street} onChange={(e) => updAddr({ street: e.target.value })} /></div>
+            <div className="space-y-1.5"><Label>Número</Label><Input value={form.address.number} onChange={(e) => updAddr({ number: e.target.value })} /></div>
+            <div className="space-y-1.5"><Label>Complemento</Label><Input value={form.address.complement} onChange={(e) => updAddr({ complement: e.target.value })} /></div>
+            <div className="space-y-1.5"><Label>Bairro</Label><Input value={form.address.neighborhood} onChange={(e) => updAddr({ neighborhood: e.target.value })} /></div>
             <div className="grid grid-cols-3 gap-2">
               <div className="space-y-1.5"><Label>Cidade</Label><Input value={form.address.city} onChange={(e) => updAddr({ city: e.target.value })} /></div>
               <div className="space-y-1.5"><Label>UF</Label><Input value={form.address.state} onChange={(e) => updAddr({ state: e.target.value })} maxLength={2} /></div>
-              <div className="space-y-1.5"><Label>CEP</Label><Input value={form.address.zip} onChange={(e) => updAddr({ zip: e.target.value })} /></div>
+              <div className="space-y-1.5"><Label>CEP</Label><Input value={form.address.zip_code} onChange={(e) => updAddr({ zip_code: e.target.value, zip: e.target.value })} /></div>
             </div>
           </div>
           {!form.lead_id && (

@@ -3,10 +3,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { Check, Clock, Printer } from 'lucide-react';
-import { changeOrderStatus } from '@/lib/orderStatusFlow';
+import { changeOrderStatus, STATUS_LABELS } from '@/lib/orderStatusFlow';
 import { supabase } from '@/api/supabaseClient';
 import { getCompanySettings as sbGetSettings } from '@/api/company';
-import { listStages as sbListStages } from '@/api/orderStages';
+import { listStages as sbListStages, resolveCardPrimary } from '@/api/orderStages';
 import { normalizePrintSettings, markPrinted } from '@/lib/printSettings';
 import { decidePrintTrigger, openPrintWindow, printUrl, PRINT_FAILURE_MESSAGE } from '@/lib/printTrigger';
 import PrintPromptModal from '@/components/orders/PrintPromptModal';
@@ -25,7 +25,7 @@ function timeSince(dateStr) {
  * Fila de pedidos NOVOS. Deriva de `orders` (realtime nativo, sem duplicar).
  * Aceitar usa o fluxo central; o painel permanece aberto.
  */
-export default function NewOrdersQueue({ open, onClose, orders, onOrderUpdated }) {
+export default function NewOrdersQueue({ open, onClose, orders, stages = null, onOrderUpdated }) {
   const { toast } = useToast();
   const busyRef = useRef(new Set());
   const [, forceTick] = useState(0);
@@ -95,13 +95,27 @@ export default function NewOrdersQueue({ open, onClose, orders, onOrderUpdated }
     .sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
 
   const handleAccept = async (order) => {
+    const target = resolveCardPrimary(stages, order);
+    if (!target?.next) {
+      toast({
+        title: 'Sem próxima etapa',
+        description: 'Ative ou crie uma etapa depois de Novo para aceitar este pedido.',
+        variant: 'destructive',
+        duration: 4000,
+      });
+      return;
+    }
     if (busyRef.current.has(order.id)) return;
     busyRef.current.add(order.id);
     forceTick(t => t + 1);
     try {
-      const updated = await changeOrderStatus(order.id, 'confirmado');
+      const updated = await changeOrderStatus(order.id, target.next);
       onOrderUpdated(updated);
-      toast({ title: `Pedido #${order.order_number} confirmado!` });
+      toast({
+        title: target.next === 'confirmado'
+          ? `Pedido #${order.order_number} confirmado!`
+          : `Pedido #${order.order_number} → ${STATUS_LABELS[target.next] || target.next}`,
+      });
       // Impressão somente após sucesso confirmado; sem tocar de novo no
       // status (guarda busyRef + sem nova chamada à RPC aqui). Se a config
       // ainda não carregou, busca na hora (aceite rápido nunca cai à toa).
@@ -121,7 +135,7 @@ export default function NewOrdersQueue({ open, onClose, orders, onOrderUpdated }
         } catch { /* mantém */ }
       }
       const d = decidePrintTrigger({
-        printCfg: cfg, stages: stgs, toStatus: 'confirmado', orderId: updated?.id || order.id,
+        printCfg: cfg, stages: stgs, displayStages: stages, toStatus: target.next, orderId: updated?.id || order.id,
       });
       const orderId = updated?.id || order.id;
       const orderNumber = updated?.order_number || order.order_number;
@@ -184,6 +198,8 @@ export default function NewOrdersQueue({ open, onClose, orders, onOrderUpdated }
                   ? `Mesa ${order.table_number}`
                   : (order.customer_name || '—');
                 const busy = busyRef.current.has(order.id);
+                const acceptAction = resolveCardPrimary(stages, order);
+                const canAccept = !!acceptAction?.next;
                 return (
                   <div key={order.id} className="rounded-xl border border-border p-3">
                     <div className="flex items-center justify-between gap-2">
@@ -198,9 +214,14 @@ export default function NewOrdersQueue({ open, onClose, orders, onOrderUpdated }
                     <Button
                       className="w-full min-h-11 mt-2"
                       onClick={() => handleAccept(order)}
-                      disabled={busy}
+                      disabled={busy || !canAccept}
+                      title={!canAccept ? 'Nenhuma etapa ativa depois de Novo' : undefined}
                     >
-                      {busy ? 'Aceitando...' : <><Check className="h-4 w-4" /> Aceitar</>}
+                      {busy
+                        ? 'Aceitando...'
+                        : !canAccept
+                          ? 'Sem próxima etapa'
+                          : <><Check className="h-4 w-4" /> Aceitar</>}
                     </Button>
                   </div>
                 );

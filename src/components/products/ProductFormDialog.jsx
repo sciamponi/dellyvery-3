@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { createProduct as sbCreateProduct, updateProduct as sbUpdateProduct } from '@/api/catalog';
 import { uploadImage as sbUploadImage } from '@/api/storage';
@@ -13,16 +13,39 @@ import { useToast } from '@/components/ui/use-toast';
 import { Image } from '@/components/ui/image';
 import ConfigStepsEditor from '@/components/products/ConfigStepsEditor';
 import {
-  listSteps as sbListSteps, createStep as sbCreateStep,
+  listSteps as sbListSteps, createStep as sbCreateStep, updateStep as sbUpdateStep,
   listOptions as sbListOptions, createOption as sbCreateOption,
   updateOption as sbUpdateOption, deleteOption as sbDeleteOption,
   listIngredients as sbListIngredients, createIngredient as sbCreateIngredient,
 } from '@/api/configurator';
 import { QUICK_GROUP_TITLE, findQuickStep, buildQuickRows } from '@/lib/quickExtras';
 import { INGREDIENT_SECTIONS, groupRowsBySection, validateNewIngredient } from '@/lib/ingredientSections';
-import { Upload, Loader2, X, Package, Search, Plus, ChevronDown, ChevronUp } from 'lucide-react';
+import { usesFixedGroups } from '@/lib/fixedGroups';
+import { Upload, Loader2, X, Package, Search, Plus, ChevronDown, ChevronUp, Circle, Trash2 } from 'lucide-react';
 
 const MAX_IMAGE_MB = 5;
+
+// Quatro grupos fixos do combo. Cada um eh um step proprio do produto,
+// sem compartilhamento automatico entre grupos e sem herdar da categoria.
+const COMBO_GROUPS = [
+  { key: 'acompanhamento', title: 'Acompanhamento', required: true, min_select: 1, max_select: 1, select_mode: 'single', allow_repeat: false, free_qty: 0 },
+  { key: 'bebida', title: 'Bebida', required: true, min_select: 1, max_select: 1, select_mode: 'single', allow_repeat: false, free_qty: 0 },
+  { key: 'sobremesa', title: 'Sobremesa', required: false, min_select: 0, max_select: 1, select_mode: 'single', allow_repeat: false, free_qty: 0 },
+  { key: 'extra', title: 'Extra', required: false, min_select: 0, max_select: 20, select_mode: 'multi', allow_repeat: true, free_qty: 0 },
+];
+
+function sectionRef(section) {
+  return {
+    step_id: null,
+    ingredient_id: null,
+    product_id: null,
+    name: '',
+    description: '',
+    price: 0,
+    active: true,
+    sort_order: 0,
+  };
+}
 
 function Section({ title, children }) {
   return (
@@ -58,18 +81,21 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
         sort_order: product.sort_order ?? 0,
         stock: product.stock ?? -1,
         use_category_steps: product.use_category_steps !== false,
+        is_combo: !!product.is_combo,
       });
     } else {
       setForm({
         name: '', description: '', category_id: categories[0]?.id || '', price: '', promotional_price: '',
         sku: '', internal_code: '', image_url: '', available: true, is_made_to_order: false,
-        out_of_stock: false, stock: -1, preparation_time: 15, sort_order: 0, is_featured: false,
+        out_of_stock: false, stock: -1, preparation_time: 15, sort_order: 0,         is_featured: false,
         is_bestseller: false, ingredients: '', nutritional_info: '',
+        is_combo: false,
       });
     }
   }, [product, open, categories]);
 
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
+  const productCategory = categories.find((category) => category.id === form.category_id);
 
   // Seleção rápida de extras: associa ingredientes existentes ao grupo
   // "Extras" DESTE produto (checkbox por associação; independente por
@@ -81,8 +107,17 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
   const [quickBusy, setQuickBusy] = useState(false);
   const [priceDraft, setPriceDraft] = useState({});
   const [refreshKey, setRefreshKey] = useState(0);
-  // Cadastro rápido de ingrediente (só biblioteca desta empresa; preço
-  // adicional vale para a associação a ESTE produto, se marcada).
+  // Combo: quatro grupos isolados por produto (Acompanhamento, Bebida,
+  // Sobremesa, Extra). Cada grupo eh um step proprio do produto
+  // (product_id preenchido, category_id null), sem herdar da categoria.
+  const [comboSteps, setComboSteps] = useState({}); // chave do grupo -> step
+  const [comboOptions, setComboOptions] = useState({}); // step_id -> opcoes[]
+  const [comboLoading, setComboLoading] = useState(false);
+  const [comboBusy, setComboBusy] = useState(false);
+  const [comboDraft, setComboDraft] = useState(null); // { stepKey, product, name, price }
+  const [comboSearch, setComboSearch] = useState('');
+  // Cadastro rápido de ingrediente na biblioteca desta empresa. O preço
+  // vira o padrão da biblioteca e o adicional da associação a ESTE produto.
   const [showAddIng, setShowAddIng] = useState(false);
   const [newIng, setNewIng] = useState({ name: '', category: '', price: '', active: true, associate: true });
   const [addBusy, setAddBusy] = useState(false);
@@ -111,7 +146,137 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
     }
   };
 
-  useEffect(() => { loadQuick(); setQuickSearch(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [open, product?.id, companyId]);
+  // Carrega/garante os 4 grupos fixos do combo quando o produto ja esta salvo.
+  const loadCombo = async () => {
+    if (!open || !companyId || !product?.id || !form.is_combo) {
+      setComboSteps({});
+      setComboOptions({});
+      return;
+    }
+    setComboLoading(true);
+    try {
+      const steps = await sbListSteps(supabase, companyId, product.id).catch(() => []);
+      const byKey = {};
+      for (const g of COMBO_GROUPS) {
+        const existing = steps.find((s) => s.product_id === product.id && s.title === g.title);
+        if (existing) {
+          byKey[g.key] = existing;
+        } else {
+          const created = await sbCreateStep(supabase, companyId, product.id, {
+            title: g.title,
+            description: 'Grupo do combo — ' + g.title,
+            select_mode: g.select_mode,
+            min_select: g.min_select,
+            max_select: g.max_select,
+            free_qty: g.free_qty,
+            required: g.required,
+            active: true,
+          });
+          byKey[g.key] = created;
+        }
+      }
+      setComboSteps(byKey);
+      const opts = {};
+      for (const s of Object.values(byKey)) {
+        try {
+          opts[s.id] = await sbListOptions(supabase, s.id).catch(() => []);
+        } catch {
+          opts[s.id] = [];
+        }
+      }
+      setComboOptions(opts);
+    } catch (err) {
+      toast({ title: 'Erro ao carregar grupos do combo', description: err?.message, variant: 'destructive' });
+    } finally {
+      setComboLoading(false);
+    }
+  };
+
+  const refreshComboOptions = async (stepId) => {
+    try {
+      const list = await sbListOptions(supabase, stepId);
+      setComboOptions((prev) => ({ ...prev, [stepId]: list }));
+    } catch (err) {
+      toast({ title: 'Erro ao carregar opcoes', description: err?.message, variant: 'destructive' });
+    }
+  };
+
+  const comboPool = useMemo(() => {
+    const q = comboSearch.trim().toLowerCase();
+    return (products || [])
+      .filter((p) => p && p.id !== product?.id && (!q || (p.name || '').toLowerCase().includes(q)))
+      .slice(0, 12);
+  }, [products, product?.id, comboSearch]);
+
+  const startComboAssoc = (stepKey, productEntry) => {
+    setComboDraft({ stepKey, product: productEntry, name: productEntry.name, price: 0 });
+  };
+
+  const clearComboDraft = () => setComboDraft(null);
+
+  const saveComboOption = async () => {
+    if (!comboDraft || comboBusy) return;
+    const { stepKey, product: entry, name, price } = comboDraft;
+    const step = comboSteps[stepKey];
+    if (!step) return;
+    setComboBusy(true);
+    try {
+      await sbCreateOption(supabase, {
+        step_id: step.id,
+        ingredient_id: null,
+        product_id: entry.id,
+        name: String(name || entry.name).trim(),
+        description: '',
+        price: Number(price) || 0,
+        active: true,
+        sort_order: 0,
+      });
+      setComboDraft(null);
+      await refreshComboOptions(step.id);
+      setRefreshKey((k) => k + 1);
+      toast({ title: `"${entry.name}" adicionado ao grupo ${step.title}` });
+    } catch (err) {
+      toast({ title: 'Erro ao adicionar opcao', description: err?.message, variant: 'destructive' });
+    } finally {
+      setComboBusy(false);
+    }
+  };
+
+  const updateComboOption = async (stepId, opt, patch) => {
+    if (comboBusy) return;
+    setComboBusy(true);
+    try {
+      await sbUpdateOption(supabase, opt.id, patch);
+      await refreshComboOptions(stepId);
+    } catch (err) {
+      toast({ title: 'Erro ao atualizar opcao', description: err?.message, variant: 'destructive' });
+    } finally {
+      setComboBusy(false);
+    }
+  };
+
+  const deleteComboOption = async (stepId, opt) => {
+    if (!window.confirm(`Remover "${opt.name}" do grupo? Pedidos antigos nao sao afetados.`)) return;
+    try {
+      await sbDeleteOption(supabase, opt.id);
+      await refreshComboOptions(stepId);
+      toast({ title: 'Opcao removida!' });
+    } catch (err) {
+      toast({ title: 'Erro ao remover opcao', description: err?.message, variant: 'destructive' });
+    }
+  };
+
+  const toggleComboStep = async (step) => {
+    if (comboBusy) return;
+    try {
+      await sbUpdateStep(supabase, step.id, { active: !(step.active !== false) });
+      await loadCombo();
+    } catch (err) {
+      toast({ title: 'Erro ao alterar grupo', description: err?.message, variant: 'destructive' });
+    }
+  };
+
+  useEffect(() => { loadQuick(); loadCombo(); setQuickSearch(''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [open, product?.id, companyId, form.is_combo]);
 
   const ensureQuickStep = async () => {
     if (quickStep) return quickStep;
@@ -133,7 +298,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
         toast({ title: `"${ing.name}" removido deste produto` });
       } else {
         const step = await ensureQuickStep();
-        const price = Number(priceDraft[ing.id] ?? 0) || 0;
+        const price = Number(priceDraft[ing.id] ?? ing.price ?? 0) || 0;
         await sbCreateOption(supabase, {
           step_id: step.id, ingredient_id: ing.id, product_id: null,
           name: ing.name, description: ing.description || '', price, active: true, sort_order: 0,
@@ -184,7 +349,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
     if (!product?.id || addBusy) return;
     const err = validateNewIngredient({
       name: newIng.name,
-      price: newIng.associate ? newIng.price : 0,
+      price: newIng.price,
       existingNames: quickIngredients.map((i) => i.name),
     });
     if (err) {
@@ -197,6 +362,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
       const created = await sbCreateIngredient(supabase, companyId, {
         name: newIng.name.trim(),
         category: newIng.category || '',
+        price: Number(newIng.price) || 0,
         active: newIng.active !== false,
       });
       if (newIng.associate) {
@@ -283,15 +449,15 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100%-1rem)] max-w-2xl p-0 gap-0 flex flex-col overflow-hidden max-h-[92vh] sm:max-h-[85vh] sm:w-[calc(100%-2rem)]">
+      <DialogContent className="w-full max-w-[calc(100vw-2rem)] p-0 gap-0 flex flex-col overflow-visible max-h-[calc(100dvh-2rem)] top-[1rem] translate-y-0 sm:top-[50%] sm:translate-y-[-50%] sm:max-h-[calc(100dvh-2rem)] sm:max-w-2xl">
         <DialogHeader className="px-5 py-4 border-b border-border shrink-0 text-left">
           <DialogTitle>{product ? 'Editar produto' : 'Novo produto'}</DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto px-4 sm:px-5 py-3 sm:py-4 space-y-2.5">
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-5 py-3 sm:py-4 space-y-2.5">
           {/* Topo compacto: foto + nome/categoria (lado a lado no desktop). */}
           <Section title="Produto">
-            <div className="flex gap-3">
+            <div className="flex flex-col sm:flex-row gap-3 sm:items-start">
               <div className="shrink-0">
                 {form.image_url ? (
                   <div className="relative">
@@ -344,7 +510,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
           </Section>
 
           <Section title="Preço">
-            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Preço (R$) *</Label>
                 <Input type="number" min="0" step="0.50" value={form.price || ''} onChange={e => update('price', e.target.value)} placeholder="0,00" />
@@ -365,7 +531,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
           </Section>
 
           <Section title="Disponibilidade">
-            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
               <FlagRow label="Disponível" checked={form.available} onChange={v => update('available', v)} />
               <FlagRow label="Em destaque" checked={form.is_featured} onChange={v => update('is_featured', v)} />
               <FlagRow label="Mais vendido" checked={form.is_bestseller} onChange={v => update('is_bestseller', v)} />
@@ -424,7 +590,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
                         </Select>
                       </div>
                       <div>
-                        <Label htmlFor="new-ing-price">Preço adicional (R$)</Label>
+                        <Label htmlFor="new-ing-price">Preço padrão (R$)</Label>
                         <Input
                           id="new-ing-price"
                           type="number"
@@ -505,7 +671,7 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
                             step="0.01"
                             className="h-8 w-20 text-right text-xs"
                             aria-label={`Adicional de ${row.ingredient.name}`}
-                            value={row.option ? (row.option.price ?? 0) : (priceDraft[row.ingredient.id] ?? '')}
+                            value={row.option ? (row.option.price ?? 0) : (priceDraft[row.ingredient.id] ?? row.ingredient.price ?? '')}
                             placeholder="0,00"
                             disabled={quickBusy}
                             onChange={(e) => {
@@ -531,12 +697,189 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
             )}
           </Section>
 
+          {form.is_combo && product?.id && (
+            <Section title="Combo — grupos de opções">
+              <p className="text-[11px] text-muted-foreground mb-3">
+                Quatro grupos isolados por produto. As opções são produtos da mesma empresa (exceto este); o preço da opção é um adicional.
+              </p>
+              {comboLoading ? (
+                <p className="text-xs text-muted-foreground">Carregando grupos...</p>
+              ) : (
+                <div className="space-y-2">
+                  {COMBO_GROUPS.map((g) => {
+                    const step = comboSteps[g.key];
+                    const opts = comboOptions[step?.id] || [];
+                    return (
+                      <div key={g.key} className="rounded-xl border border-border p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-medium truncate flex-1">{g.title}</span>
+                              <span className={`text-[10px] font-bold rounded-md px-1.5 py-0.5 ${g.required ? 'bg-primary/10 text-primary' : 'bg-amber/10 text-amber-800'}`}>
+                                {g.required ? 'Obrigatório' : 'Opcional'}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {g.select_mode === 'single' ? '1 escolha' : 'Múltipla escolha'} • até {g.max_select}
+                              </span>
+                            </div>
+                            {step && (
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-xs text-muted-foreground">{step.active !== false ? 'Ativo' : 'Inativo'}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleComboStep(step)}
+                                  disabled={comboBusy}
+                                  className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                >
+                                  {step.active !== false ? 'Desativar' : 'Ativar'}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-[11px] text-muted-foreground">
+                            Opções: {opts.length} {opts.length === 1 ? 'produto' : 'produtos'}
+                          </p>
+                          {opts.length === 0 ? (
+                            <p className="text-xs text-muted-foreground">Nenhuma opção associada. Adicione abaixo.</p>
+                          ) : (
+                            <div className="max-h-40 overflow-y-auto rounded-lg border border-border divide-y divide-border">
+                              {opts.map((o) => (
+                                <div key={o.id} className="flex items-center gap-2 px-2.5 py-1.5 text-sm">
+                                  <span className="min-w-0 flex-1 truncate">{o.name}</span>
+                                  {Number(o.price) > 0 ? (
+                                    <span className="text-[11px] font-medium text-muted-foreground min-w-[40px] text-right">+R$ {Number(o.price).toFixed(2)}</span>
+                                  ) : (
+                                    <span className="text-[11px] font-medium text-green-700 min-w-[40px] text-right">Grátis</span>
+                                  )}
+                                  <div className="flex items-center gap-1">
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      step="0.01"
+                                      value={o.price}
+                                      className="h-6 w-20 text-xs text-right border-0 bg-transparent p-0 focus:ring-0"
+                                      onChange={(e) => updateComboOption(step.id, o, { price: e.target.value })}
+                                      disabled={comboBusy}
+                                      aria-label={`Preço de ${o.name}`}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => updateComboOption(step.id, o, { active: !(o.active !== false) })}
+                                      disabled={comboBusy}
+                                      className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                      aria-label={o.active !== false ? 'Desativar opção' : 'Ativar opção'}
+                                    >
+                                      <Circle className="h-3 w-3" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => deleteComboOption(step.id, o)}
+                                      disabled={comboBusy}
+                                      className="h-6 w-6 p-0 text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                                      aria-label="Remover opção"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {!comboDraft || comboDraft.stepKey !== g.key ? (
+                            <div className="relative mb-2">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                              <Input
+                                value={comboSearch}
+                                onChange={(e) => setComboSearch(e.target.value)}
+                                placeholder={`Buscar produto para ${g.title}...`}
+                                className="pl-9 h-8 text-sm"
+                                disabled={comboBusy}
+                              />
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              <p className="text-xs font-medium">Adicionar: {comboDraft.product.name}</p>
+                              <Input
+                                value={comboDraft.name}
+                                onChange={(e) => setComboDraft((p) => p ? { ...p, name: e.target.value } : null)}
+                                className="h-8 text-sm"
+                                placeholder="Nome exibido"
+                                disabled={comboBusy}
+                              />
+                              <Input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={comboDraft.price ?? ''}
+                                onChange={(e) => setComboDraft((p) => p ? { ...p, price: e.target.value } : null)}
+                                className="h-8 w-32 text-sm text-right"
+                                placeholder="0,00"
+                                disabled={comboBusy}
+                              />
+                              <div className="flex gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={saveComboOption}
+                                  disabled={comboBusy}
+                                  className="h-8 px-3 text-xs flex-1"
+                                >
+                                  Associar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={clearComboDraft}
+                                  className="h-8 px-3 text-xs text-muted-foreground"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          <div className="flex gap-1">
+                            {comboPool.map((p) => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => startComboAssoc(g.key, p)}
+                                disabled={comboBusy || !!comboDraft}
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs text-left hover:bg-muted disabled:opacity-50"
+                              >
+                                <span className="w-6 text-center">{p.icon || '🏷️'}</span>
+                                <span className="min-w-0 truncate">{p.name}</span>
+                              </button>
+                            ))}
+                            {comboPool.length === 0 && (
+                              <p className="text-[11px] text-muted-foreground">Nenhum produto disponível nesta empresa.</p>
+                            )}
+                          </div>
+                         </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Section>
+          )}
+
+          {form.is_combo && !product?.id && (
+            <Section title="Combo — grupos de opções">
+              <p className="text-xs text-muted-foreground">Salve o produto para configurar os grupos do combo.</p>
+            </Section>
+          )}
+
           <Section title="Montagem (complementos V2)">
             {/* Exceção individual: desliga a herança dos grupos da categoria. */}
             <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5 mb-2">
               <Switch checked={form.use_category_steps !== false} onCheckedChange={v => update('use_category_steps', v)} className="shrink-0" />
               <span className="min-w-0 flex-1 text-[13px] leading-tight">Usar grupos da categoria</span>
             </label>
+            {usesFixedGroups(productCategory) && (
+              <p className="text-[11px] text-muted-foreground mb-2">
+                Os grupos fixos são ativados na edição da categoria; o grupo da própria categoria não aparece.
+              </p>
+            )}
             {product?.id ? (
               <ConfigStepsEditor companyId={companyId} productId={product.id} products={products} refreshKey={refreshKey} />
             ) : (
@@ -562,9 +905,9 @@ export default function ProductFormDialog({ open, onOpenChange, product, categor
           </Section>
         </div>
 
-        <DialogFooter className="px-5 py-3 border-t border-border shrink-0 flex flex-row justify-end gap-2">
-          <Button variant="outline" className="h-10 px-4" onClick={() => onOpenChange(false)} disabled={loading}>Cancelar</Button>
-          <Button className="h-10 px-5 min-w-32" onClick={handleSubmit} disabled={busy}>
+        <DialogFooter className="px-4 sm:px-5 py-3 border-t border-border shrink-0 flex flex-col sm:flex-row sm:justify-end gap-2">
+          <Button variant="outline" className="h-10 px-4 sm:px-5" onClick={() => onOpenChange(false)} disabled={loading}>Cancelar</Button>
+          <Button className="h-10 px-4 sm:px-5" onClick={handleSubmit} disabled={busy}>
             {loading ? (<span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Salvando...</span>) : 'Salvar produto'}
           </Button>
         </DialogFooter>

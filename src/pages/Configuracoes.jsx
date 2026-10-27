@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { supabase, isSupabaseConfigured } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listZones, createZone as sbCreateZone, deleteZone as sbDeleteZone, updateZone as sbUpdateZone, validateZoneForm } from '@/api/deliveryZones';
@@ -17,7 +17,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/use-toast';
 import { Image } from '@/components/ui/image';
-import { Upload, Loader2, Save, Plus, Trash2, X, Check, Link2, QrCode, Share2, Download, Copy, ExternalLink, Megaphone, Printer, Globe, Map as MapIcon } from 'lucide-react';
+import { Upload, Loader2, Save, Plus, Trash2, X, Check, Link2, QrCode, Share2, Download, Copy, ExternalLink, Megaphone, Printer, Globe, Map as MapIcon, Table2 } from 'lucide-react';
 import { normalizeSlug, isValidSlug, buildMenuUrl, buildShareMessage, buildWhatsAppUrl } from '@/lib/menuShare';
 import { normalizePrintSettings, PRINT_MODES, PRINT_WIDTHS } from '@/lib/printSettings';
 import { listStages as sbListStages, displayStages as buildDisplayStages } from '@/api/orderStages';
@@ -46,11 +46,13 @@ function Spinner() {
 export default function Configuracoes() {
   const { loading, company, setCompany } = useCompany();
   const { toast } = useToast();
+  const navigate = useNavigate();
   // Configurações Supabase-only.
   const { user: sbUser, currentCompany: sbCompany } = useSupabaseAuth();
   const sbActive = isSupabaseConfigured() && !!sbUser && !!sbCompany;
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [pdvTableNumber, setPdvTableNumber] = useState('');
   const [form, setForm] = useState(null);
   const [zones, setZones] = useState([]);
   const [newZone, setNewZone] = useState({ name: '', fee: 0, minimum_order: 0, estimated_time: 30 });
@@ -489,6 +491,12 @@ export default function Configuracoes() {
     }
   };
 
+  const openPdvTable = () => {
+    const value = pdvTableNumber.trim();
+    if (!value) return;
+    navigate(`/pdv?mesa=${encodeURIComponent(value)}`);
+  };
+
   return (
     <div>
       <div className="max-w-2xl">
@@ -508,6 +516,7 @@ export default function Configuracoes() {
           <TabsTrigger value="delivery">🚴 Delivery</TabsTrigger>
           <TabsTrigger value="divulgacao">📣 Divulgação</TabsTrigger>
           <TabsTrigger value="impressao">🖨️ Impressão</TabsTrigger>
+          <TabsTrigger value="pdv"><Table2 className="mr-1 h-3.5 w-3.5" /> PDV</TabsTrigger>
         </TabsList>
 
         {/* Identidade */}
@@ -1063,6 +1072,54 @@ export default function Configuracoes() {
                 configure VITE_PUBLIC_URL (veja .env.example).
               </p>
             )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="pdv">
+          <div className="max-w-2xl space-y-4">
+            <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <Table2 className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="font-heading text-lg font-bold text-foreground">Mesas e atendimento</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Gerencie as mesas do salão e abra o PDV já com a mesa selecionada.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button asChild variant="outline">
+                  <Link to="/mesas"><Table2 className="h-4 w-4" /> Gerenciar mesas</Link>
+                </Button>
+                <Button asChild variant="outline">
+                  <Link to="/pdv">Abrir PDV</Link>
+                </Button>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-border bg-card p-6 space-y-3">
+              <div>
+                <h3 className="font-heading font-bold text-foreground">Número da mesa</h3>
+                <p className="text-sm text-muted-foreground">
+                  Informe o número para abrir a mesa diretamente no PDV.
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Input
+                  value={pdvTableNumber}
+                  onChange={(e) => setPdvTableNumber(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') openPdvTable(); }}
+                  placeholder="Ex.: 12"
+                  inputMode="numeric"
+                  aria-label="Número da mesa"
+                />
+                <Button onClick={openPdvTable} disabled={!pdvTableNumber.trim()}>
+                  Abrir mesa
+                </Button>
+              </div>
+            </div>
           </div>
         </TabsContent>
       </Tabs>

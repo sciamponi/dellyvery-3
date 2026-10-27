@@ -321,13 +321,21 @@ export function stageForStatus(stages, status) {
   return vis[0];
 }
 
-// Regra legada preservada (orderStatusFlow.getNextStatus): pedido delivery
-// pula "aguardando_retirada" e vai direto para "saiu_entrega". Com o seed
-// padrão o fluxo por stages fica idêntico ao atual; com stages customizadas
-// a regra continua valendo para o status legado correspondente.
+// Regra legada preservada (orderStatusFlow.getNextStatus): delivery pula
+// "aguardando_retirada" e vai direto para "saiu_entrega". Retirada só pula
+// "saiu_entrega" quando existe uma etapa Pronto ativa; sem Pronto ativo,
+// todos os tipos usam "saiu_entrega" (se essa etapa estiver ativa) como
+// fallback. Mesa mantém a navegação atual por stages.
 function flowForOrder(flow, order) {
-  if (order?.order_type === 'delivery') {
+  const type = order?.order_type;
+  if (type === 'delivery') {
     return flow.filter((s) => s.mapsTo !== 'aguardando_retirada');
+  }
+  if (type === 'retirada') {
+    const hasReadyStage = flow.some((s) => s.mapsTo === 'aguardando_retirada');
+    return hasReadyStage
+      ? flow.filter((s) => s.mapsTo !== 'saiu_entrega')
+      : flow;
   }
   return flow;
 }
@@ -378,12 +386,24 @@ export function assertSingleStep(stages, fromStatus, toStatus, orderType = null)
   throw new Error('Só é permitido mover o pedido uma etapa por vez');
 }
 
+// Um status só pode ser alvo se tiver coluna própria no Kanban. Terminais
+// são sempre exibidos (mesmo inativos); os demais exigem uma etapa ativa.
+// Sem stages (modo legado), as colunas fixas continuam válidas.
+function hasRenderableStatusColumn(stages, status) {
+  const all = sortStages(stages);
+  if (all.length === 0) return true;
+  if (TERMINAL_MAPS_TO.includes(status)) {
+    return all.some((s) => s.mapsTo === status);
+  }
+  return all.some((s) => s.active !== false && s.mapsTo === status);
+}
+
 // Ação primária do card: próxima etapa configurada; com fallback legado para
-// nunca esconder o avanço de pedido não-terminal (stages incompletas ou
-// inativas não podem deixar o card sem ação). `fallback: true` indica que a
-// UI deve sinalizar o uso do fluxo padrão (nunca silencioso). Status
-// desconhecido do sistema (fora do enum legado) não recebe ação: o card
-// exibe diagnóstico em vez de inventar transição.
+// pedido não-terminal quando o destino tem coluna própria (stages incompletas
+// não podem deixar o card sem ação). `fallback: true` indica que a UI deve
+// sinalizar o uso do fluxo padrão (nunca silencioso). Se o fallback levaria a
+// um status sem coluna, não há ação: evita transição invisível e pedido preso.
+// Status desconhecido do sistema (fora do enum legado) também não recebe ação.
 export function resolveCardPrimary(stages, order) {
   if (!order || TERMINAL_MAPS_TO.includes(order.status)) return null;
   // Status fora do enum do sistema: sem ação (o card exibe diagnóstico).
@@ -398,7 +418,7 @@ export function resolveCardPrimary(stages, order) {
     };
   }
   const legacyNext = getNextStatus(order);
-  if (!legacyNext) return null;
+  if (!legacyNext || !hasRenderableStatusColumn(stages, legacyNext)) return null;
   return {
     id: order.status === 'novo' ? 'accept' : 'advance',
     label: order.status === 'novo' ? 'Aceitar' : `→ ${STATUS_LABELS[legacyNext] || legacyNext}`,

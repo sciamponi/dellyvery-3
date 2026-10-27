@@ -1,7 +1,7 @@
 // DELLVERY 3 — Seções da biblioteca de ingredientes (puro, testável).
 // Classificação MANUAL por empresa (coluna ingredients.category; '' =
-// "Outros"). Nunca inferida pelo nome. Preço continua por associação
-// (product_config_options.price); a seção não altera preços nem vínculos.
+// "Outros"). Nunca inferida pelo nome. O preço da biblioteca é um valor
+// padrão; cada associação em product_config_options pode sobrescrevê-lo.
 
 export const INGREDIENT_SECTIONS = [
   { id: 'lanches', label: 'Lanches' },
@@ -36,14 +36,15 @@ export function groupRowsBySection(rows) {
     .map((id) => ({ id, label: labels.get(id), rows: buckets.get(id) }));
 }
 
-/** Monta os dados da cópia de um ingrediente: novo id no banco, mesma
- *  seção, sem levar associações a produtos; nasce inativa para revisão. */
+/** Monta os dados da cópia de um ingrediente: novo id no banco, mesmo
+ *  preço e seção, sem levar associações a produtos; nasce inativa. */
 export function buildIngredientDuplicate(ing) {
   const src = ing || {};
   return {
     name: `${String(src.name || 'Ingrediente').trim()} (cópia)`,
     description: src.description || '',
     category: String(src.category || '').trim().toLowerCase(),
+    price: Number(src.price) || 0,
     active: false,
     sort_order: Number(src.sort_order) || 0,
   };
@@ -52,8 +53,9 @@ export function buildIngredientDuplicate(ing) {
 /** Validação do formulário compacto (nome, preço, duplicata por empresa). */
 export function validateNewIngredient({ name, price, existingNames = [] }) {
   if (String(name || '').trim() === '') return 'Nome do ingrediente é obrigatório';
+  const blankPrice = price === null || price === undefined || String(price).trim() === '';
   const p = Number(price);
-  if (price === '' || price === null || price === undefined || !Number.isFinite(p) || p < 0) {
+  if (!blankPrice && (!Number.isFinite(p) || p < 0)) {
     return 'Preço adicional deve ser maior ou igual a 0';
   }
   const norm = String(name).trim().toLowerCase();

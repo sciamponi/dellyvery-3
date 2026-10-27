@@ -295,8 +295,8 @@ export default function Menu() {
         )}
       </div>
 
-      {/* Products */}
-      <div className="mx-auto max-w-4xl px-4 py-8">
+      {/* Products (com respiro inferior: botão flutuante não cobre a última fileira) */}
+      <div className="mx-auto max-w-4xl px-4 pt-8 pb-28">
         {filteredProducts.length === 0 ? (
           <div className="text-center py-16">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
@@ -318,9 +318,31 @@ export default function Menu() {
               <button
                 key={product.id}
                 onClick={() => setSelectedProduct(product)}
-                className="flex gap-3 rounded-2xl border border-border bg-card p-3 hover:shadow-md transition-shadow text-left"
+                aria-label={`Ver ${product.name}`}
+                className="flex flex-col gap-0 overflow-hidden rounded-2xl border border-border bg-card text-left hover:shadow-md transition-shadow"
               >
-                <div className="flex-1 min-w-0">
+                <div className="relative aspect-[4/3] w-full overflow-hidden bg-muted">
+                  {product.image_url ? (
+                    <Image src={product.image_url} fittingType="fill" className="h-full w-full object-cover" alt={product.name} />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center">
+                      <Package className="h-10 w-10 text-muted-foreground/60" />
+                    </div>
+                  )}
+                  {(Array.isArray(product.images) ? product.images.filter(Boolean).length : 0) > 0 && (
+                    <span className="absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-semibold text-white">
+                      +{(product.images || []).filter(Boolean).length} foto{(product.images || []).filter(Boolean).length === 1 ? '' : 's'}
+                    </span>
+                  )}
+                  <span
+                    aria-hidden="true"
+                    className="absolute bottom-2 left-2 flex h-10 w-10 items-center justify-center rounded-full text-white shadow-md"
+                    style={{ backgroundColor: primaryColor }}
+                  >
+                    <Plus className="h-5 w-5" />
+                  </span>
+                </div>
+                <div className="flex flex-1 flex-col min-w-0 p-3">
                   <h3 className="font-heading font-semibold text-[15px] leading-snug text-foreground">{product.name}</h3>
                   {cat && <p className="text-xs text-muted-foreground mt-0.5 truncate">{cat.icon ? `${cat.icon} ` : ''}{cat.name}</p>}
                   {product.description && (
@@ -336,32 +358,19 @@ export default function Menu() {
                   )}
                   {Array.isArray(product.requires) && product.requires.length > 0 && (
                     <p className="text-[11px] leading-snug text-amber-700 mt-1">
-                      Exige {product.requires.map((r) => r.name).join(' ou ')} no pedido
+                      Exige {product.requires.filter(Boolean).map((r) => r.name).join(' ou ')} no pedido
                     </p>
                   )}
-                  <div className="flex items-baseline gap-2 mt-1.5">
+                  <div className="flex items-baseline gap-2 mt-auto pt-2">
                     <p className="font-heading text-xl font-extrabold leading-none" style={{ color: primaryColor }}>
                       {fmtCurrency(product.promotional_price ?? product.price)}
                     </p>
                     {product.promotional_price != null && product.promotional_price < product.price && (
                       <p className="text-xs text-muted-foreground line-through">{fmtCurrency(product.price)}</p>
                     )}
-                  </div>
-                </div>
-                <div className="relative shrink-0 self-start">
-                  {product.image_url ? (
-                    <Image src={product.image_url} fittingType="fill" className="h-24 w-24 rounded-xl" alt={product.name} />
-                  ) : (
-                    <div className="flex h-24 w-24 items-center justify-center rounded-xl bg-muted">
-                      <Package className="h-8 w-8 text-muted-foreground" />
-                    </div>
-                  )}
-                  <div
-                    aria-hidden="true"
-                    className="absolute -bottom-2 -right-2 flex h-10 w-10 items-center justify-center rounded-full text-white shadow-md"
-                    style={{ backgroundColor: primaryColor }}
-                  >
-                    <Plus className="h-5 w-5" />
+                    {hasCustom && (
+                      <span className="ml-auto text-[11px] font-medium text-primary">Ver detalhes →</span>
+                    )}
                   </div>
                 </div>
               </button>

@@ -332,3 +332,126 @@ describe('productConfig — preço, snapshot e legado', () => {
     assert.equal(calcConfiguredLineTotal({ product: prod(), steps: [], options: [], selection: {} }).lineTotal, 18);
   });
 });
+
+describe('productConfig — combo (4 grupos)', () => {
+  const C1 = 'c1';
+  const comboProd = () => ({ id: 'pc', company_id: C1, name: 'Combo X', price: 30, active: true });
+  const comboStep = (over = {}) => ({
+    id: 'cs', company_id: C1, product_id: 'pc', title: 'Grupo', position: 0,
+    select_mode: 'multi', min_select: 0, max_select: 1, free_qty: 0,
+    required: false, allow_repeat: false, active: true, ...over,
+  });
+  const comboOpt = (over = {}) => ({
+    id: 'co', step_id: 'cs', ingredient_id: null, product_id: 'prod-outro',
+    name: 'Refri', price: 4, active: true, sort_order: 0,
+    origin: { active: true, company_id: C1 }, ...over,
+  });
+
+  it('grupos obrigatorios ausentes geram erro; opcionais vao em branco', () => {
+    const steps = [
+      comboStep({ id: 's-acc', title: 'Acompanhamento', required: true, min_select: 1, max_select: 1, select_mode: 'single' }),
+      comboStep({ id: 's-beb', title: 'Bebida', required: true, min_select: 1, max_select: 1, select_mode: 'single' }),
+      comboStep({ id: 's-sob', title: 'Sobremesa', required: false, min_select: 0, max_select: 1, select_mode: 'single' }),
+      comboStep({ id: 's-ext', title: 'Extra', required: false, min_select: 0, max_select: 20, select_mode: 'multi', allow_repeat: true }),
+    ];
+    const options = [comboOpt({ id: 'o1', step_id: 's-acc' }), comboOpt({ id: 'o2', step_id: 's-beb' })];
+    assert.throws(
+      () => validateProductConfig({ product: comboProd(), steps, options, selection: {}, quantity: 1 }),
+      /obrigatória/,
+    );
+    const r = validateProductConfig({
+      product: comboProd(), steps, options,
+      selection: { steps: [
+        { step_id: 's-acc', items: [{ option_id: 'o1', quantity: 1 }] },
+        { step_id: 's-beb', items: [{ option_id: 'o2', quantity: 1 }] },
+      ] }, quantity: 1,
+    });
+    assert.equal(r.optionsTotal, 8);
+    assert.equal(r.lineTotal, 38);
+  });
+
+  it('grupo single com duas escolhas rejeita', () => {
+    const st = comboStep({ id: 's1', select_mode: 'single', required: true, min_select: 1, max_select: 1 });
+    assert.throws(
+      () => validateProductConfig({
+        product: comboProd(), steps: [st],
+        options: [comboOpt({ id: 'oa', step_id: 's1' }), comboOpt({ id: 'ob', step_id: 's1', name: 'B' })],
+        selection: { steps: [{ step_id: 's1', items: [{ option_id: 'oa' }, { option_id: 'ob' }] }] }, quantity: 1,
+      }),
+      /apenas 1/,
+    );
+  });
+
+  it('grupo extra multi permite repeticao e soma', () => {
+    const st = comboStep({ id: 'sx', title: 'Extra', select_mode: 'multi', min_select: 0, max_select: 20, allow_repeat: true });
+    const r = validateProductConfig({
+      product: comboProd(), steps: [st],
+      options: [comboOpt({ id: 'ox', step_id: 'sx', price: 3 })],
+      selection: { steps: [{ step_id: 'sx', items: [{ option_id: 'ox', quantity: 2 }] }] }, quantity: 1,
+    });
+    assert.equal(r.optionsTotal, 6);
+    assert.equal(r.lineTotal, 36);
+  });
+
+  it('origem de produto nao soma o preco do produto, somente o adicional', () => {
+    const st = comboStep({ id: 's1', select_mode: 'single', required: true, min_select: 1, max_select: 1 });
+    const r = validateProductConfig({
+      product: comboProd(), steps: [st],
+      options: [{ id: 'oc', step_id: 's1', ingredient_id: null, product_id: 'pr-beb', name: 'Coca 600ml', price: 3, active: true, sort_order: 0, origin: { active: true, company_id: C1, price: 9.99 } }],
+      selection: { steps: [{ step_id: 's1', items: [{ option_id: 'oc', quantity: 1 }] }] }, quantity: 1,
+    });
+    assert.equal(r.optionsTotal, 3);
+    assert.equal(r.unitTotal, 33);
+    assert.equal(r.snapshot.steps[0].items[0].kind, 'product');
+  });
+});
+
+describe('productConfig - etapas herdadas da categoria', () => {
+  const catProd = (over = {}) => prod({ category_id: 'cat1', ...over });
+  const catStep = (over = {}) => step({
+    id: 's-cat', product_id: null, category_id: 'cat1', title: 'Molhos',
+    select_mode: 'single', required: true, min_select: 1, max_select: 1, ...over,
+  });
+  const catOpt = (over = {}) => opt({
+    id: 'o-cat', step_id: 's-cat', name: 'Cheddar', price: 2, ...over,
+  });
+
+  it('aceita etapa herdada e cobra o adicional', () => {
+    const r = validateProductConfig({
+      product: catProd(), steps: [catStep()], options: [catOpt()],
+      selection: sel('s-cat', item('o-cat')), quantity: 1,
+    });
+    assert.equal(r.optionsTotal, 2);
+    assert.equal(r.lineTotal, 20);
+    assert.equal(r.snapshot.steps[0].title, 'Molhos');
+  });
+
+  it('exige etapa herdada obrigatoria quando vazia', () => {
+    assert.throws(
+      () => validateProductConfig({
+        product: catProd(), steps: [catStep()], options: [catOpt()], selection: {}, quantity: 1,
+      }),
+      /obrigat/,
+    );
+  });
+
+  it('produto com use_category_steps=false ignora e rejeita a etapa herdada', () => {
+    assert.throws(
+      () => validateProductConfig({
+        product: catProd({ use_category_steps: false }), steps: [catStep()], options: [catOpt()],
+        selection: sel('s-cat', item('o-cat')), quantity: 1,
+      }),
+      /outro produto/,
+    );
+  });
+
+  it('nao aceita etapa de outra categoria', () => {
+    assert.throws(
+      () => validateProductConfig({
+        product: catProd({ category_id: 'cat2' }), steps: [catStep()], options: [catOpt()],
+        selection: sel('s-cat', item('o-cat')), quantity: 1,
+      }),
+      /outro produto/,
+    );
+  });
+});

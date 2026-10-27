@@ -76,59 +76,61 @@ export default function CategoryFormDialog({ open, onOpenChange, category, compa
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100%-1rem)] max-w-lg max-h-[92vh] overflow-y-auto">
+      <DialogContent className="w-[calc(100%-1rem)] max-w-lg max-h-[92vh] overflow-y-auto overflow-x-hidden p-5">
         <DialogHeader>
           <DialogTitle>{category ? 'Editar categoria' : 'Nova categoria'}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4 py-2">
-          <div className="flex items-center gap-4">
-            {form.image_url ? (
-              <div className="relative">
-                <Image src={form.image_url} fittingType="fill" className="h-16 w-16 rounded-xl" alt="Preview" />
-                <button onClick={() => update('image_url', '')} className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground">
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ) : (
-              <div className="flex h-16 w-16 items-center justify-center rounded-xl border-2 border-dashed border-border bg-muted text-2xl">
-                {form.icon || '📦'}
-              </div>
-            )}
-            <div>
-              <Label htmlFor="cat-image" className="cursor-pointer">
-                <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted transition-colors">
-                  {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                  {uploading ? 'Enviando...' : 'Enviar imagem'}
+        <div className="space-y-3 py-0 min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-4">
+              {form.image_url ? (
+                <div className="relative">
+                  <Image src={form.image_url} fittingType="fill" className="h-16 w-16 rounded-xl" alt="Preview" />
+                  <button onClick={() => update('image_url', '')} className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
-              </Label>
-              <Input id="cat-image" type="file" accept="image/*" className="hidden" onChange={handleUpload} />
+              ) : (
+                <div className="flex h-16 w-16 items-center justify-center rounded-xl border-2 border-dashed border-border bg-muted text-2xl">
+                  {form.icon || '📦'}
+                </div>
+              )}
+              <div>
+                <Label htmlFor="cat-image" className="cursor-pointer">
+                  <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted transition-colors">
+                    {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    {uploading ? 'Enviando...' : 'Enviar imagem'}
+                  </div>
+                </Label>
+                <Input id="cat-image" type="file" accept="image/*" className="hidden" onChange={handleUpload} />
+              </div>
+            </div>
+            <div className="flex items-center gap-2 rounded-xl border border-border px-3 py-2">
+              <Label className="cursor-pointer">Ativa</Label>
+              <Switch checked={!!form.active} onCheckedChange={v => update('active', v)} />
             </div>
           </div>
-          <div className="space-y-2">
-            <Label>Nome *</Label>
-            <Input value={form.name || ''} onChange={e => update('name', e.target.value)} placeholder="Ex: Burgers" />
-          </div>
-          <div className="space-y-2">
-            <Label>Ícone (emoji)</Label>
-            <Input value={form.icon || ''} onChange={e => update('icon', e.target.value)} placeholder="🍔" maxLength={4} />
+          <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem] gap-2">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <Input value={form.name || ''} onChange={e => update('name', e.target.value)} placeholder="Ex: Burgers" />
+            </div>
+            <div className="space-y-2">
+              <Label>Ícone</Label>
+              <Input value={form.icon || ''} onChange={e => update('icon', e.target.value)} placeholder="🍔" maxLength={4} className="text-center px-1" />
+            </div>
+            <div className="space-y-2">
+              <Label>Ordem</Label>
+              <Input type="number" value={form.order || 0} onChange={e => update('order', e.target.value)} className="text-center px-1" />
+            </div>
           </div>
           <div className="space-y-2">
             <Label>Descrição</Label>
             <Textarea value={form.description || ''} onChange={e => update('description', e.target.value)} placeholder="Opcional" rows={2} />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Ordem</Label>
-              <Input type="number" value={form.order || 0} onChange={e => update('order', e.target.value)} />
-            </div>
-            <div className="flex items-center justify-between rounded-xl border border-border p-3">
-              <Label className="cursor-pointer">Ativa</Label>
-              <Switch checked={!!form.active} onCheckedChange={v => update('active', v)} />
-            </div>
-          </div>
           {/* Grupos da categoria: modelo reutilizável herdado pelos produtos. */}
           {category?.id ? (
-            <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-3">
+            <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-2.5">
               <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Grupos de complementos
               </h3>

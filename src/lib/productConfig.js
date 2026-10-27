@@ -75,10 +75,30 @@ export function validateProductConfig({ product, steps = [], options = [], selec
     seenStepIds.add(ss.step_id);
   }
 
-  // Steps configuráveis do produto (só mesmas empresa/produto contam)
+  // Steps configuráveis do produto: próprios + herdados da categoria quando
+  // use_category_steps não foi desligado. Nunca aceita step de outro produto.
+  const stepBelongsToProduct = (s) => {
+    if (!s) return false;
+    if (s.product_id === product.id) return true;
+    if (s.product_id) return false;
+    if (product.use_category_steps === false) return false;
+    return !!s.category_id && !!product.category_id && s.category_id === product.category_id;
+  };
+
   const productSteps = (steps || []).filter(
-    (s) => s && s.product_id === product.id && (!companyId || !s.company_id || s.company_id === companyId),
+    (s) => stepBelongsToProduct(s) && (!companyId || !s.company_id || s.company_id === companyId),
   );
+
+  // Nenhuma etapa selecionada pode ser de outro produto/categoria desligada
+  // ou de outra empresa, mesmo que não esteja entre as etapas exigidas.
+  for (const ss of selSteps) {
+    const st = stepsById.get(ss.step_id);
+    if (!st) throw new Error('Etapa inexistente');
+    if (!stepBelongsToProduct(st)) throw new Error('Etapa pertence a outro produto');
+    if (companyId && st.company_id && st.company_id !== companyId) {
+      throw new Error('Etapa pertence a outra empresa');
+    }
+  }
 
   const snapshotSteps = [];
   let optionsTotal = 0;
@@ -88,7 +108,7 @@ export function validateProductConfig({ product, steps = [], options = [], selec
   const resolveStep = (stepId) => {
     const st = stepsById.get(stepId);
     if (!st) throw new Error('Etapa inexistente');
-    if (st.product_id !== product.id) throw new Error('Etapa pertence a outro produto');
+    if (!stepBelongsToProduct(st)) throw new Error('Etapa pertence a outro produto');
     if (companyId && st.company_id && st.company_id !== companyId) {
       throw new Error('Etapa pertence a outra empresa');
     }
@@ -211,10 +231,13 @@ export function validateProductConfig({ product, steps = [], options = [], selec
     snapshotSteps.push({ step_id: step.id, title: step.title || '', items: snapItems });
   }
 
-  // steps recebidos que não pertencem ao produto
+  // Garantia final: nenhuma etapa selecionada pode escapar do produto/empresa.
   for (const ss of selSteps) {
     const st = stepsById.get(ss.step_id);
-    if (!st || st.product_id !== product.id) throw new Error('Etapa pertence a outro produto');
+    if (!st || !stepBelongsToProduct(st)) throw new Error('Etapa pertence a outro produto');
+    if (companyId && st.company_id && st.company_id !== companyId) {
+      throw new Error('Etapa pertence a outra empresa');
+    }
   }
 
   const baseUnitPrice = baseUnitPriceOf(product);

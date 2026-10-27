@@ -16,7 +16,7 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { ShoppingBag, Clock, Smartphone, MessageSquare, Store, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
+import { ShoppingBag, Clock, Smartphone, MessageSquare, Store, ChevronLeft, ChevronRight, SlidersHorizontal, Eraser, Eye } from 'lucide-react';
 import OrderModal from '@/components/orders/OrderModal';
 import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
 import NewOrderAlert from '@/components/orders/NewOrderAlert';
@@ -124,6 +124,8 @@ export default function Pedidos() {
   // Baixa de entrega: pede confirmação antes de finalizar (evita toque acidental).
   const [finishOrderData, setFinishOrderData] = useState(null);
   const [queueOpen, setQueueOpen] = useState(false);
+  // "Limpar" apenas oculta encerrados da visão; nada é apagado do banco.
+  const [hideFinished, setHideFinished] = useState(false);
   const [highlightId, setHighlightId] = useState(null);
   const [alertQueue, setAlertQueue] = useState([]);
   // Impressão por empresa (manual = só botão; confirm/auto por etapa).
@@ -143,6 +145,10 @@ export default function Pedidos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [stages],
   );
+  const terminalOrdersCount = orders.filter((o) => ['finalizado', 'cancelado'].includes(o.status)).length;
+  const visibleOrders = hideFinished
+    ? orders.filter((o) => !['finalizado', 'cancelado'].includes(o.status))
+    : orders;
 
   const seenOrderIdsRef = useRef(new Set());
   // Selo 1º pedido com vida útil = ciclo do pedido: classificação congelada
@@ -424,8 +430,8 @@ export default function Pedidos() {
   };
 
   // Ação direta no card (reutiliza fluxo central + guarda anti-duplo do drag).
-  // Saída e baixa de entrega passam pelo modal (conferência + entregador
-  // obrigatório); demais avanços e a baixa de outros tipos seguem direto.
+  // Saída e baixa de delivery passam pelo modal (conferência + entregador
+  // obrigatório); baixa de retirada/mesa pede confirmação; demais seguem direto.
   const requestCardAction = (order, action) => {
     if (!order || !action) return;
     if (action.next === 'saiu_entrega') {
@@ -434,7 +440,7 @@ export default function Pedidos() {
       return;
     }
     if (action.next === 'finalizado') {
-      if (order.status === 'saiu_entrega') {
+      if (order.status === 'saiu_entrega' && order.order_type === 'delivery') {
         setSelectedOrder(order);
         toast({ title: 'Confira a entrega no detalhe do pedido' });
         return;
@@ -555,6 +561,26 @@ export default function Pedidos() {
       ) : (
         <>
         <div className="flex justify-end gap-2 mb-2 shrink-0">
+          <Button
+            variant="outline"
+            onClick={() => {
+              const next = !hideFinished;
+              setHideFinished(next);
+              toast({
+                title: next ? 'Pedidos encerrados ocultados' : 'Pedidos encerrados visíveis',
+                description: next
+                  ? 'Finalizados e cancelados saíram da visualização. Use Mostrar para exibi-los novamente.'
+                  : undefined,
+              });
+            }}
+            disabled={!hideFinished && terminalOrdersCount === 0}
+            aria-pressed={hideFinished}
+            aria-label={hideFinished ? 'Mostrar pedidos finalizados e cancelados' : 'Ocultar pedidos finalizados e cancelados'}
+            title={hideFinished ? 'Mostrar pedidos finalizados e cancelados' : 'Ocultar pedidos finalizados e cancelados'}
+          >
+            {hideFinished ? <Eye className="h-4 w-4" /> : <Eraser className="h-4 w-4" />}
+            {hideFinished ? 'Mostrar' : 'Limpar'}
+          </Button>
           <Button variant="outline" onClick={() => setStageDialogOpen(true)} aria-label="Gerenciar etapas do Kanban">
             <SlidersHorizontal className="h-4 w-4" /> Etapas
           </Button>
@@ -570,7 +596,7 @@ export default function Pedidos() {
         <DragDropContext onDragEnd={onDragEnd}>
           <div ref={kanbanRef} className="flex gap-2 sm:gap-3 overflow-x-auto kanban-scroll pb-4 -mx-1 px-1 lg:flex-1 lg:min-h-0 lg:overflow-y-hidden lg:pb-2">
             {displayStages.map(col => {
-              const colOrders = orders.filter(o => stageForStatus(displayStages, o.status)?.id === col.id);
+              const colOrders = visibleOrders.filter(o => stageForStatus(displayStages, o.status)?.id === col.id);
               return (
                 <Droppable key={col.id} droppableId={col.id}>
                   {(provided) => (
@@ -817,9 +843,12 @@ export default function Pedidos() {
         <ConfirmDialog
           open={!!finishOrderData}
           onOpenChange={(open) => { if (!open) setFinishOrderData(null); }}
-          title="Concluir entrega?"
-          description={`Dar baixa no pedido #${finishOrderData.order?.order_number || '—'} como Finalizado. A baixa registra a entrega concluída e não altera pagamento.`}
-          confirmLabel="Concluir entrega"
+          title={finishOrderData.order?.order_type === 'delivery' ? 'Concluir entrega?' : 'Concluir pedido?'}
+          description={finishOrderData.order?.order_type === 'delivery'
+            ? `Dar baixa no pedido #${finishOrderData.order?.order_number || '—'} como Finalizado. A baixa registra a entrega concluída e não altera pagamento.`
+            : `Finalizar o pedido #${finishOrderData.order?.order_number || '—'}? O pagamento não será alterado.`}
+          confirmLabel={finishOrderData.order?.order_type === 'delivery' ? 'Concluir entrega' : 'Finalizar pedido'}
+          confirmVariant="success"
           onConfirm={() => {
             const { order, action } = finishOrderData;
             setFinishOrderData(null);
@@ -855,6 +884,7 @@ export default function Pedidos() {
         open={queueOpen}
         onClose={() => setQueueOpen(false)}
         orders={orders}
+        stages={displayStages}
         onOrderUpdated={(updated) => {
           setOrders(prev => mergeUpdated(prev, updated));
         }}

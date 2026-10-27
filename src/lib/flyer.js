@@ -62,8 +62,6 @@ export function buildFlyerModel({ company, products = [], table = null, origin, 
 export async function renderFlyerPng(model, { qrDataUrl, onMissing } = {}) {
   if (!model) throw new Error('Modelo inválido');
   if (!qrDataUrl) throw new Error('QR Code não gerado');
-  if (!model) throw new Error('Modelo inválido');
-  if (!qrDataUrl) throw new Error('QR Code não gerado');
   const W = 1080;
   const H = 1350;
   const canvas = document.createElement('canvas');

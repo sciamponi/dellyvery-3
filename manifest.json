@@ -1,0 +1,13 @@
+{
+  "name": "DELLYVERY — Pedidos online",
+  "short_name": "Dellyvery",
+  "description": "Cardápio digital, pedidos online e gestão em tempo real.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#DC2626",
+  "orientation": "portrait",
+  "scope": "/",
+  "lang": "pt-BR",
+  "icons": []
+}

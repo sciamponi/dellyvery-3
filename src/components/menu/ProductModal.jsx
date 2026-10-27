@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Image } from '@/components/ui/image';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -9,6 +9,7 @@ import { useCart } from '@/lib/CartContext';
 import { validateProductConfig } from '@/lib/productConfig';
 import { checkCartDependencies } from '@/lib/productDependencies';
 import { v2selFromItemConfig, legacySelFromComplements } from '@/lib/cartEdit';
+import { getProductImages } from '@/lib/productMedia';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -52,6 +53,14 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
   const isEdit = !!initialItem;
   // V2: { [step_id]: { [option_id]: qty } }.
   const [v2sel, setV2sel] = useState({});
+  // Galeria: índice da foto + origem do toque (swipe no celular).
+  const [photoIdx, setPhotoIdx] = useState(0);
+  const touchX = React.useRef(null);
+  const gallery = getProductImages(product);
+  const goPhoto = (dir) => {
+    if (gallery.length < 2) return;
+    setPhotoIdx((i) => (i + dir + gallery.length) % gallery.length);
+  };
   // V2: passos vindos do storefront (config = ARRAY de steps) ou do PDV
   // (config = { steps }). Normaliza para { steps }.
   const v2config = (() => {
@@ -67,13 +76,20 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
   // Reset state when product changes (ou inicia edição de uma linha).
   React.useEffect(() => {
     if (isOpen) {
-      setQuantity(Math.max(1, Number(initialItem?.quantity) || 1));
-      setNotes(initialItem?.notes || '');
-      if (v2config && initialItem?.config) {
+      setPhotoIdx(0);
+      touchX.current = null;
+      try {
+        setQuantity(Math.max(1, Number(initialItem?.quantity) || 1));
+        setNotes(initialItem?.notes || '');
+        if (v2config && initialItem?.config) {
+          setSelectedComplements({});
+          setV2sel(v2selFromItemConfig(initialItem.config));
+        } else {
+          setSelectedComplements(legacySelFromComplements(product, initialItem?.complements));
+          setV2sel({});
+        }
+      } catch {
         setSelectedComplements({});
-        setV2sel(v2selFromItemConfig(initialItem.config));
-      } else {
-        setSelectedComplements(legacySelFromComplements(product, initialItem?.complements));
         setV2sel({});
       }
     }
@@ -173,8 +189,9 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
   // produto como se já adicionado; não bloqueia aqui — checkout/servidor
   // barram. Sem `requires`, nada muda.
   const depWarning = useMemo(() => {
-    const reqs = Array.isArray(product?.requires) ? product.requires : [];
-    if (reqs.length === 0 || !product?.id) return '';
+    try {
+      const reqs = Array.isArray(product?.requires) ? product.requires : [];
+      if (reqs.length === 0 || !product?.id) return '';
     const rules = reqs.map((r) => ({
       product_id: product.id,
       product_name: product.name,
@@ -188,6 +205,9 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
       product.dependency_mode === 'all' ? { [product.id]: 'all' } : undefined,
     );
     return errs.length > 0 ? errs[0].message : '';
+    } catch {
+      return '';
+    }
   }, [product, quantity, cartItems]);
 
   if (!product) return null;
@@ -204,10 +224,67 @@ export default function ProductModal({ product, primaryColor, isOpen, onClose, o
 
         {/* Conteúdo com rolagem independente; rodapé fixo abaixo. */}
         <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 pb-4">
-        {/* Product image */}
-        {product.image_url ? (
-          <div className="relative -mx-4 sm:-mx-6 h-44 overflow-hidden">
-            <Image src={product.image_url} fittingType="fill" className="w-full h-full" alt={product.name} />
+        {/* Galeria: principal ampliada + miniaturas + setas + swipe. */}
+        {gallery.length > 0 ? (
+          <div>
+            <div
+              className="relative -mx-4 sm:-mx-6 h-52 sm:h-60 overflow-hidden bg-muted"
+              onTouchStart={(e) => { touchX.current = e.touches[0]?.clientX ?? null; }}
+              onTouchEnd={(e) => {
+                if (touchX.current == null) return;
+                const dx = (e.changedTouches[0]?.clientX ?? 0) - touchX.current;
+                if (Math.abs(dx) > 40) goPhoto(dx < 0 ? 1 : -1);
+                touchX.current = null;
+              }}
+            >
+              <Image
+                key={gallery[photoIdx] || photoIdx}
+                src={gallery[photoIdx]}
+                fittingType="fill"
+                className="w-full h-full"
+                alt={`${product.name} — foto ${photoIdx + 1} de ${gallery.length}`}
+              />
+              {gallery.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => goPhoto(-1)}
+                    aria-label="Foto anterior"
+                    className="absolute left-2 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => goPhoto(1)}
+                    aria-label="Próxima foto"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  >
+                    ›
+                  </button>
+                  <span className="absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-semibold text-white">
+                    {photoIdx + 1}/{gallery.length}
+                  </span>
+                </>
+              )}
+            </div>
+            {gallery.length > 1 && (
+              <div className="flex gap-2 mt-2 overflow-x-auto pb-1" role="tablist" aria-label="Miniaturas">
+                {gallery.map((src, i) => (
+                  <button
+                    key={`${src}-${i}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={i === photoIdx}
+                    aria-label={`Ver foto ${i + 1}`}
+                    onClick={() => setPhotoIdx(i)}
+                    className={`h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${i === photoIdx ? 'border-primary' : 'border-transparent opacity-70 hover:opacity-100'}`}
+                  >
+                    <Image src={src} fittingType="fill" className="h-full w-full object-cover" alt="" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex h-32 items-center justify-center rounded-xl bg-muted mt-2">

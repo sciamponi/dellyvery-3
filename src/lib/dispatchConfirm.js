@@ -11,9 +11,13 @@ export function shouldConfirmDispatch(order, next) {
   return true;
 }
 
-/** Baixa exige conferência? Só vindo de saiu_entrega rumo a finalizado. */
+// Baixa exige conferência? Só delivery vindo de saiu_entrega rumo a
+// finalizado. Retirada/mesa nunca exigem entregador (mesmo que um pedido
+// antigo esteja em saiu_entrega); terminais não reabrem a conferência.
 export function shouldConferenceConclusion(order, next) {
   if (!order || next !== 'finalizado') return false;
+  if (order.order_type !== 'delivery') return false;
+  if (order.status === 'finalizado' || order.status === 'cancelado') return false;
   return order.status === 'saiu_entrega';
 }
 

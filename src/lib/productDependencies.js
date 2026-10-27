@@ -67,7 +67,7 @@ export function rulesForProducts(dependencies, productIds) {
 // `requires` não geram regra e continuam vendendo sozinhos.
 export function buildDepRulesFromProducts(products) {
   return (Array.isArray(products) ? products : []).flatMap((p) =>
-    (Array.isArray(p?.requires) ? p.requires : []).map((r) => ({
+    (Array.isArray(p?.requires) ? p.requires : []).filter(Boolean).map((r) => ({
       product_id: p.id,
       product_name: p.name,
       requires_product_id: r.id,

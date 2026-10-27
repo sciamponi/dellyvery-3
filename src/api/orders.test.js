@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
 import {
   fromSupabaseOrder,
   fromSupabaseOrderItem,
@@ -222,6 +223,45 @@ describe('orders — escrita via RPC (nunca direta)', () => {
     const c2 = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
     await createOrder(c2, { companySlug: 'loja', items: [{ product_id: 'p', quantity: 1 }], customer: { name: 'Z', phone: '119' } });
     assert.equal(c2.calls.rpc[0].args.p_change_for, null);
+  });
+
+  it('assinatura do create_order cobre todos os parâmetros enviados pelo frontend', async () => {
+    const client = createMockClient({ rpcs: { create_order: { data: { order_id: 'o' }, error: null } } });
+    await createOrder(client, {
+      companySlug: 'loja', orderType: 'mesa', tableNumber: '5', tableId: 't1', tableToken: 'tok',
+      items: [{ product_id: 'p', quantity: 1 }], customer: { name: 'Z', phone: '119' },
+      deliveryZoneId: 'z1', paymentMethod: 'Pix', notes: 'n', source: 'balcao',
+      changeFor: 50, latitude: -23, longitude: -46, discount: 5, idempotencyKey: 'idem',
+    });
+    const sent = Object.keys(client.calls.rpc[0].args).sort();
+    const dir = new URL('../../supabase/migrations/', import.meta.url);
+    const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+    let sql = null;
+    let file = null;
+    for (let i = files.length - 1; i >= 0; i--) {
+      const candidate = readFileSync(new URL(files[i], dir), 'utf8');
+      if (/create or replace function\s+(?:public\.)?create_order\s*\(/i.test(candidate)) {
+        sql = candidate;
+        file = files[i];
+        break;
+      }
+    }
+    assert.ok(sql, 'migration com create_order não encontrada');
+    const start = sql.search(/create or replace function\s+(?:public\.)?create_order\s*\(/i);
+    const open = sql.indexOf('(', start);
+    let depth = 0;
+    let end = -1;
+    for (let i = open; i < sql.length; i++) {
+      if (sql[i] === '(') depth++;
+      else if (sql[i] === ')') {
+        depth--;
+        if (depth === 0) { end = i; break; }
+      }
+    }
+    const declared = [...sql.slice(open + 1, end).matchAll(/\b(p_[a-z0-9_]+)\s+/gi)]
+      .map((m) => m[1]).sort();
+    assert.deepEqual(sent, declared, `assinatura divergente em ${file}`);
+    assert.match(sql, /notify pgrst, 'reload schema'/i);
   });
 
   it('buildCreateOrderItems preserva todas as linhas (jornada completa)', () => {    const cart = [

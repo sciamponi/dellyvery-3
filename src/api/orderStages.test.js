@@ -175,7 +175,7 @@ describe('orderStages — fluxo puro (uma etapa por vez)', () => {
     assert.equal(stageForStatus([], 'novo'), null);
   });
 
-  it('avanço legado preservado: delivery pula aguardando_retirada', () => {
+  it('avanço legado preservado: delivery pula aguardando_retirada; retirada pula saiu_entrega', () => {
     const stages = mapped(seedRows());
     assert.equal(resolveAdvanceTarget(stages, { status: 'novo', order_type: 'delivery' }).targetStatus, 'confirmado');
     assert.equal(
@@ -183,8 +183,21 @@ describe('orderStages — fluxo puro (uma etapa por vez)', () => {
       'saiu_entrega',
     );
     assert.equal(
+      resolveAdvanceTarget(stages, { status: 'em_preparo', order_type: 'retirada' }).targetStatus,
+      'aguardando_retirada',
+    );
+    assert.equal(
+      resolveAdvanceTarget(stages, { status: 'aguardando_retirada', order_type: 'retirada' }).targetStatus,
+      'finalizado',
+    );
+    // Mesa preserva a navegação atual por stages (não pula saiu_entrega).
+    assert.equal(
       resolveAdvanceTarget(stages, { status: 'em_preparo', order_type: 'mesa' }).targetStatus,
       'aguardando_retirada',
+    );
+    assert.equal(
+      resolveAdvanceTarget(stages, { status: 'aguardando_retirada', order_type: 'mesa' }).targetStatus,
+      'saiu_entrega',
     );
     assert.equal(resolveAdvanceTarget(stages, { status: 'finalizado' }), null);
     assert.equal(resolveAdvanceTarget(stages, { status: 'cancelado' }), null);
@@ -219,6 +232,10 @@ describe('orderStages — fluxo puro (uma etapa por vez)', () => {
     assert.deepEqual(assertSingleStep(stages, 'novo', 'cancelado'), { cancel: true });
     assert.equal(assertSingleStep(stages, 'novo', 'confirmado').direction, 'advance');
     assert.equal(assertSingleStep(stages, 'em_preparo', 'confirmado', 'mesa').direction, 'regress');
+    // Retirada vai direto de "Pronto" para "Finalizado" (sem etapa de entrega).
+    assert.equal(assertSingleStep(stages, 'aguardando_retirada', 'finalizado', 'retirada').direction, 'advance');
+    // Delivery mantém a baixa a partir de saiu_entrega.
+    assert.equal(assertSingleStep(stages, 'saiu_entrega', 'finalizado', 'delivery').direction, 'advance');
     assert.throws(() => assertSingleStep(stages, 'novo', 'em_preparo'), /uma etapa/);
     assert.throws(() => assertSingleStep(stages, 'em_preparo', 'novo', 'mesa'), /uma etapa/);
     assert.throws(() => assertSingleStep(stages, 'novo', 'finalizado'), /uma etapa/);
@@ -271,6 +288,14 @@ describe('orderStages — colunas terminais e ação garantida (Kanban)', () => 
       resolveCardPrimary(stuck, { status: 'saiu_entrega', order_type: 'delivery' }),
       { id: 'advance', label: '→ Finalizado', next: 'finalizado', fallback: true },
     );
+    // Retirada/mesa presas em saiu_entrega (finalizado inativo) também
+    // precisam da baixa legada, senão o modal fica sem ação de finalizar.
+    for (const order_type of ['retirada', 'mesa']) {
+      assert.equal(resolveAdvanceTarget(stuck, { status: 'saiu_entrega', order_type }), null);
+      const fallback = resolveCardPrimary(stuck, { status: 'saiu_entrega', order_type });
+      assert.equal(fallback.next, 'finalizado');
+      assert.equal(fallback.fallback, true);
+    }
     // Terminais e status desconhecido nunca têm ação.
     assert.equal(resolveCardPrimary(full, { status: 'finalizado' }), null);
     assert.equal(resolveCardPrimary(full, { status: 'cancelado' }), null);
@@ -291,16 +316,61 @@ describe('orderStages — colunas terminais e ação garantida (Kanban)', () => 
     assert.throws(() => assertSingleStep(stuck, 'confirmado', 'finalizado', 'mesa'), /uma etapa/);
   });
 
-  it('pedido novo com próxima inativa: fallback sinalizado (nunca silencioso)', () => {
-    // Só Novo ativa: sem alvo configurado, o card usa o fluxo padrão.
+  it('pedido novo sem etapa seguinte visível: sem ação (nunca transição invisível)', () => {
+    // Só Novo ativa: o alvo legado (confirmado) não tem coluna própria.
     const onlyNovo = mapped(seedRows()).map((s) => (
       s.key === 'novo' ? s : { ...s, active: false }
     ));
     assert.equal(resolveAdvanceTarget(onlyNovo, { status: 'novo' }), null);
+    assert.equal(resolveCardPrimary(onlyNovo, { status: 'novo' }), null);
+  });
+
+  it('aceite respeita a próxima etapa ativa (pula Confirmado inativo)', () => {
+    const semConfirmado = mapped(seedRows()).map((s) => (
+      s.key === 'confirmado' ? { ...s, active: false } : s
+    ));
     assert.deepEqual(
-      resolveCardPrimary(onlyNovo, { status: 'novo' }),
-      { id: 'accept', label: 'Aceitar', next: 'confirmado', fallback: true },
+      resolveCardPrimary(semConfirmado, { status: 'novo' }),
+      { id: 'accept', label: 'Aceitar', next: 'em_preparo', fallback: false },
     );
+  });
+
+  it('sem Pronto ativo: todos os tipos avançam de Em preparo para Saiu', () => {
+    const stages = samuelLike();
+    const cols = displayStages(stages);
+    assert.equal(stageForStatus(cols, 'saiu_entrega').mapsTo, 'saiu_entrega');
+    for (const order_type of ['delivery', 'retirada', 'mesa']) {
+      assert.equal(
+        resolveAdvanceTarget(stages, { status: 'em_preparo', order_type }).targetStatus,
+        'saiu_entrega',
+      );
+      assert.deepEqual(
+        resolveCardPrimary(stages, { status: 'em_preparo', order_type }),
+        { id: 'advance', label: '→ Saiu p/ entrega', next: 'saiu_entrega', fallback: false },
+      );
+      assert.equal(
+        assertSingleStep(stages, 'em_preparo', 'saiu_entrega', order_type).direction,
+        'advance',
+      );
+    }
+    // Com Pronto ativo, retirada continua sem passar por Saiu.
+    assert.throws(
+      () => assertSingleStep(mapped(seedRows()), 'em_preparo', 'saiu_entrega', 'retirada'),
+      /uma etapa/,
+    );
+  });
+
+  it('sem Pronto e sem Saiu ativos: não inventa destino sem coluna', () => {
+    const stages = samuelLike().map((s) => (
+      s.key === 'saiu_entrega' ? { ...s, active: false } : s
+    ));
+    for (const order_type of ['delivery', 'retirada', 'mesa']) {
+      assert.equal(resolveAdvanceTarget(stages, { status: 'em_preparo', order_type }), null);
+      assert.equal(
+        resolveCardPrimary(stages, { status: 'em_preparo', order_type }),
+        null,
+      );
+    }
   });
 
   it('status desconhecido: na primeira coluna, sem inventar transição', () => {

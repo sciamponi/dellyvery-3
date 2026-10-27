@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   slugifyPlanName, fromSupabasePlan, toSupabasePlan, validatePlanData,
   listPlans, createPlan, updatePlan, deletePlan, isPlatformAdmin,
-  missingColumnOf,
+  getPlatformAdminAccess, missingColumnOf,
 } from './plans.js';
 
 function createMockClient({ tables = {} } = {}) {
@@ -77,6 +77,24 @@ describe('plans — mapeamento Base44 <-> Supabase', () => {
     const no = createMockClient({ tables: { profiles: { maybeSingle: { data: { platform_role: 'USER' }, error: null } } } });
     assert.equal(await isPlatformAdmin(no, 'u'), false);
     assert.equal(await isPlatformAdmin(no, null), false);
+  });
+
+  it('getPlatformAdminAccess separa permitido, negado, rede e erro inesperado', async () => {
+    const yes = createMockClient({ tables: { profiles: { maybeSingle: { data: { platform_role: 'PLATFORM_ADMIN' }, error: null } } } });
+    assert.equal((await getPlatformAdminAccess(yes, 'u')).status, 'allowed');
+
+    const no = createMockClient({ tables: { profiles: { maybeSingle: { data: { platform_role: 'USER' }, error: null } } } });
+    assert.equal((await getPlatformAdminAccess(no, 'u')).status, 'denied');
+    assert.equal((await getPlatformAdminAccess(no, null)).status, 'denied');
+
+    const offline = createMockClient({ tables: { profiles: { maybeSingle: { data: null, error: new TypeError('Failed to fetch') } } } });
+    const network = await getPlatformAdminAccess(offline, 'u');
+    assert.equal(network.status, 'network');
+    assert.match(network.error.message, /Failed to fetch/);
+
+    const broken = createMockClient({ tables: { profiles: { maybeSingle: { data: null, error: { code: 'PGRST301', message: 'JWT expired' } } } } });
+    assert.equal((await getPlatformAdminAccess(broken, 'u')).status, 'error');
+    assert.equal(await isPlatformAdmin(broken, 'u'), false);
   });
 });
 

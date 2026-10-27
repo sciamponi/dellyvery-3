@@ -82,14 +82,9 @@ export default function GestaoProdutos() {
 
   // Clique no card: Extras abre o modal de ingredientes; demais
   // categorias abrem a listagem de produtos filtrada.
-  const openCategory = (cat) => {
-    if (cat?.slug === 'extras') {
-      setIngredientsOpen(true);
-      return;
-    }
-    setFilterCat(cat.id);
-    setSearch('');
-    setTab('produtos');
+  const openEditCategory = (cat) => {
+    setEditCategory(cat);
+    setCategoryDialog(true);
   };
 
   const loadData = async () => {
@@ -355,12 +350,12 @@ export default function GestaoProdutos() {
 
         {/* Products tab */}
         <TabsContent value="produtos" className="mt-4">
-          <div className="flex flex-col gap-2 mb-4 lg:flex-row lg:items-center">
+          <div className="flex flex-col gap-2 mb-4 lg:flex-row lg:items-center min-w-0">
             <div className="relative flex-1 min-w-0">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar produto..." className="pl-9 h-9 text-sm" />
             </div>
-            <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 lg:max-w-[60%] lg:justify-end lg:flex-wrap lg:overflow-visible">
+            <div className="flex gap-1.5 overflow-x-auto pb-1 px-1 min-w-0 lg:max-w-[60%] lg:justify-end lg:flex-wrap lg:overflow-visible">
               <button onClick={() => setFilterCat('all')} className={`shrink-0 whitespace-nowrap rounded-full px-3 h-8 text-xs font-medium transition-colors border ${filterCat === 'all' ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-transparent hover:bg-muted/70'}`}>Todos</button>
               {categories.map(c => (
                 <button key={c.id} onClick={() => setFilterCat(c.id)} title={c.name} className={`shrink-0 whitespace-nowrap rounded-full px-3 h-8 text-xs font-medium transition-colors border ${filterCat === c.id ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-transparent hover:bg-muted/70'}`}>
@@ -648,9 +643,9 @@ export default function GestaoProdutos() {
                     key={cat.id}
                     role="button"
                     tabIndex={0}
-                    title={cat.slug === 'extras' ? 'Gerenciar ingredientes' : `Ver produtos de ${cat.name}`}
-                    onClick={() => openCategory(cat)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCategory(cat); } }}
+                    title={`Editar ${cat.name}`}
+                    onClick={() => openEditCategory(cat)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEditCategory(cat); } }}
                     className="rounded-2xl border border-border bg-card p-4 cursor-pointer transition-all hover:shadow-md hover:border-primary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <div className="flex items-start justify-between">
@@ -658,12 +653,15 @@ export default function GestaoProdutos() {
                         {cat.image_url ? <Image src={cat.image_url} fittingType="fill" className="h-12 w-12 rounded-xl" alt={cat.name} /> : (cat.icon || '📦')}
                       </div>
                       <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                        {cat.slug !== 'extras' && (
-                          <Button variant="ghost" size="icon" title="Gerenciar produtos" onClick={() => setManageCat(cat)}>
-                            <Settings2 className="h-4 w-4 text-muted-foreground" />
-                          </Button>
-                        )}
-                        <Button variant="ghost" size="icon" onClick={() => { setEditCategory(cat); setCategoryDialog(true); }}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title={cat.slug === 'extras' ? 'Gerenciar ingredientes' : 'Gerenciar produtos'}
+                          onClick={() => (cat.slug === 'extras' ? setIngredientsOpen(true) : setManageCat(cat))}
+                        >
+                          <Settings2 className="h-4 w-4 text-muted-foreground" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => openEditCategory(cat)}>
                           <Pencil className="h-4 w-4 text-muted-foreground" />
                         </Button>
                         <Button variant="ghost" size="icon" onClick={() => setDeleteTarget({ type: 'category', id: cat.id, name: cat.name })}>
@@ -676,9 +674,7 @@ export default function GestaoProdutos() {
                       {cat.slug && <span className="ml-1.5 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary align-middle">Padrão</span>}
                     </h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {cat.slug === 'extras'
-                        ? 'Biblioteca de ingredientes — clique para gerenciar'
-                        : `${count} ${count === 1 ? 'produto' : 'produtos'} — clique para ver`}
+                      {`${count} ${count === 1 ? 'produto' : 'produtos'} — clique para editar`}
                     </p>
                     <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border" onClick={(e) => e.stopPropagation()}>
                       <Switch checked={!!cat.active} onCheckedChange={() => toggleCategoryActive(cat)} />
@@ -759,9 +755,10 @@ function ProductListTable({
   onDuplicate, selectedIds, onToggleSelect, onToggleAll, allChecked, someChecked,
 }) {
   const catOf = (p) => categories.find((c) => c.id === p.category_id);
+  const isInteractive = (target) => !!target?.closest?.('button, a, input, select, textarea, [role="switch"], [role="checkbox"]');
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full min-w-[820px] text-sm">
+      <table className="w-full min-w-full text-sm">
         <thead>
           <tr className="bg-muted/60 text-left text-xs uppercase tracking-wider text-muted-foreground">
             <th className="px-3 py-2 w-10">
@@ -786,7 +783,17 @@ function ProductListTable({
             const draft = drafts[p.id] || {};
             const cat = catOf(p);
             return (
-              <tr key={p.id} className="align-middle hover:bg-muted/30">
+              <tr
+                key={p.id}
+                className="align-middle hover:bg-muted/30 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-ring-offset-2"
+                onClick={(e) => { if (!editing && !isInteractive(e.target)) onEditFull(p); }}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if ((e.key === 'Enter' || e.key === ' ') && !editing) { e.preventDefault(); onEditFull(p); }
+                }}
+                tabIndex={0}
+                aria-label={`Editar ${p.name}`}
+              >
                 <td className="px-3 py-2">
                   <Checkbox
                     checked={(selectedIds || []).includes(p.id)}
@@ -850,8 +857,13 @@ function ProductListTable({
                     <span className="font-semibold whitespace-nowrap">{fmtCurrency(p.promotional_price || p.price)}</span>
                   )}
                 </td>
-                <td className="px-3 py-2 text-center">
-                  <Switch checked={!!p.available} onCheckedChange={() => onToggle(p)} aria-label={p.available ? 'Desativar produto' : 'Ativar produto'} />
+                <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                  <Switch
+                    checked={!!p.available}
+                    onCheckedChange={() => onToggle(p)}
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label={p.available ? 'Desativar produto' : 'Ativar produto'}
+                  />
                 </td>
                 <td className="px-3 py-2">
                   <span className="text-xs text-muted-foreground">
@@ -872,10 +884,10 @@ function ProductListTable({
                       </>
                     ) : (
                       <>
-                        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => onStartEdit(p)}>
+                        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={(e) => { e.stopPropagation(); onStartEdit(p); }}>
                           <Pencil className="h-3.5 w-3.5" /> Editar
                         </Button>
-                        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => onEditFull(p)}>
+                        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={(e) => { e.stopPropagation(); onEditFull(p); }}>
                           Completo
                         </Button>
                         <Button
@@ -884,7 +896,7 @@ function ProductListTable({
                           className="h-8 w-8 p-0 shrink-0"
                           aria-label={`Duplicar ${p.name}`}
                           title="Duplicar produto"
-                          onClick={() => onDuplicate(p)}
+                          onClick={(e) => { e.stopPropagation(); onDuplicate(p); }}
                         >
                           <Copy className="h-4 w-4" />
                         </Button>
@@ -893,7 +905,7 @@ function ProductListTable({
                           variant="ghost"
                           className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
                           aria-label={`Excluir ${p.name}`}
-                          onClick={() => onDelete(p)}
+                          onClick={(e) => { e.stopPropagation(); onDelete(p); }}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

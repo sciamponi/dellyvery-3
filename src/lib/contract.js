@@ -76,14 +76,104 @@ export function missingContractFields(a) {
   return missing;
 }
 
+// Normalização do endereço (leads jsonb + adesões).
+// Aceita objeto, string JSON, string legada ou vazio; nunca devolve
+// undefined nem objetos aninhados (evita `[object Object]` na UI).
+// Compat: zip_code|zip|cep, aliases pt-BR e preservação de
+// country/pais, reference/referencia e demais chaves simples já existentes.
+export function normalizeAddress(value) {
+  let obj = {};
+  if (value == null) return emptyAddress();
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (!s) return emptyAddress();
+    try {
+      const parsed = JSON.parse(s);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        obj = parsed;
+      } else {
+        return { ...emptyAddress(), street: s };
+      }
+    } catch {
+      return { ...emptyAddress(), street: s };
+    }
+  } else if (typeof value === 'object' && !Array.isArray(value)) {
+    obj = value;
+  } else {
+    return emptyAddress();
+  }
+  const pick = (...keys) => {
+    for (const k of keys) {
+      const v = obj[k];
+      // Objetos aninhados nunca viram texto (causa do `[object Object]`).
+      if (v === undefined || v === null || typeof v === 'object') continue;
+      const s = String(v).trim();
+      if (s !== '' && s !== '[object Object]') return s;
+    }
+    return '';
+  };
+  const out = {
+    street: pick('street', 'logradouro', 'rua', 'address', 'endereco'),
+    number: pick('number', 'numero'),
+    complement: pick('complement', 'complemento'),
+    neighborhood: pick('neighborhood', 'bairro'),
+    city: pick('city', 'cidade'),
+    state: pick('state', 'uf', 'estado'),
+    zip_code: pick('zip_code', 'zip', 'cep'),
+    country: pick('country', 'pais', 'país'),
+    reference: pick('reference', 'referencia', 'referência', 'ponto_referencia'),
+  };
+  // Espelho legado: adesões antigas usam `zip`.
+  out.zip = out.zip_code;
+  // Preserva chaves simples extras já existentes (sem objetos aninhados).
+  for (const [k, v] of Object.entries(obj)) {
+    if (k in out || v === undefined || v === null || typeof v === 'object') continue;
+    const s = String(v).trim();
+    if (s !== '') out[k] = s;
+  }
+  return out;
+}
+
+function emptyAddress() {
+  return {
+    street: '', number: '', complement: '', neighborhood: '',
+    city: '', state: '', zip_code: '', zip: '', country: '', reference: '',
+  };
+}
+
+// Linha de endereço para exibição/contrato: só partes preenchidas,
+// sem `undefined` nem `[object Object]`.
+export function formatAddressLine(addr) {
+  const n = normalizeAddress(addr);
+  return [
+    n.street, n.number, n.complement, n.neighborhood,
+    n.city, n.state, n.zip_code, n.country, n.reference,
+  ].filter((x) => String(x || '').trim()).join(' • ');
+}
+
+// Merge sem perda: valores não-vazios de `override` vencem;
+// vazios preservam `base`. Nunca gera objetos aninhados.
+export function mergeAddress(base, override) {
+  const b = normalizeAddress(base);
+  const o = normalizeAddress(override);
+  const keys = ['street', 'number', 'complement', 'neighborhood', 'city', 'state', 'zip_code', 'country', 'reference'];
+  const out = { ...emptyAddress() };
+  for (const k of keys) out[k] = o[k] || b[k] || '';
+  out.zip = out.zip_code;
+  const extras = new Set([...Object.keys(b), ...Object.keys(o)]);
+  for (const k of extras) {
+    if (k in out) continue;
+    out[k] = o[k] || b[k] || '';
+  }
+  return out;
+}
+
 // Modelo do contrato (prévia + impressão + snapshot). Congela valores;
 // não busca nada externo.
 export function buildContractModel(adhesion, plan) {
   const a = adhesion || {};
   const p = a.provider && typeof a.provider === 'object' ? a.provider : {};
-  const addr = a.address && typeof a.address === 'object' ? a.address : {};
-  const addrLine = [addr.street, addr.number, addr.complement, addr.neighborhood, addr.city, addr.state, addr.zip]
-    .filter((x) => String(x || '').trim()).join(' • ');
+  const addrLine = formatAddressLine(a.address);
   return {
     contractor: {
       name: String(a.full_name || '').trim(),

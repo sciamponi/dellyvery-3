@@ -14,13 +14,17 @@ function toNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-// Ingrediente reutilizável: nome obrigatório; ordem >= 0; seção manual
-// restrita às 4 fixas ou vazio (nunca inferida pelo nome).
+// Ingrediente reutilizável: nome obrigatório; preço padrão >= 0; ordem >= 0;
+// seção manual restrita às 4 fixas ou vazio (nunca inferida pelo nome).
 export const INGREDIENT_CATEGORIES = ['lanches', 'acompanhamentos', 'bebidas', 'sobremesas'];
 
 export function validateIngredient(data) {
   const d = data || {};
   if (isBlank(d.name)) return 'Nome do ingrediente é obrigatório';
+  if (d.price !== undefined && d.price !== null && d.price !== '') {
+    const price = toNum(d.price);
+    if (price === null || price < 0) return 'Preço deve ser maior ou igual a zero';
+  }
   if (d.sort_order !== undefined && d.sort_order !== null && d.sort_order !== '') {
     const n = toNum(d.sort_order);
     if (n === null || !Number.isInteger(n) || n < 0) return 'Ordem deve ser um inteiro maior ou igual a zero';

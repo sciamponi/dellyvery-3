@@ -6,7 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Search, Plus, Eye } from 'lucide-react';
-import { groupComandasByTable, comandasTotal } from '@/lib/tableComandas';
+import { comandasTotal } from '@/lib/tableComandas';
+import { buildTableCards } from '@/lib/pdvWorkspace';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -16,22 +17,25 @@ const STATUS_LABEL = { ocupada: 'Ocupada', multipla: 'Com múltiplas comandas' }
 // Seletor visual de mesa (Dialog no desktop, Drawer no mobile).
 // Mesas derivadas dos pedidos ativos — sem entidade Mesa no banco.
 // Props: open, onClose, mesaOrders, onPickTable(table),
-// onPickComanda(orderId), onNewComanda(table), onMergeTable(table),
-// onViewComanda(orderId), initialTable.
+// onPickCard(card), onPickComanda(orderId), onNewComanda(table, tableId),
+// onMergeTable(table, tableId), onViewComanda(orderId), initialTable.
 export default function TableSelectModal({
-  open, onClose, mesaOrders, onPickTable, onPickComanda,
+  open, onClose, mesaOrders, tableCards, onPickTable, onPickCard, onPickComanda,
   onNewComanda, onMergeTable, onViewComanda, initialTable,
 }) {
   const isMobile = useIsMobile();
   const [search, setSearch] = useState('');
   const [manual, setManual] = useState(initialTable || '');
 
-  const tables = useMemo(() => groupComandasByTable(mesaOrders), [mesaOrders]);
+  const tables = useMemo(() => {
+    const cards = tableCards?.length ? tableCards : buildTableCards({ orders: mesaOrders });
+    return cards.filter((card) => card.name && card.name !== 'Sem mesa' && card.comandas.length > 0);
+  }, [tableCards, mesaOrders]);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return tables;
     return tables.filter(t =>
-      t.table.toLowerCase().includes(q)
+      (t.name || '').toLowerCase().includes(q)
       || t.comandas.some(c => (c.customerName || '').toLowerCase().includes(q)));
   }, [tables, search]);
 
@@ -57,14 +61,14 @@ export default function TableSelectModal({
 
       <div className="space-y-2">
         {filtered.map(t => (
-          <div key={t.table} data-table={t.table} className="rounded-2xl border border-border p-3 space-y-2">
+          <div key={t.key} data-table={t.name} className="rounded-2xl border border-border p-3 space-y-2">
             <button
               type="button"
-              onClick={() => onPickTable(t.table)}
+              onClick={() => (onPickCard ? onPickCard(t) : onPickTable(t.name))}
               className="flex w-full items-center gap-2 text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <span className="text-lg leading-none">{STATUS_DOT[t.status]}</span>
-              <span className="font-heading font-bold text-foreground">🍽️ Mesa {t.table}</span>
+              <span className="font-heading font-bold text-foreground">🍽️ Mesa {t.name}</span>
               <span className="text-xs text-muted-foreground">{STATUS_LABEL[t.status]}</span>
               <span className="ml-auto text-sm font-bold">{fmtCurrency(comandasTotal(t.comandas))}</span>
             </button>
@@ -93,11 +97,11 @@ export default function TableSelectModal({
             </div>
 
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" className="flex-1 min-h-9" onClick={() => onNewComanda(t.table)}>
+              <Button variant="outline" size="sm" className="flex-1 min-h-9" onClick={() => onNewComanda(t.name, t.tableId)}>
                 <Plus className="h-4 w-4" /> Nova comanda
               </Button>
               {t.comandas.length > 1 && (
-                <Button variant="outline" size="sm" className="flex-1 min-h-9" onClick={() => onMergeTable(t.table)}>
+                <Button variant="outline" size="sm" className="flex-1 min-h-9" onClick={() => onMergeTable(t.name, t.tableId)}>
                   Juntar comandas
                 </Button>
               )}

@@ -42,6 +42,8 @@ export async function listIngredients(client, companyId) {
     description: r.description || '', image_url: r.image_url || '',
     // category: seção manual (migration 20261030); ausente pré-migration => ''.
     category: typeof r.category === 'string' ? r.category : '',
+    // price: valor padrão da biblioteca; associações podem sobrescrever.
+    price: r.price == null || r.price === '' || !Number.isFinite(Number(r.price)) ? 0 : Number(r.price),
     active: r.active !== false,
     sort_order: r.sort_order ?? 0,
   }));
@@ -59,6 +61,7 @@ export async function createIngredient(client, companyId, data) {
   const cid = requireCompanyId(companyId);
   const err = validateIngredient(data || {});
   if (err) throw new Error(err);
+  const price = data.price === '' || data.price == null ? 0 : Number(data.price);
   const payload = {
     company_id: cid,
     name: String(data.name).trim(),
@@ -67,6 +70,9 @@ export async function createIngredient(client, companyId, data) {
     active: data.active !== false,
     sort_order: data.sort_order === '' || data.sort_order == null ? 0 : Number(data.sort_order),
   };
+  // Omitir zero preserva o default do banco e permite criar ingredientes
+  // gratuitos mesmo antes de aplicar a migration de preço.
+  if (price !== 0) payload.price = price;
   const category = String(data.category || '').trim().toLowerCase();
   if (category) payload.category = category;
   try {
@@ -87,11 +93,12 @@ export async function updateIngredient(client, id, data) {
   const c = mustBeConfigured(client);
   if (!id) throw new Error('Ingrediente não identificado');
   const err = validateIngredient({ name: 'x', ...(data || {}) });
-  if (err && data?.name !== undefined) throw new Error(err);
+  if (err) throw new Error(err);
   const patch = {};
   if (data.name !== undefined) patch.name = String(data.name).trim();
   if (data.description !== undefined) patch.description = data.description ? String(data.description).trim() : null;
   if (data.image_url !== undefined) patch.image_url = data.image_url ? String(data.image_url).trim() : null;
+  if (data.price !== undefined) patch.price = data.price === '' || data.price == null ? 0 : Number(data.price);
   if (data.active !== undefined) patch.active = !!data.active;
   if (data.sort_order !== undefined) patch.sort_order = Number(data.sort_order) || 0;
   if (data.category !== undefined) patch.category = String(data.category || '').trim().toLowerCase();
@@ -277,13 +284,18 @@ export async function getProductConfig(client, companyId, productId) {
   // Herança: passos da categoria (opt-in por produto) + passos próprios.
   let categoryId = null;
   let useCategory = true;
-  try {
-    const { data: prod } = await c.from('products')
-      .select('category_id,use_category_steps').eq('id', productId).maybeSingle();
+  const { data: prod, error: prodErr } = await c.from('products')
+    .select('category_id,use_category_steps').eq('id', productId).maybeSingle();
+  if (prodErr) {
+    // Banco antigo sem use_category_steps: tenta apenas a categoria.
+    if (!isMissingColumn(prodErr)) rpcError(prodErr);
+    const { data: legacyProd, error: legacyErr } = await c.from('products')
+      .select('category_id').eq('id', productId).maybeSingle();
+    if (legacyErr) rpcError(legacyErr);
+    categoryId = legacyProd?.category_id || null;
+  } else {
     categoryId = prod?.category_id || null;
     useCategory = prod?.use_category_steps !== false;
-  } catch {
-    // Sem leitura do produto: segue só com passos próprios.
   }
   const fetchSteps = (q) => q.order('position', { ascending: true });
   const { data: ownSteps, error: ownErr } = await fetchSteps(c.from('product_config_steps')

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/api/supabaseClient';
 import { createLead, LEAD_SERVICES, LEAD_BILLING_PERIODS, leadBillingLabel, resolvePlanInterest } from '@/api/leads';
+import { resolveResellerInvite, claimResellerInvite } from '@/api/resellers';
 import { buildLeadInboundUrl } from '@/lib/whatsapp';
 import {
   onlyDigits, maskCNPJ, maskCPF, maskCEP, maskPhone,
@@ -51,14 +52,50 @@ export default function Cadastro() {
   const [termsOpen, setTermsOpen] = useState(false);
   const sendingRef = useRef(false);
 
+  // Convite de revenda (?convite=TOKEN): pré-cadastro de parceiro.
+  // Sem o token, o fluxo público original funciona exatamente como antes.
+  const inviteToken = (searchParams.get('convite') || '').trim();
+  const [invite, setInvite] = useState(null);
+  const [inviteLoading, setInviteLoading] = useState(!!inviteToken);
+  const [inviteError, setInviteError] = useState('');
+
   // Plano vindo dos CTAs de /planos (?plano=): atribuição oculta — sem campo
   // visível no formulário, mas preservado no cadastro, WhatsApp e Master.
   // Não sobrescreve nada (estado só recebe o preset uma vez).
+  // Ignorado no modo convite (produto/modalidade vêm do convite).
   useEffect(() => {
+    if (inviteToken) return;
     const preset = resolvePlanInterest(searchParams.get('plano'));
     if (preset) setForm((prev) => (prev.plan_interest ? prev : { ...prev, plan_interest: preset }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Resolve o convite e pré-preenche nome + WhatsApp (travados) e produto.
+  useEffect(() => {
+    if (!inviteToken) return;
+    let active = true;
+    (async () => {
+      try {
+        const data = await resolveResellerInvite(supabase, inviteToken);
+        if (!active) return;
+        setInvite(data);
+        const digits = onlyDigits(data.phone);
+        const local = digits.startsWith('55') ? digits.slice(2) : digits;
+        setForm((prev) => ({
+          ...prev,
+          full_name: data.name || prev.full_name,
+          phone: maskPhone(local) || prev.phone,
+          service: 'dellyvery',
+        }));
+      } catch (err) {
+        if (active) setInviteError(err?.message || 'Convite inválido.');
+      } finally {
+        if (active) setInviteLoading(false);
+      }
+    })();
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inviteToken]);
 
   const update = (field, value) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -109,6 +146,24 @@ export default function Cadastro() {
     sendingRef.current = true;
     setSending(true);
     try {
+      // Modo convite: inscrição de parceiro (idempotente no servidor —
+      // reabertura do link recupera o registro em vez de duplicar).
+      // Telefone/produto/modalidade validados e travados pelo convite.
+      if (inviteToken) {
+        if (inviteError || !invite) throw new Error(inviteError || 'Convite ainda não validado.');
+        await claimResellerInvite(supabase, inviteToken, {
+          full_name: form.full_name.trim(),
+          phone: invite.phone,
+          email: form.email.trim(),
+          document: form.personType === 'pf' ? onlyDigits(form.cpf) : onlyDigits(form.cnpj),
+          city: form.city.trim(),
+          state: form.state.trim(),
+          notes: form.notes.trim(),
+        });
+        setDone(true);
+        window.scrollTo({ top: 0 });
+        return;
+      }
       await createLead(supabase, {
         service: form.service,
         service_other: form.service === 'outro' ? form.service_other.trim() : '',
@@ -146,6 +201,19 @@ export default function Cadastro() {
   const serviceLabel = LEAD_SERVICES.find(s => s.id === form.service)?.label || '—';
 
   if (done) {
+    if (inviteToken) {
+      // Inscrição de parceiro: aguarda aprovação (sem contato comercial).
+      return (
+        <div className="min-h-screen bg-muted/40 flex items-center justify-center px-4 py-10">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-8 text-center">
+            <CheckCircle className="h-12 w-12 text-green-600 mx-auto mb-4" />
+            <h1 className="font-heading text-xl font-bold text-foreground">Inscrição enviada!</h1>
+            <p className="text-sm text-muted-foreground mt-2">Seu cadastro como parceiro Dellyvery será analisado e você receberá a confirmação da aprovação.</p>
+            <Button asChild variant="outline" className="mt-6 w-full"><Link to="/">Voltar ao início</Link></Button>
+          </div>
+        </div>
+      );
+    }
     // Link de WhatsApp é opcional: falha aqui nunca derruba a confirmação.
     let waUrl = '';
     try {
@@ -183,6 +251,28 @@ export default function Cadastro() {
           <h1 className="font-heading text-2xl font-bold text-foreground mt-1">Vamos iniciar nossa parceria?</h1>
           <p className="text-sm text-muted-foreground mt-1">Preencha seus dados, escolha o serviço desejado e envie suas informações para iniciarmos o processo de contratação.</p>
         </div>
+
+        {inviteToken && (
+          <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4 mb-4 text-sm">
+            {inviteLoading ? (
+              <p className="text-muted-foreground">Validando seu convite...</p>
+            ) : inviteError ? (
+              <div>
+                <p className="font-medium text-destructive">Não foi possível validar o convite: {inviteError}</p>
+                <p className="text-muted-foreground mt-1">
+                  Solicite um novo convite ao administrador ou <Link to="/cadastro" className="text-primary hover:underline">continue sem convite</Link>.
+                </p>
+              </div>
+            ) : (
+              <div>
+                <p className="font-medium text-foreground">Convite de parceiro Dellyvery • Modalidade Parceiro</p>
+                <p className="text-muted-foreground mt-1">
+                  {invite?.name && <>Convidado: {invite.name} • </>}WhatsApp do convite já preenchido abaixo. Complete os demais dados.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center gap-1 mb-6">
           {STEPS.map(s => (
@@ -248,7 +338,7 @@ export default function Cadastro() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5"><Label>CPF {form.personType === 'pf' ? '*' : '(opcional)'}</Label><Input value={form.cpf} onChange={e => update('cpf', maskCPF(e.target.value))} placeholder="000.000.000-00" inputMode="numeric" /><FieldError message={errors.cpf} /></div>
                 <div className="space-y-1.5"><Label>Cargo ou função</Label><Input value={form.role} onChange={e => update('role', e.target.value)} /></div>
-                <div className="space-y-1.5"><Label>Telefone/WhatsApp *</Label><Input value={form.phone} onChange={e => update('phone', maskPhone(e.target.value))} placeholder="(11) 99999-9999" inputMode="tel" /><FieldError message={errors.phone} /></div>
+                <div className="space-y-1.5"><Label>Telefone/WhatsApp *</Label><Input value={form.phone} onChange={e => update('phone', maskPhone(e.target.value))} placeholder="(11) 99999-9999" inputMode="tel" readOnly={!!inviteToken} /><FieldError message={errors.phone} />{inviteToken && <p className="text-xs text-muted-foreground">WhatsApp do convite (para corrigir, fale com o administrador).</p>}</div>
                 <div className="space-y-1.5"><Label>E-mail *</Label><Input type="email" value={form.email} onChange={e => update('email', e.target.value)} placeholder="voce@email.com" /><FieldError message={errors.email} /></div>
               </div>
             </div>
@@ -257,8 +347,9 @@ export default function Cadastro() {
           {step === 3 && (
             <div className="space-y-4">
               <h2 className="font-heading font-semibold text-foreground">Qual serviço deseja contratar? *</h2>
+              {inviteToken && <p className="text-xs text-muted-foreground">Convite de parceiro: produto Dellyvery pré-selecionado.</p>}
               <div className="space-y-1.5">
-                <Select value={form.service} onValueChange={v => update('service', v)}>
+                <Select value={form.service} onValueChange={v => update('service', v)} disabled={!!inviteToken}>
                   <SelectTrigger><SelectValue placeholder="Selecione o serviço" /></SelectTrigger>
                   <SelectContent>
                     {LEAD_SERVICES.map(s => (

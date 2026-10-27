@@ -37,6 +37,8 @@ import MasterPlanos from './pages/MasterPlanos';
 import MasterInteressados from './pages/MasterInteressados';
 import MasterContratos from './pages/MasterContratos';
 import MasterDashboard from './pages/MasterDashboard';
+import MasterEmpresas from './pages/MasterEmpresas';
+import MasterRevenda from './pages/MasterRevenda';
 import Cadastro from './pages/Cadastro';
 import Privacidade from './pages/Privacidade';
 
@@ -90,9 +92,11 @@ function App() {
             <Route element={<MasterRoute />}>
               <Route element={<AppLayout />}>
                 <Route path="/master" element={<MasterDashboard />} />
+                <Route path="/master/empresas" element={<MasterEmpresas />} />
                 <Route path="/master/planos" element={<MasterPlanos />} />
                 <Route path="/master/interessados" element={<MasterInteressados />} />
                 <Route path="/master/contratos" element={<MasterContratos />} />
+                <Route path="/master/revenda" element={<MasterRevenda />} />
               </Route>
             </Route>
 

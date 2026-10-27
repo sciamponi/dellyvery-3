@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/api/supabaseClient';
 import { useCompany } from '@/hooks/useCompany';
 import { listProducts, listCategories } from '@/api/catalog';
@@ -13,20 +13,28 @@ import { buildDriverDeliveryUrl } from '@/lib/driverMessage';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Image } from '@/components/ui/image';
 import { useToast } from '@/components/ui/use-toast';
 import { calcPdvTotals } from '@/lib/orderDay';
 import { validatePdvDraft } from '@/lib/pdvValidation';
 import { groupComandasByTable, mergeComandaItems, toPdvDraftItem, normalizeTable } from '@/lib/tableComandas';
 import { buildWhatsAppUrl } from '@/lib/menuShare';
 import TableSelectModal, { MergeConfirmModal, TableMergePicker } from '@/components/pdv/TableSelectModal';
+import PdvTableView from '@/components/pdv/PdvTableView';
+import PdvProductCatalog from '@/components/pdv/PdvProductCatalog';
+import PdvOrderModal from '@/components/pdv/PdvOrderModal';
 import OrderModal from '@/components/orders/OrderModal';
 import CancelOrderDialog from '@/components/orders/CancelOrderDialog';
 import ProductModal from '@/components/menu/ProductModal';
 import { CartProvider } from '@/lib/CartContext';
 import { getProductConfig, listDependenciesWithNames } from '@/api/configurator';
 import { checkCartDependencies, buildDepModesFromProducts } from '@/lib/productDependencies';
-import { Plus, Minus, Trash2, Search, Package, CheckCircle, Bike, Store, Table2, User, Printer, MessageCircle, Tag } from 'lucide-react';
+import { mergeDraftLine } from '@/lib/pdvAssembly';
+import {
+  buildTableCards, comandasForTable, findTableCard, getPdvView,
+  hasLocalDraftItems, localDraftItemsOnly, pickLatestComanda,
+  setPdvView as persistPdvView,
+} from '@/lib/pdvWorkspace';
+import { Plus, Minus, Trash2, Search, Package, CheckCircle, Bike, Store, Table2, User, Printer, MessageCircle, Tag, Lock } from 'lucide-react';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -50,6 +58,7 @@ function Spinner() {
 export default function Pdv() {
   const { loading, company } = useCompany();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -63,10 +72,10 @@ export default function Pdv() {
   const [depRules, setDepRules] = useState([]);
   // Montagem V2 por linha (ProductModal) + cache de config por produto.
   const [configuring, setConfiguring] = useState(null);
+  const [configuringEditId, setConfiguringEditId] = useState(null);
   const [configCache, setConfigCache] = useState({});
-  // Balcão (retirada) é o padrão: finalizar sem escolher tipo nunca
-  // deve cobrar mesa.
-  const [orderType, setOrderType] = useState('retirada');
+  // Mesa é o padrão do PDV de garçom; retirada/entrega continuam disponíveis.
+  const [orderType, setOrderType] = useState('mesa');
   const [tableNumber, setTableNumber] = useState('');
   // Mesa cadastrada (ID real) + busca. Manual continua possível.
   const [registeredTables, setRegisteredTables] = useState([]);
@@ -93,12 +102,24 @@ export default function Pdv() {
 
   // Comandas de mesa (derivadas dos pedidos ativos — sem entidade Mesa).
   const [mesaOrders, setMesaOrders] = useState([]);
+  const [mesaLoading, setMesaLoading] = useState(false);
+  const [mesaError, setMesaError] = useState('');
+  const [tablesLoading, setTablesLoading] = useState(true);
+  const [tablesError, setTablesError] = useState('');
   const [tableOpen, setTableOpen] = useState(false);
+  const [tablePickerName, setTablePickerName] = useState('');
+  const [tablePickerId, setTablePickerId] = useState(null);
+  const [orderModalOpen, setOrderModalOpen] = useState(false);
+  const queryMesaRef = useRef('');
   const [selectedComandaId, setSelectedComandaId] = useState(null);
   const [mergeTable, setMergeTable] = useState(null);
+  const [mergeCard, setMergeCard] = useState(null);
   const [mergeIds, setMergeIds] = useState([]);
   const [mergeConfirm, setMergeConfirm] = useState(null);
   const [merging, setMerging] = useState(false);
+  // Visual Produtos/Mesas. A montagem abre pelo card do produto.
+  const [pdvView, setPdvViewState] = useState(() => getPdvView());
+  const [tableCardSearch, setTableCardSearch] = useState('');
   // Detalhe da comanda (reuso do OrderModal) + cancelamento.
   const [detailOrder, setDetailOrder] = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null);
@@ -117,7 +138,10 @@ export default function Pdv() {
         setCategories(cats);
         setCustomers(custs);
         setZones(zn);
-        listTables(supabase, company.id, { onlyActive: true }).then(setRegisteredTables).catch(() => {});
+        listTables(supabase, company.id, { onlyActive: true })
+          .then((list) => { setRegisteredTables(list || []); setTablesError(''); })
+          .catch((err) => setTablesError(err?.message || 'Falha ao carregar mesas.'))
+          .finally(() => setTablesLoading(false));
         listDependenciesWithNames(supabase, company.id).then(setDepRules).catch(() => {});
         listDrivers(supabase, company.id).then((list) => {
           setDrivers((list || []).filter((d) => d.status === 'ativo'));
@@ -132,26 +156,80 @@ export default function Pdv() {
   }, [company?.id]);
 
   const refreshMesaOrders = async () => {
-    if (!company) return;
+    if (!company) return [];
+    setMesaLoading(true);
     try {
       const all = await listOrdersWithItems(supabase, company.id, 200);
-      setMesaOrders(all.filter(o => o.order_type === 'mesa'));
-    } catch {
-      // comandas são auxiliares: falha silenciosa, PDV continua funcionando
+      const mesa = all.filter(o => o.order_type === 'mesa');
+      setMesaOrders(mesa);
+      setMesaError('');
+      return mesa;
+    } catch (err) {
+      // Mantém as comandas já carregadas, mas o erro fica visível e recuperável.
+      setMesaError(err?.message || 'Falha ao carregar comandas.');
+      return null;
+    } finally {
+      setMesaLoading(false);
     }
   };
 
+  const retryMesas = async () => {
+    if (!company) return;
+    setTablesLoading(true);
+    setTablesError('');
+    try {
+      const list = await listTables(supabase, company.id, { onlyActive: true });
+      setRegisteredTables(list || []);
+    } catch (err) {
+      setTablesError(err?.message || 'Falha ao carregar mesas.');
+    } finally {
+      setTablesLoading(false);
+    }
+    await refreshMesaOrders();
+  };
+
   useEffect(() => {
-    if (orderType === 'mesa' && company) refreshMesaOrders();
-  }, [orderType, company?.id]);
+    if ((orderType === 'mesa' || pdvView === 'mesas') && company) refreshMesaOrders();
+  }, [orderType, pdvView, company?.id]);
+
+  // Atalho de Configurações > PDV: /pdv?mesa=12 abre a mesa/comanda pronta.
+  useEffect(() => {
+    const mesaParam = searchParams.get('mesa');
+    if (!mesaParam || !company || tablesLoading) return;
+    if (queryMesaRef.current === mesaParam) return;
+    queryMesaRef.current = mesaParam;
+    let alive = true;
+
+    void (async () => {
+      changePdvView('mesas');
+      const orders = await refreshMesaOrders();
+      if (!alive) return;
+      const wanted = normalizeTable(mesaParam) || String(mesaParam).trim();
+      const cards = buildTableCards({ tables: registeredTables, orders: orders || [], companyId: company.id });
+      const reg = registeredTables.find((r) => normalizeTable(r.name) === wanted);
+      const card = findTableCard(cards, { tableId: reg?.id, tableName: wanted });
+      if (card) {
+        openTableCard(card, orders || []);
+      } else if (canReplaceDraft()) {
+        setOrderType('mesa');
+        setSelectedTableId(reg?.id || null);
+        setTableNumber(wanted);
+        setOrderModalOpen(true);
+      }
+      const next = new URLSearchParams(searchParams);
+      next.delete('mesa');
+      setSearchParams(next, { replace: true });
+      queryMesaRef.current = '';
+    })();
+
+    return () => { alive = false; };
+  }, [searchParams, company?.id, registeredTables, tablesLoading]);
 
   const tables = useMemo(() => groupComandasByTable(mesaOrders), [mesaOrders]);
-  // Ocupação por nome normalizado (comandas ativas × mesas cadastradas).
-  const occupiedNames = useMemo(() => {
-    const set = new Set();
-    for (const g of tables) set.add(normalizeTable(g.table));
-    return set;
-  }, [tables]);
+  const tableCards = useMemo(
+    () => buildTableCards({ tables: registeredTables, orders: mesaOrders, companyId: company?.id }),
+    [registeredTables, mesaOrders, company?.id],
+  );
   const filteredTables = useMemo(() => {
     const q = tableSearch.trim().toLowerCase();
     if (!q) return registeredTables;
@@ -160,32 +238,27 @@ export default function Pdv() {
     );
   }, [registeredTables, tableSearch]);
 
-  const pickRegisteredTable = (t) => {
-    setOrderType('mesa');
-    setSelectedTableId(t.id);
-    setTableNumber(t.name || '');
-    const group = tables.find((x) => normalizeTable(x.table) === normalizeTable(t.name));
-    if (group && group.comandas.length === 1) {
-      const full = mesaOrders.find((o) => o.id === group.comandas[0].id);
-      if (full) loadComanda(full);
-    }
-    // 0 ou N comandas: segue com a mesa vinculada (N usa o seletor de comandas).
-  };
-  const currentComandas = useMemo(() => {
-    const t = normalizeTable(tableNumber);
-    if (!t) return [];
-    return tables.find(x => x.table === t)?.comandas || [];
-  }, [tables, tableNumber]);
+  const selectedCard = useMemo(
+    () => findTableCard(tableCards, { tableId: selectedTableId, tableName: tableNumber }),
+    [tableCards, selectedTableId, tableNumber],
+  );
+  const currentComandas = useMemo(
+    () => comandasForTable(mesaOrders, selectedTableId, tableNumber, company?.id),
+    [mesaOrders, selectedTableId, tableNumber, company?.id],
+  );
   const selectedComanda = useMemo(
     () => mesaOrders.find(o => o.id === selectedComandaId) || null,
     [mesaOrders, selectedComandaId],
   );
-
-  const filtered = useMemo(() => products.filter(p => {
-    const ms = !search || p.name?.toLowerCase().includes(search.toLowerCase());
-    const mc = filterCat === 'all' || p.category_id === filterCat;
-    return ms && mc && p.available !== false;
-  }), [products, search, filterCat]);
+  const modalTableComandas = useMemo(() => {
+    if (currentComandas.length > 0) return currentComandas;
+    return (selectedCard?.comandas || []).map((c) => ({
+      id: c.id,
+      order_number: c.order_number,
+      customer_name: c.customerName,
+      status: c.status,
+    }));
+  }, [currentComandas, selectedCard]);
 
   const matchedCustomers = useMemo(() => {
     if (!customerSearch.trim()) return [];
@@ -202,12 +275,17 @@ export default function Pdv() {
 
   const addItem = (product) => {
     // Busca a config (com cache) para decidir: com etapa obrigatória abre
-    // o Montar; senão adiciona a linha avulsa direto.
+    // o Montar; sem config obrigatória adiciona a linha avulsa. Falha de
+    // leitura NUNCA vira item avulso silenciosamente.
     void (async () => {
       try {
         if (await ensureRequiredConfig(product, true)) addPlainItem(product);
-      } catch {
-        addPlainItem(product);
+      } catch (err) {
+        toast({
+          title: 'Erro ao carregar montagem',
+          description: `${err?.message || 'Tente novamente.'} O item não foi adicionado.`,
+          variant: 'destructive',
+        });
       }
     })();
   };
@@ -215,12 +293,8 @@ export default function Pdv() {
   const ensureRequiredConfig = async (product, openWhenRequired) => {
     let cfg = configCache[product.id];
     if (cfg === undefined && company) {
-      try {
-        cfg = await getProductConfig(supabase, company.id, product.id);
-        setConfigCache((prev) => ({ ...prev, [product.id]: cfg }));
-      } catch {
-        cfg = null;
-      }
+      cfg = await getProductConfig(supabase, company.id, product.id);
+      setConfigCache((prev) => ({ ...prev, [product.id]: cfg }));
     }
     const steps = cfg?.steps || [];
     const needsConfig = steps.some((s) => s.required || (Number(s.min_select) || 0) > 0);
@@ -236,7 +310,7 @@ export default function Pdv() {
     const unit = product.promotional_price != null ? product.promotional_price : product.price;
     setItems(prev => {
       // Só mescla em linha avulsa (sem config); configuradas têm identidade própria.
-      const i = prev.findIndex(x => x.product_id === product.id && !x.config);
+      const i = prev.findIndex(x => x.product_id === product.id && !x.config && !x.persisted);
       if (i >= 0) {
         const next = [...prev];
         next[i] = { ...next[i], quantity: next[i].quantity + 1 };
@@ -251,33 +325,32 @@ export default function Pdv() {
   };
 
   // Linha configurada (V2): mescla por produto+complementos+notas+config.
-  const addConfiguredLine = (product, quantity, complements, notes, config) => {
+  const addConfiguredLine = (product, quantity, complements, notes, config, options = {}) => {
     const unit = product.promotional_price != null ? product.promotional_price : product.price;
-    const key = (c) => JSON.stringify(c || null);
-    setItems(prev => {
-      const i = prev.findIndex(x =>
-        x.product_id === product.id &&
-        JSON.stringify(x.complements || []) === JSON.stringify(complements || []) &&
-        (x.notes || '') === (notes || '') &&
-        key(x.config) === key(config));
-      if (i >= 0) {
-        const next = [...prev];
-        next[i] = { ...next[i], quantity: next[i].quantity + quantity };
-        return next;
-      }
-      return [...prev, {
-        id: `${product.id}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        product_id: product.id, name: product.name, image_url: product.image_url,
-        unit_price: unit, quantity, complements: complements || [], notes: notes || '',
-        ...(config ? { config } : {}),
-      }];
+    const line = {
+      id: `${product.id}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      product_id: product.id, name: product.name, image_url: product.image_url,
+      unit_price: unit, quantity, complements: complements || [], notes: notes || '',
+      ...(config ? { config } : {}),
+      ...(options.pendingUpdate ? { pendingUpdate: true } : {}),
+    };
+    setItems((prev) => {
+      const base = configuringEditId ? prev.filter((x) => x.id !== configuringEditId) : prev;
+      if (options.pendingUpdate) return [...base, line];
+      return mergeDraftLine(base, line);
     });
+    setConfiguringEditId(null);
   };
 
   // Abre a montagem V2 do produto (config sob demanda, com cache).
   const openConfigure = async (lineOrProduct) => {
     const productId = lineOrProduct.product_id || lineOrProduct.id;
-    const base = products.find((p) => p.id === productId) || lineOrProduct;
+    const catalogProduct = products.find((p) => p.id === productId);
+    const base = catalogProduct || {
+      ...lineOrProduct,
+      id: productId,
+      price: lineOrProduct.unit_price ?? lineOrProduct.price ?? 0,
+    };
     if (!company) return;
     try {
       let cfg = configCache[productId];
@@ -285,12 +358,11 @@ export default function Pdv() {
         cfg = await getProductConfig(supabase, company.id, productId);
         setConfigCache((prev) => ({ ...prev, [productId]: cfg }));
       }
-      if (!cfg || (cfg.steps || []).length === 0) {
-        toast({ title: 'Sem montagem', description: 'Este produto não tem grupos de complementos.' });
-        return;
-      }
+      const editingLine = lineOrProduct.product_id ? lineOrProduct : null;
+      setConfiguringEditId(editingLine?.id || null);
       setConfiguring({
         ...base,
+        initialItem: editingLine,
         config: {
           steps: (cfg.steps || []).map((s) => ({
             ...s,
@@ -305,14 +377,14 @@ export default function Pdv() {
 
   const changeQty = (lineId, delta) => {
     setItems(prev => prev
-      .map(x => x.id === lineId ? { ...x, quantity: x.quantity + delta } : x)
+      .map(x => (x.id === lineId && !x.persisted ? { ...x, quantity: x.quantity + delta } : x))
       .filter(x => x.quantity > 0));
   };
 
-  const removeItem = (lineId) => setItems(prev => prev.filter(x => x.id !== lineId));
+  const removeItem = (lineId) => setItems(prev => prev.filter(x => x.id !== lineId || x.persisted));
 
   const setItemNotes = (lineId, notes) => {
-    setItems(prev => prev.map(x => x.id === lineId ? { ...x, notes } : x));
+    setItems(prev => prev.map(x => (x.id === lineId && !x.persisted ? { ...x, notes } : x)));
   };
 
   const zone = zones.find(z => z.id === deliveryZoneId);
@@ -332,25 +404,102 @@ export default function Pdv() {
     setNotifyState('');
     setNoteOpenId(null);
     setSelectedComandaId(null);
-    setSelectedTableId(null);
     if (!keepTable) {
+      setSelectedTableId(null);
       setTableNumber('');
       setAddress('');
       setDeliveryZoneId('');
     }
   };
 
-  // Troca de modalidade nunca mistura comanda de mesa com outro tipo:
-  // o rascunho vira pedido novo (itens preservados como linhas avulsas).
+  // Troca de modalidade nunca mistura comanda de mesa com outro tipo. Ao sair
+  // de uma comanda, a c�pia local dos itens j� enviados � descartada; apenas
+  // linhas novas (ainda n�o persistidas) seguem para o novo pedido.
   const selectOrderType = (t) => {
     if (t === orderType) return;
+    if (t !== 'mesa') {
+      if (selectedComandaId) {
+        if (hasLocalDraftItems(items)
+          && !window.confirm('Os itens já enviados sairão deste rascunho. Os itens novos ainda não enviados serão mantidos. Continuar?')) return;
+        setItems((prev) => localDraftItemsOnly(prev));
+        setSelectedComandaId(null);
+      }
+      setSelectedTableId(null);
+      setTableNumber('');
+    }
     setOrderType(t);
-    setSelectedComandaId(null);
-    setSelectedTableId(null);
+    if (t !== 'mesa') setOrderModalOpen(false);
+  };
+
+  const changePdvView = (view) => {
+    if (view !== 'produtos' && view !== 'mesas') return;
+    setPdvViewState(view);
+    persistPdvView(view);
+    if (view === 'mesas') setTableCardSearch('');
+  };
+
+  // Trocar de mesa/comanda só descarta rascunho não enviado com confirmação.
+  const canReplaceDraft = () => {
+    if (!hasLocalDraftItems(items)) return true;
+    return window.confirm('H� itens n�o enviados. Descartar este rascunho e continuar?');
+  };
+
+  const startNewComanda = (card, { notify = true } = {}) => {
+    if (!card) return;
+    if (!canReplaceDraft(null)) return;
+    resetDraft(false);
+    setOrderType('mesa');
+    setSelectedTableId(card.tableId || null);
+    setTableNumber(card.name || '');
+    setTableOpen(false);
+    setTablePickerName('');
+    setTablePickerId(null);
+    setMergeTable(null);
+    setMergeCard(null);
+    setMergeIds([]);
+    setOrderModalOpen(true);
+    if (notify) toast({ title: card.name ? `Nova comanda na Mesa ${card.name}` : 'Nova comanda' });
+  };
+
+  const openTableCard = (card, sourceOrders = mesaOrders) => {
+    if (!card) return;
+    if (card.comandas.length === 0) {
+      startNewComanda(card, { notify: false });
+      return;
+    }
+    // Abre o card da mesa direto. Com v�rias comandas, a mais recente por
+    // created_date vira a sele��o inicial; as demais ficam no pr�prio card.
+    const tableComandas = comandasForTable(
+      sourceOrders,
+      card.tableId,
+      card.name,
+      company?.id,
+    );
+    const cardOrders = sourceOrders.filter((o) => card.comandas.some((c) => c.id === o.id));
+    const latest = pickLatestComanda(tableComandas) || pickLatestComanda(cardOrders);
+    if (!latest) return;
+    if (!canReplaceDraft()) return;
+    loadComanda(latest, { openOrder: true });
+  };
+
+  const openMergeForCard = (card) => {
+    if (!card) return;
+    setOrderModalOpen(false);
+    setMergeTable(card.name || '');
+    setMergeCard(card);
+    setMergeIds([]);
+    setTableOpen(false);
+    setTablePickerName('');
+    setTablePickerId(null);
+  };
+
+  const pickRegisteredTable = (t) => {
+    const card = findTableCard(tableCards, { tableId: t.id, tableName: t.name });
+    if (card) openTableCard(card);
   };
 
   // Mesa → comanda ativa → cliente (nome/telefone automáticos).
-  const loadComanda = (order) => {
+  const loadComanda = (order, { openOrder = false } = {}) => {
     if (!order) return;
     setOrderType('mesa');
     setSelectedTableId(order.table_id || null);
@@ -359,41 +508,51 @@ export default function Pdv() {
     setCustomerSearch('');
     setPaymentMethod(order.payment_method || '');
     setDiscount(String(order.discount || ''));
-    setItems((Array.isArray(order.items) ? order.items : []).map(toPdvDraftItem));
+    setItems((Array.isArray(order.items) ? order.items : [])
+      .map((item) => ({ ...toPdvDraftItem(item), persisted: true })));
+    setNoteOpenId(null);
     setSelectedComandaId(order.id);
     setTableOpen(false);
+    setTablePickerName('');
+    setTablePickerId(null);
     setMergeTable(null);
+    setMergeCard(null);
     setMergeIds([]);
+    if (openOrder) {
+      setOrderModalOpen(true);
+    }
   };
 
   const pickTable = (table) => {
     const t = normalizeTable(table);
-    setOrderType('mesa');
-    const reg = registeredTables.find((r) => normalizeTable(r.name) === t);
-    setSelectedTableId(reg ? reg.id : null);
-    setTableNumber(t);
-    const group = tables.find(x => x.table === t);
-    if (group && group.comandas.length === 1) {
-      const full = mesaOrders.find(o => o.id === group.comandas[0].id);
-      if (full) loadComanda(full);
-      else setTableOpen(false);
-    } else if (!group) {
-      setTableOpen(false);
+    const card = findTableCard(tableCards, { tableName: t });
+    if (card) {
+      openTableCard(card);
+      return;
     }
-    // várias comandas: mantém o modal aberto para escolha
-  };
-
-  const newComanda = (table) => {
-    const t = normalizeTable(table) || normalizeTable(tableNumber);
-    resetDraft(true);
+    if (!canReplaceDraft()) return;
     setOrderType('mesa');
     const reg = registeredTables.find((r) => normalizeTable(r.name) === t);
     setSelectedTableId(reg ? reg.id : null);
     setTableNumber(t);
     setTableOpen(false);
+    setTablePickerName('');
+    setTablePickerId(null);
     setMergeTable(null);
+    setMergeCard(null);
     setMergeIds([]);
-    toast({ title: t ? `Nova comanda na Mesa ${t}` : 'Nova comanda' });
+    setOrderModalOpen(true);
+  };
+
+  const newComanda = (table, tableId = null) => {
+    const t = normalizeTable(table) || normalizeTable(tableNumber);
+    const reg = registeredTables.find((r) => normalizeTable(r.name) === t);
+    const card = findTableCard(tableCards, { tableId: tableId || reg?.id, tableName: t }) || {
+      tableId: tableId || reg?.id || null,
+      name: t,
+      comandas: [],
+    };
+    startNewComanda(card);
   };
 
   const openDetail = async (orderId) => {
@@ -406,6 +565,24 @@ export default function Pdv() {
     } catch (err) {
       toast({ title: 'Erro ao abrir comanda', description: err?.message, variant: 'destructive' });
     }
+  };
+
+  const selectTableComanda = (orderId) => {
+    if (orderId === selectedComandaId) return;
+    const full = currentComandas.find((o) => o.id === orderId)
+      || mesaOrders.find((o) => o.id === orderId);
+    if (!full) return;
+    if (!canReplaceDraft()) return;
+    loadComanda(full, { openOrder: true });
+  };
+
+  const newComandaFromCard = () => {
+    if (!tableLabel) return;
+    newComanda(tableLabel, selectedTableId);
+  };
+
+  const mergeFromCard = () => {
+    if (selectedCard) openMergeForCard(selectedCard);
   };
 
   const requestPayment = (order) => {
@@ -448,8 +625,9 @@ export default function Pdv() {
       }
       setMergeConfirm(null);
       setMergeTable(null);
+      setMergeCard(null);
       setMergeIds([]);
-      setTableOpen(true);
+      setTableOpen(false);
       if (selectedComandaId && sources.some(s => s.id === selectedComandaId)) {
         const fresh = await getOrderDetail(supabase, company.id, target.id).catch(() => null);
         if (fresh) loadComanda(fresh);
@@ -463,27 +641,32 @@ export default function Pdv() {
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (overrideItems = null) => {
     // Guarda anti-duplo no topo: antes das validações, para toques
     // repetidos nunca gerarem nem toast duplicado nem pedido duplo.
-    if (submitRef.current) return;
+    if (submitRef.current) return { ok: false, error: 'Envio em andamento. Aguarde.' };
+    const submitItems = Array.isArray(overrideItems) ? overrideItems : items;
     // Validação única por tentativa (validatePdvDraft retorna o 1º erro).
     const invalid = validatePdvDraft({
-      items, orderType, tableNumber, customer, address, paymentMethod, changeFor,
+      items: submitItems, orderType, tableNumber, customer, address, paymentMethod, changeFor,
     });
     if (invalid) {
       toast({ title: invalid.title, description: invalid.description, variant: 'destructive' });
-      return;
+      return { ok: false, error: invalid.description || invalid.title };
     }
     // Dependências entre produtos (regra da loja; servidor revalida).
-    const depErrors = checkCartDependencies(items, depRules, buildDepModesFromProducts(products));
+    const depErrors = checkCartDependencies(submitItems, depRules, buildDepModesFromProducts(products));
     if (depErrors.length > 0) {
       toast({ title: 'Item incompatível', description: depErrors[0].message, variant: 'destructive' });
-      return;
+      return { ok: false, error: depErrors[0].message };
     }
     const changeForValue = paymentMethod === 'Dinheiro' && String(changeFor).trim() !== ''
       ? Number(String(changeFor).replace(',', '.'))
       : null;
+    // Desconto incide sobre o conjunto efetivamente enviado (inclui a linha
+    // montada no modo automático, que ainda não está no rascunho).
+    const submitSubtotal = calcPdvTotals(submitItems, fee).subtotal;
+    const submitDiscountValue = Math.max(0, Math.min(Number(discount) || 0, submitSubtotal));
     submitRef.current = true;
     setSubmitting(true);
     // Idempotência: uma chave por tentativa — retry do mesmo submit
@@ -491,12 +674,12 @@ export default function Pdv() {
     // pedido existente em vez de duplicar.
     const attemptKey = crypto.randomUUID();
     try {
-      const apiItems = buildCreateOrderItems(items);
+      const apiItems = buildCreateOrderItems(submitItems);
       let number;
       let savedId = null;
       if (selectedComanda) {
         // Comanda existente: soma ao pedido via edit (totais recalculados no backend).
-        await editOrder(supabase, selectedComanda.id, { items: apiItems, discount: discountValue });
+        await editOrder(supabase, selectedComanda.id, { items: apiItems, discount: submitDiscountValue });
         number = selectedComanda.order_number;
         savedId = selectedComanda.id;
         toast({ title: `Comanda #${number} atualizada!` });
@@ -513,7 +696,7 @@ export default function Pdv() {
           notes: '',
           changeFor: changeForValue,
           // Desconto atômico no create (servidor valida 0<=d<=subtotal).
-          discount: discountValue,
+          discount: submitDiscountValue,
           idempotencyKey: attemptKey,
           // FASE 2: PDV é atendimento presencial (balcão) — funciona mesmo
           // com o restaurante fechado para pedidos online (is_open=false).
@@ -535,13 +718,47 @@ export default function Pdv() {
       setNotifyState('');
       const keepTable = orderType === 'mesa';
       resetDraft(keepTable);
-      refreshMesaOrders();
+      // Configuração pode ter mudado (preço/opção/etapa): próximo item
+      // sempre consulta o estado atual em vez de reutilizar cache antigo.
+      setConfigCache({});
+      await refreshMesaOrders();
+      return { ok: true, orderNumber: number, orderId: savedId };
     } catch (err) {
-      toast({ title: 'Erro ao criar pedido', description: err?.message, variant: 'destructive' });
+      const message = err?.message || 'Falha ao salvar o pedido.';
+      toast({ title: 'Erro ao criar pedido', description: message, variant: 'destructive' });
+      return { ok: false, error: message };
     } finally {
       setSubmitting(false);
       submitRef.current = false;
     }
+  };
+
+  const handleModalSubmit = async () => {
+    const result = await handleSubmit();
+    if (result?.ok) setOrderModalOpen(false);
+    return result;
+  };
+
+  const addAutoLine = (line) => {
+    const product = line?.product || products.find((p) => p.id === line?.product_id);
+    if (!product) return;
+    addConfiguredLine(
+      product,
+      line.quantity || 1,
+      line.complements || [],
+      line.notes || '',
+      line.config,
+    );
+  };
+
+  const handleCustomerNameChange = (value) => {
+    setCustomerSearch(value);
+    setCustomer((prev) => ({ ...prev, name: value }));
+  };
+
+  const handlePickCustomer = (c) => {
+    setCustomer({ name: c.name, phone: c.phone || '' });
+    setCustomerSearch('');
   };
 
   // Notificação manual ao entregador: busca o pedido persistido, monta a
@@ -578,11 +795,53 @@ export default function Pdv() {
   if (loading || dataLoading) return <Spinner />;
   if (!company) return null;
 
+  const renderProductBrowser = () => (
+    <PdvProductCatalog
+      products={products}
+      categories={categories}
+      items={items}
+      search={search}
+      onSearchChange={setSearch}
+      filterCat={filterCat}
+      onFilterCatChange={setFilterCat}
+      onAdd={addItem}
+      onQty={changeQty}
+    />
+  );
+
+  const occupiedCardCount = tableCards.filter((c) => c.comandas.length > 0).length;
+  const tableLabel = selectedCard?.name || tableNumber;
+  const editingPersisted = !!configuring?.initialItem?.persisted || !!configuring?.initialItem?.pendingUpdate;
+
   return (
     <div className={`flex flex-col lg:h-[calc(100vh-4rem)] lg:min-h-0 lg:overflow-hidden ${items.length > 0 ? 'pb-20 lg:pb-0' : ''}`}>
-      <div className="shrink-0 mb-3">
-        <h1 className="font-heading text-xl font-bold text-foreground">🧾 PDV</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">Crie pedidos de mesa, retirada ou entrega</p>
+      <div className="shrink-0 mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="font-heading text-xl font-bold text-foreground">🧾 PDV</h1>
+        </div>
+        <div className="flex shrink-0 rounded-xl border border-border bg-muted/40 p-1" role="tablist" aria-label="Visualização do PDV">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={pdvView === 'produtos'}
+            onClick={() => changePdvView('produtos')}
+            className={`flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-colors ${pdvView === 'produtos' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            <Package className="h-4 w-4" /> Produtos
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={pdvView === 'mesas'}
+            onClick={() => changePdvView('mesas')}
+            className={`flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-colors ${pdvView === 'mesas' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            <Table2 className="h-4 w-4" /> Mesas
+            {occupiedCardCount > 0 && (
+              <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">{occupiedCardCount}</span>
+            )}
+          </button>
+        </div>
       </div>
 
       {doneOrder && (
@@ -624,41 +883,19 @@ export default function Pdv() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-3 flex-1 min-h-0 lg:overflow-hidden">
-        {/* Produtos */}
+        {/* Catálogo (Produtos) ou mesas + montagem da mesa */}
         <div className="lg:col-span-2 min-w-0 flex flex-col gap-3 lg:h-full lg:min-h-0">
-          <div className="relative shrink-0">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar produto..." className="pl-9 h-10" />
-          </div>
-          <div className="shrink-0 flex gap-1.5 overflow-x-auto pb-1">
-            <button onClick={() => setFilterCat('all')} className={`shrink-0 whitespace-nowrap rounded-full px-3 h-8 text-xs font-medium border ${filterCat === 'all' ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-transparent'}`}>Todos</button>
-            {categories.map(c => (
-              <button key={c.id} onClick={() => setFilterCat(c.id)} className={`shrink-0 whitespace-nowrap rounded-full px-3 h-8 text-xs font-medium border ${filterCat === c.id ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-transparent'}`}>{c.icon} {c.name}</button>
-            ))}
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto lg:pr-1 lg:pb-2">
-          <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-[repeat(auto-fill,minmax(170px,1fr))]">
-            {filtered.map(p => (
-              <div key={p.id} className="rounded-xl border border-border bg-card overflow-hidden flex flex-col min-w-0">
-                <div className="relative h-28 sm:h-32 lg:h-[132px] overflow-hidden bg-muted">
-                  {p.image_url ? (
-                    <Image src={p.image_url} fittingType="fill" className="h-full w-full" alt={p.name} />
-                  ) : (
-                    <div className="flex h-full items-center justify-center"><Package className="h-7 w-7 text-muted-foreground/60" /></div>
-                  )}
-                </div>
-                <div className="p-1.5 flex-1 min-w-0">
-                  <p className="text-[13px] leading-tight font-medium text-foreground truncate">{p.name}</p>
-                  <p className="text-sm font-bold text-primary">{fmtCurrency(p.promotional_price ?? p.price)}</p>
-                </div>
-                <Button size="sm" className="m-1.5 mt-0 h-8 text-xs" onClick={() => addItem(p)} aria-label={`Adicionar ${p.name}`}>
-                  <Plus className="h-4 w-4" /> Adicionar
-                </Button>
-              </div>
-            ))}
-          </div>
-          {filtered.length === 0 && <p className="text-sm text-muted-foreground text-center py-8">Nenhum produto encontrado.</p>}
-          </div>
+          {pdvView === 'produtos' ? renderProductBrowser() : (
+            <PdvTableView
+              tableCards={tableCards}
+              search={tableCardSearch}
+              onSearchChange={setTableCardSearch}
+              error={mesaError || tablesError}
+              loading={mesaLoading || tablesLoading}
+              onRetry={retryMesas}
+              onOpenTable={openTableCard}
+            />
+          )}
         </div>
 
         {/* Pedido atual */}
@@ -693,7 +930,8 @@ export default function Pdv() {
                     </div>
                     <div className="grid grid-cols-3 gap-1.5 max-h-44 overflow-y-auto pr-0.5">
                       {filteredTables.map((t) => {
-                        const busy = occupiedNames.has(normalizeTable(t.name));
+                        const card = findTableCard(tableCards, { tableId: t.id, tableName: t.name });
+                        const busy = (card?.comandas?.length || 0) > 0;
                         const active = selectedTableId === t.id;
                         return (
                           <button
@@ -718,15 +956,12 @@ export default function Pdv() {
                   </>
                 ) : (
                   <div className="rounded-xl border border-dashed border-border p-3 text-center">
-                    <p className="text-xs text-muted-foreground">Nenhuma mesa cadastrada.</p>
-                    <Link to="/mesas" className="text-xs font-medium text-primary hover:underline">
-                      Cadastrar mesas
-                    </Link>
+                    <p className="text-xs text-muted-foreground">Nenhuma mesa cadastrada. Configure em Configurações &gt; PDV.</p>
                   </div>
                 )}
                 <button
                   type="button"
-                  onClick={() => setTableOpen(true)}
+                  onClick={() => { setOrderModalOpen(false); setTablePickerName(''); setTablePickerId(null); setTableOpen(true); }}
                   className="flex w-full items-center gap-2 rounded-md border border-input bg-transparent px-3 py-2 text-sm min-w-0 text-left hover:bg-muted/50"
                 >
                   <span className="flex-1 min-w-0 truncate">
@@ -823,7 +1058,7 @@ export default function Pdv() {
                 <Label className="mb-2 block shrink-0">🧾 Itens ({itemCount})</Label>
               )}
               {items.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4 shrink-0">Toque em Adicionar nos produtos.</p>
+                <p className="text-sm text-muted-foreground text-center py-4 shrink-0">Toque em + nos produtos.</p>
               ) : (
                                 <div className="space-y-2 max-h-64 lg:max-h-none overflow-y-auto lg:overflow-visible pr-1">
                   {items.map(x => (
@@ -832,6 +1067,11 @@ export default function Pdv() {
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium truncate">{x.name}</p>
                           <p className="text-xs text-muted-foreground">{fmtCurrency(x.unit_price)} cada</p>
+                          {x.persisted && (
+                            <p className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-amber-700">
+                              <Lock className="h-3 w-3" /> Enviado
+                            </p>
+                          )}
                           {(x.complements || []).length > 0 && (
                             <p className="text-[11px] text-muted-foreground truncate">
                               + {x.complements.map(c => `${c.quantity > 1 ? `${c.quantity}x ` : ''}${c.option_name || c.name}`).join(', ')}
@@ -839,29 +1079,33 @@ export default function Pdv() {
                           )}
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
-                          <button type="button" aria-label="Diminuir" onClick={() => changeQty(x.id || x.product_id, -1)} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted"><Minus className="h-3.5 w-3.5" /></button>
+                          <button type="button" aria-label="Diminuir" disabled={x.persisted} onClick={() => changeQty(x.id || x.product_id, -1)} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"><Minus className="h-3.5 w-3.5" /></button>
                           <span className="w-6 text-center text-sm font-medium">{x.quantity}</span>
-                          <button type="button" aria-label="Aumentar" onClick={() => changeQty(x.id || x.product_id, 1)} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted"><Plus className="h-3.5 w-3.5" /></button>
-                          <button type="button" aria-label={`Remover ${x.name}`} onClick={() => removeItem(x.id || x.product_id)} className="flex h-8 w-8 items-center justify-center rounded-md text-destructive hover:bg-destructive/10"><Trash2 className="h-4 w-4" /></button>
+                          <button type="button" aria-label="Aumentar" disabled={x.persisted} onClick={() => changeQty(x.id || x.product_id, 1)} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"><Plus className="h-3.5 w-3.5" /></button>
+                          <button type="button" aria-label={`Remover ${x.name}`} disabled={x.persisted} onClick={() => removeItem(x.id || x.product_id)} className="flex h-8 w-8 items-center justify-center rounded-md text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-40"><Trash2 className="h-4 w-4" /></button>
                         </div>
                       </div>
                       <div className="mt-1 flex items-center gap-2">
                         <button
                           type="button"
+                          disabled={x.persisted}
                           onClick={() => openConfigure(x)}
-                          className="text-[11px] font-medium text-primary hover:underline"
+                          className="text-[11px] font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           ⚙️ Montar
                         </button>
                         <button
                           type="button"
+                          disabled={x.persisted}
                           onClick={() => setNoteOpenId(noteOpenId === (x.id || x.product_id) ? null : (x.id || x.product_id))}
-                          className="text-[11px] text-muted-foreground hover:text-foreground"
+                          className="text-[11px] text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           {x.notes ? `📝 ${x.notes}` : '+ obs do item'}
                         </button>
                       </div>
-                      {noteOpenId === (x.id || x.product_id) && (
+                      {x.persisted ? (
+                        <p className="mt-1 text-[11px] text-muted-foreground">Item já enviado. Ajustes pela tela de Pedidos.</p>
+                      ) : noteOpenId === (x.id || x.product_id) && (
                         <Input
                           value={x.notes || ''}
                           onChange={e => setItemNotes(x.id || x.product_id, e.target.value)}
@@ -915,7 +1159,7 @@ export default function Pdv() {
               </Button>
             )}
             <Button className="w-full h-11 shrink-0" onClick={handleSubmit} disabled={submitting || items.length === 0}>
-              {submitting ? 'Enviando...' : selectedComanda ? `Atualizar comanda #${selectedComanda.order_number}` : 'Finalizar pedido'}
+              {submitting ? 'Enviando...' : selectedComanda ? 'Enviar pedido' : 'Finalizar pedido'}
             </Button>
           </div>
         </div>
@@ -932,32 +1176,90 @@ export default function Pdv() {
         </div>
       )}
 
+      {/* Pedido em modal: montagem, revisão e envio sem sair da mesa. */}
+      <PdvOrderModal
+        open={orderModalOpen}
+        onClose={() => setOrderModalOpen(false)}
+        companyId={company?.id || ''}
+        tableName={tableLabel}
+        selectedComanda={selectedComanda}
+        tableComandas={modalTableComandas}
+        onSelectComanda={selectTableComanda}
+        onNewComanda={newComandaFromCard}
+        onMergeComandas={mergeFromCard}
+        onAutoAdd={addAutoLine}
+        products={products}
+        categories={categories}
+        items={items}
+        search={search}
+        onSearchChange={setSearch}
+        filterCat={filterCat}
+        onFilterCatChange={setFilterCat}
+        onAdd={addItem}
+        onQty={changeQty}
+        onRemove={removeItem}
+        onEdit={openConfigure}
+        noteOpenId={noteOpenId}
+        onToggleNote={(id) => setNoteOpenId((prev) => (prev === id ? null : id))}
+        onNotesChange={setItemNotes}
+        subtotal={subtotal}
+        discount={discount}
+        onDiscountChange={setDiscount}
+        discountValue={discountValue}
+        total={total}
+        itemCount={itemCount}
+        customer={customer}
+        customerSearch={customerSearch}
+        onCustomerNameChange={handleCustomerNameChange}
+        onCustomerPhoneChange={(phone) => setCustomer((prev) => ({ ...prev, phone }))}
+        matchedCustomers={matchedCustomers}
+        onPickCustomer={handlePickCustomer}
+        paymentMethod={paymentMethod}
+        onPaymentMethodChange={setPaymentMethod}
+        changeFor={changeFor}
+        onChangeForChange={setChangeFor}
+        payments={PAYMENTS}
+        depErrors={depErrors}
+        submitting={submitting}
+        onSubmit={handleModalSubmit}
+      />
+
       {/* Seletor de mesa / comandas */}
       <TableSelectModal
+        key={`tables:${tablePickerId || tablePickerName || tableNumber || 'none'}`}
         open={tableOpen}
-        onClose={() => { setTableOpen(false); setMergeTable(null); setMergeIds([]); }}
+        onClose={() => { setTableOpen(false); setTablePickerName(''); setTablePickerId(null); setMergeTable(null); setMergeCard(null); setMergeIds([]); }}
         mesaOrders={mesaOrders}
-        initialTable={tableNumber}
+        tableCards={tableCards}
+        initialTable={tablePickerName || tableNumber}
         onPickTable={pickTable}
-        onPickComanda={(id) => { const full = mesaOrders.find(o => o.id === id); if (full) loadComanda(full); }}
+        onPickCard={openTableCard}
+        onPickComanda={selectTableComanda}
         onNewComanda={newComanda}
-        onMergeTable={(table) => { setTableOpen(false); setMergeTable(table); setMergeIds([]); }}
+        onMergeTable={(table, tableId) => {
+          const card = findTableCard(tableCards, { tableId, tableName: table });
+          setTableOpen(false);
+          setTablePickerName('');
+          setTablePickerId(null);
+          if (card) openMergeForCard(card);
+          else { setMergeTable(table); setMergeCard(null); setMergeIds([]); }
+        }}
         onViewComanda={openDetail}
       />
 
       {/* Escolha de comandas para juntar (dentro do contexto da mesa) */}
       {mergeTable && (
         <div className="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => { setMergeTable(null); setMergeIds([]); }} />
+          <div className="absolute inset-0 bg-black/50" onClick={() => { setMergeTable(null); setMergeCard(null); setMergeIds([]); }} />
           <div className="relative w-full max-w-md">
             <TableMergePicker
               table={mergeTable}
-              comandas={tables.find(x => x.table === mergeTable)?.comandas || []}
+              comandas={mergeCard?.comandas || tables.find(x => x.table === mergeTable)?.comandas || []}
               selected={mergeIds}
               onToggle={(id) => setMergeIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])}
-              onCancel={() => { setMergeTable(null); setMergeIds([]); setTableOpen(true); }}
+              onCancel={() => { setMergeTable(null); setMergeCard(null); setMergeIds([]); setTablePickerName(''); setTablePickerId(null); setTableOpen(true); }}
               onContinue={() => {
-                const all = tables.find(x => x.table === mergeTable)?.comandas || [];
+                const all = mergeCard?.comandas || tables.find(x => x.table === mergeTable)?.comandas || [];
                 setMergeConfirm({ table: mergeTable, comandas: all.filter(c => mergeIds.includes(c.id)) });
               }}
             />
@@ -1009,11 +1311,12 @@ export default function Pdv() {
         <CartProvider>
           <ProductModal
             product={configuring}
+            initialItem={configuring.initialItem || null}
             primaryColor={company?.primary_color}
             isOpen={!!configuring}
-            onClose={() => setConfiguring(null)}
+            onClose={() => { setConfiguring(null); setConfiguringEditId(null); }}
             onAddToCart={(product, quantity, complements, notes, config) =>
-              addConfiguredLine(product, quantity, complements, notes, config)
+              addConfiguredLine(product, quantity, complements, notes, config, { pendingUpdate: editingPersisted })
             }
           />
         </CartProvider>

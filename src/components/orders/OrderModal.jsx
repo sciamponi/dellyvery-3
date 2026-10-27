@@ -36,12 +36,13 @@ import { listDependenciesWithNames as sbListDependencies } from '@/api/configura
 import { checkCartDependencies, buildDepModesFromProducts } from '@/lib/productDependencies';
 import { getCompanySettings as sbGetSettings } from '@/api/company';
 import { useToast } from '@/components/ui/use-toast';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { changeOrderStatus, getAvailableActions, getNextStatus, STATUS_LABELS } from '@/lib/orderStatusFlow';
 import {
   shouldConfirmDispatch, shouldConferenceConclusion,
   validateDispatchConfirm, resolveConclusionDriver,
 } from '@/lib/dispatchConfirm';
-import { resolveAdvanceTarget, resolveRegressTarget, shouldAutoCloseOnAction, listStages as sbListStages } from '@/api/orderStages';
+import { resolveAdvanceTarget, resolveRegressTarget, resolveCardPrimary, shouldAutoCloseOnAction, listStages as sbListStages } from '@/api/orderStages';
 
 const fmtCurrency = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -106,6 +107,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const [conferenceDrivers, setConferenceDrivers] = useState([]);
   const [conferenceDriver, setConferenceDriver] = useState('');
   const [conferenceBusy, setConferenceBusy] = useState(false);
+  const [finishConfirmAction, setFinishConfirmAction] = useState(null);
   // Recebimento: declaração auditável (audit_logs); o selo oficial segue
   // orders.payment_status (sem escrita direta — guard do banco).
   const [receiptOpen, setReceiptOpen] = useState(false);
@@ -189,6 +191,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     setSummaryOpen(false);
     setDispatchAction(null);
     setConferenceAction(null);
+    setFinishConfirmAction(null);
     setReceiptOpen(false);
     setReceipts([]);
     setReceiptForm({ amount: '', method: '', notes: '' });
@@ -395,6 +398,7 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
   const hasStages = Array.isArray(stages) && stages.length > 0;
   const advanceTarget = hasStages ? resolveAdvanceTarget(stages, order) : null;
   const regressTarget = hasStages ? resolveRegressTarget(stages, order) : null;
+  const cardFallback = hasStages ? resolveCardPrimary(stages, order) : null;
   const legacyActions = getAvailableActions(order);
   let actions;
   let primaryAction;
@@ -412,6 +416,16 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     }
     cancelAction = (order.status === 'finalizado' || order.status === 'cancelado') ? null : { id: 'cancel' };
     primaryAction = actions[0] || null;
+    if (!primaryAction && cardFallback) {
+      primaryAction = {
+        id: cardFallback.id,
+        label: cardFallback.id === 'accept'
+          ? 'Aceitar pedido'
+          : `Avançar para ${STATUS_LABELS[cardFallback.next] || cardFallback.next}`,
+        next: cardFallback.next,
+        fallback: true,
+      };
+    }
   } else {
     actions = legacyActions;
     primaryAction = actions.find(a => a.id === 'accept' || a.id === 'advance');
@@ -420,6 +434,9 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
       primaryAction = { ...primaryAction, next: getNextStatus(order) };
     }
     cancelAction = actions.find(a => a.id === 'cancel');
+  }
+  if (primaryAction?.next === 'finalizado') {
+    primaryAction = { ...primaryAction, label: 'Finalizar pedido' };
   }
 
   const runStatusAction = async (action) => {
@@ -530,6 +547,10 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
     }
     if (shouldConferenceConclusion(order, action.next)) {
       await openConference(action);
+      return;
+    }
+    if (action.next === 'finalizado' && order.order_type !== 'delivery') {
+      setFinishConfirmAction(action);
       return;
     }
     // Delivery rumo a saiu_entrega: sem entregador → seletor; com entregador →
@@ -1435,95 +1456,108 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
                 )}
               </div>
             )}
-            {/* Barra de ações: icon-only. Mesmos handlers/validações;
-                só apresentação muda. Regresso também icon-only. */}
-                <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
-                  <TooltipProvider>
-                  {regressAction && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className="h-11 w-full sm:w-11 p-0 shrink-0"
-                          onClick={() => runStatusAction(regressAction)}
-                          disabled={busy}
-                          aria-label={regressAction.label}
-                        >
-                          {statusAction === 'regress' ? (
-                            <Loader2 className="h-5 w-5 animate-spin" />
-                          ) : (
-                            <Undo2 className="h-5 w-5" />
-                          )}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>{regressAction.label}</TooltipContent>
-                    </Tooltip>
-                  )}
-                    {cancelAction && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="destructive"
-                            className="h-11 w-full sm:w-11 p-0 shrink-0"
-                            onClick={onCancel}
-                            disabled={busy}
-                            aria-label="Cancelar pedido"
-                          >
-                            <X className="h-5 w-5" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Cancelar pedido</TooltipContent>
-                      </Tooltip>
-                    )}
-                    {primaryAction && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            className="h-11 w-full sm:w-11 p-0 shrink-0 bg-green-600 hover:bg-green-700 text-white"
-                            onClick={() => handleStatusAction(primaryAction)}
-                            disabled={busy}
-                            aria-label={primaryAction.label}
-                          >
-                            {statusAction ? (
-                              <Loader2 className="h-5 w-5 animate-spin" />
-                            ) : primaryAction.id === 'accept' ? (
-                              <Check className="h-5 w-5" />
-                            ) : (
-                              <ArrowRight className="h-5 w-5" />
-                            )}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>{primaryAction.label}</TooltipContent>
-                      </Tooltip>
-                    )}
-                    {order.status !== 'cancelado' && order.status !== 'finalizado' && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="outline"
-                            className="h-11 w-full sm:w-11 p-0 shrink-0"
-                            onClick={handleManualPrint}
-                            disabled={busy}
-                            aria-label={`Imprimir pedido ${order.order_number || ''}`}
-                          >
-                            <Printer className="h-5 w-5" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Imprimir pedido</TooltipContent>
-                      </Tooltip>
-                    )}
-                  </TooltipProvider>
-                </div>
+            {/* Ações na mesma linha: editar, voltar, cancelar, imprimir e finalizar. */}
+            <TooltipProvider>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {order.status !== 'cancelado' && order.status !== 'finalizado' && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        className="h-11 gap-1.5 px-3"
+                        onClick={startEdit}
+                        disabled={busy}
+                        aria-label="Editar itens/endereço"
+                      >
+                        <Pencil className="h-4 w-4" />
+                        <span>Editar</span>
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Editar itens/endereço</TooltipContent>
+                  </Tooltip>
+                )}
+                {regressAction && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className="h-11 w-11 p-0"
+                        onClick={() => runStatusAction(regressAction)}
+                        disabled={busy}
+                        aria-label={regressAction.label}
+                      >
+                        {statusAction === 'regress' ? (
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        ) : (
+                          <Undo2 className="h-5 w-5" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{regressAction.label}</TooltipContent>
+                  </Tooltip>
+                )}
+                {cancelAction && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="destructive"
+                        className="h-11 w-11 p-0"
+                        onClick={onCancel}
+                        disabled={busy}
+                        aria-label="Cancelar pedido"
+                      >
+                        <X className="h-5 w-5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Cancelar pedido</TooltipContent>
+                  </Tooltip>
+                )}
+                {order.status !== 'cancelado' && order.status !== 'finalizado' && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className="h-11 w-11 p-0"
+                        onClick={handleManualPrint}
+                        disabled={busy}
+                        aria-label={`Imprimir pedido ${order.order_number || ''}`}
+                      >
+                        <Printer className="h-5 w-5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Imprimir pedido</TooltipContent>
+                  </Tooltip>
+                )}
+                {primaryAction && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        className="h-11 w-11 p-0 bg-green-600 hover:bg-green-700 text-white"
+                        onClick={() => handleStatusAction(primaryAction)}
+                        disabled={busy}
+                        aria-label={primaryAction.next === 'finalizado' ? 'Finalizar pedido' : primaryAction.label}
+                      >
+                        {statusAction ? (
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        ) : primaryAction.next === 'finalizado' || primaryAction.id === 'accept' ? (
+                          <Check className="h-5 w-5" />
+                        ) : (
+                          <ArrowRight className="h-5 w-5" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {primaryAction.next === 'finalizado' ? 'Finalizar pedido' : primaryAction.label}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 {order.status !== 'cancelado' && order.status !== 'finalizado' && onRequestPayment && (
-                  <Button variant="outline" className="w-full mt-2" onClick={() => onRequestPayment(order)} disabled={busy}>
+                  <Button variant="outline" className="h-11" onClick={() => onRequestPayment(order)} disabled={busy}>
                     💳 Solicitar pagamento
                   </Button>
                 )}
-                {order.status !== 'cancelado' && order.status !== 'finalizado' && (
-                  <Button variant="ghost" className="w-full mt-2" onClick={startEdit} disabled={busy}>
-                    <Pencil className="h-4 w-4" /> Editar itens/endereço
-                  </Button>
-                )}
+              </div>
+            </TooltipProvider>
               </div>
             )}
           </>
@@ -1795,9 +1829,24 @@ export default function OrderModal({ order, isOpen, onClose, onOrderUpdated, onC
         </DialogContent>
       </Dialog>
 
+      <ConfirmDialog
+        open={!!finishConfirmAction}
+        onOpenChange={(open) => { if (!open) setFinishConfirmAction(null); }}
+        title="Concluir pedido?"
+        description={`Finalizar o pedido #${order.order_number}? O pagamento não será alterado.`}
+        confirmLabel="Finalizar pedido"
+        confirmVariant="success"
+        onConfirm={() => {
+          const action = finishConfirmAction;
+          setFinishConfirmAction(null);
+          if (action) void runStatusAction(action);
+        }}
+      />
+
       {/* Conferência de saída: resumo + entregador obrigatório. Cancelar não
           muda status nem notifica; confirmar atribui (se trocou) e executa a
           transição pelo fluxo existente (aviso ao entregador segue depois). */}
+
       <Dialog open={!!dispatchAction} onOpenChange={(open) => { if (!open) setDispatchAction(null); }}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>

@@ -68,6 +68,11 @@ export function fromSupabaseProduct(row) {
     name: row.name,
     description: row.description,
     image_url: row.image_url,
+    // Galeria opcional (migration versionada, não aplicada): ausente => [].
+    images: Array.isArray(row.images) ? row.images.filter(Boolean) : [],
+    // Indicador de combo (nova coluna, default false): nao afeta produtos
+    // antigos nem dependency_mode, que segue com finalidade propria.
+    is_combo: !!row.is_combo,
     price: row.price != null ? Number(row.price) : row.price,
     promotional_price: row.promotional_price != null ? Number(row.promotional_price) : null,
     sku: row.sku,
@@ -124,6 +129,7 @@ export function toSupabaseProductPatch(data) {
   if (data.nutritional_info !== undefined) out.nutritional_info = data.nutritional_info || null;
   if (data.use_category_steps !== undefined) out.use_category_steps = data.use_category_steps !== false;
   if (data.dependency_mode !== undefined) out.dependency_mode = data.dependency_mode === 'all' ? 'all' : 'any';
+  if (data.is_combo !== undefined) out.is_combo = !!data.is_combo;
   if (data.complements !== undefined) out.options = Array.isArray(data.complements) ? data.complements : [];
   else if (data.options !== undefined) out.options = Array.isArray(data.options) ? data.options : [];
   return out;

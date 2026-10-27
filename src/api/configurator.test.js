@@ -46,6 +46,25 @@ describe('configurator — ingredientes', () => {
     await assert.rejects(createIngredient(client, '', { name: 'X' }), /Empresa/);
   });
 
+  it('preco padrao: lido, criado e atualizado', async () => {
+    const client = createMockClient({
+      rows: {
+        ingredients: {
+          list: { data: [{ id: 'i1', name: 'Bacon', price: '2.50' }], error: null },
+          single: { data: { id: 'i1' }, error: null },
+        },
+      },
+    });
+    assert.equal((await listIngredients(client, 'c1'))[0].price, 2.5);
+    await createIngredient(client, 'c1', { name: 'Bacon', price: 3.25 });
+    assert.equal(client.calls[0].payload.price, 3.25);
+    await updateIngredient(client, 'i1', { price: 4.5 });
+    assert.equal(client.calls[1].payload.price, 4.5);
+    await assert.rejects(updateIngredient(client, 'i1', { price: -1 }), /Pre/);
+    await createIngredient(client, 'c1', { name: 'Gratis', price: 0 });
+    assert.ok(!('price' in client.calls[2].payload));
+  });
+
   it('foto opcional mapeada na leitura e no patch', async () => {
     const client = createMockClient({
       rows: { ingredients: { list: { data: [{ id: 'i1', name: 'Bacon', image_url: 'http://img/x.jpg' }], error: null }, single: { data: { id: 'i1' }, error: null } } },
@@ -251,5 +270,10 @@ describe('configurator — grupos por categoria (modelos reutilizáveis)', () =>
     });
     const cfg = await getProductConfig(base, 'c1', 'p1');
     assert.deepEqual(cfg.steps.map((s) => s.id), ['sp']);
+  });
+
+  it('getProductConfig propaga falha real ao ler o produto', async () => {
+    const client = createMockClient({ errors: { products: { message: 'network down' } } });
+    await assert.rejects(getProductConfig(client, 'c1', 'p1'), /network down/);
   });
 });

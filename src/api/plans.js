@@ -1,4 +1,5 @@
 import { supabase as defaultClient } from './supabaseClient.js';
+import { classifyMasterAccessError } from '../lib/masterGate.js';
 
 // DELLVERY 3 — Adapter Supabase Plans (catálogo + CRUD platform-admin).
 // Leitura: pública somente active=true (RLS); escrita: PLATFORM_ADMIN.
@@ -161,10 +162,27 @@ export async function deletePlan(client, id) {
   if (error) rpcError(error);
 }
 
-export async function isPlatformAdmin(client, userId) {
+// Resultado discriminado para o gate Master: não confunde falha de consulta
+// com falta real de permissão. A RLS continua sendo a autoridade do backend.
+export async function getPlatformAdminAccess(client, userId) {
   const c = mustBeConfigured(client);
-  if (!userId) return false;
+  if (!userId) return { status: 'denied', profile: null, error: null };
   const { data, error } = await c.from('profiles').select('platform_role').eq('id', userId).maybeSingle();
-  if (error) return false;
-  return data?.platform_role === 'PLATFORM_ADMIN';
+  if (error) {
+    return {
+      status: classifyMasterAccessError(error),
+      profile: null,
+      error,
+    };
+  }
+  return {
+    status: data?.platform_role === 'PLATFORM_ADMIN' ? 'allowed' : 'denied',
+    profile: data || null,
+    error: null,
+  };
+}
+
+export async function isPlatformAdmin(client, userId) {
+  const access = await getPlatformAdminAccess(client, userId);
+  return access.status === 'allowed';
 }

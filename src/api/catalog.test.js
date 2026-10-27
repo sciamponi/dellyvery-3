@@ -227,3 +227,36 @@ describe('catalog — herança de categoria e modo de dependência', () => {
     assert.deepEqual(toSupabaseProductPatch({ available: false }), { active: false });
   });
 });
+
+describe('catalog — indicador de combo (is_combo)', () => {
+  it('mapeia is_combo false por default (produtos antigos preservados)', () => {
+    const p = fromSupabaseProduct({ id: 'p', company_id: 'c', name: 'N', price: 1 });
+    assert.equal(p.is_combo, false);
+    const p2 = fromSupabaseProduct({ id: 'p', company_id: 'c', name: 'N', price: 1, is_combo: null });
+    assert.equal(p2.is_combo, false);
+  });
+
+  it('mapeia is_combo true quando ativado', () => {
+    const p = fromSupabaseProduct({ id: 'p', company_id: 'c', name: 'N', price: 1, is_combo: true });
+    assert.equal(p.is_combo, true);
+  });
+
+  it('patch envia is_combo booleano quando definido e nao envia quando indefinido', () => {
+    assert.deepEqual(toSupabaseProductPatch({ is_combo: true }), { is_combo: true });
+    assert.deepEqual(toSupabaseProductPatch({ is_combo: false }), { is_combo: false });
+    assert.ok(!('is_combo' in toSupabaseProductPatch({ name: 'X' })));
+  });
+
+  it('create força company_id do contexto e aceita is_combo no payload', async () => {
+    const created = { id: 'p1', company_id: 'coA', name: 'P', price: 5, active: true, is_combo: true };
+    const client = createMockClient({
+      tables: {
+        categories: { maybeSingle: { data: { id: 'cat1', company_id: 'coA' }, error: null } },
+        products: { single: { data: created, error: null } },
+      },
+    });
+    await createProduct(client, 'coA', { name: 'P', price: 5, category_id: 'cat1', is_combo: true });
+    assert.equal(client.calls[0].payload.company_id, 'coA');
+    assert.equal(client.calls[0].payload.is_combo, true);
+  });
+});

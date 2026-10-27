@@ -23,6 +23,16 @@ describe('configEditor — ingrediente', () => {
   });
 });
 
+describe('configEditor - preco padrao do ingrediente', () => {
+  it('aceita vazio/zero e rejeita negativo/invalido', () => {
+    assert.equal(validateIngredient({ name: 'X' }), null);
+    assert.equal(validateIngredient({ name: 'X', price: '' }), null);
+    assert.equal(validateIngredient({ name: 'X', price: 0 }), null);
+    assert.match(validateIngredient({ name: 'X', price: -0.01 }), /Pre/);
+    assert.match(validateIngredient({ name: 'X', price: 'abc' }), /Pre/);
+  });
+});
+
 describe('configEditor — grupo (step)', () => {
   it('título e modos', () => {
     assert.match(validateConfigStep({}), /Título/);

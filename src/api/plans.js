@@ -68,6 +68,8 @@ export function fromSupabasePlan(row) {
     annual_price: row.annual_price != null ? Number(row.annual_price) : null,
     setup_fee: row.setup_fee != null ? Number(row.setup_fee) : 0,
     trial_days: row.trial_days != null ? Number(row.trial_days) : 7,
+    access_days: row.access_days != null ? Number(row.access_days) : null,
+    is_free: !!row.is_free,
     sales_text: row.sales_text || '',
     benefits: Array.isArray(row.benefits) ? row.benefits : [],
   };
@@ -96,6 +98,10 @@ export function toSupabasePlan(data) {
   if (data.annual_price !== undefined) out.annual_price = (data.annual_price === null || data.annual_price === '') ? null : Number(data.annual_price);
   if (data.setup_fee !== undefined) out.setup_fee = Number(data.setup_fee) || 0;
   if (data.trial_days !== undefined) out.trial_days = Math.max(0, Math.floor(Number(data.trial_days) || 0));
+  if (data.access_days !== undefined) {
+    out.access_days = (data.access_days === null || data.access_days === '') ? null : Math.max(1, Math.floor(Number(data.access_days) || 0));
+  }
+  if (data.is_free !== undefined) out.is_free = !!data.is_free;
   if (data.sales_text !== undefined) out.sales_text = data.sales_text || null;
   if (data.benefits !== undefined) out.benefits = Array.isArray(data.benefits) ? data.benefits : [];
   return out;
@@ -115,6 +121,10 @@ export function validatePlanData(data, { partial = false } = {}) {
   const trial = data.trial_days;
   if (trial !== undefined && trial !== null && trial !== '' && !(Number.isInteger(Number(trial)) && Number(trial) >= 0)) {
     return 'Dias de teste devem ser um número inteiro maior ou igual a zero';
+  }
+  const accessDays = data.access_days;
+  if (accessDays !== undefined && accessDays !== null && accessDays !== '' && !(Number.isInteger(Number(accessDays)) && Number(accessDays) > 0)) {
+    return 'Duração do acesso deve ser um número inteiro maior que zero';
   }
   for (const [key, label] of [['limits_users', 'Usuários'], ['limits_orders', 'Pedidos'], ['limits_products', 'Produtos'], ['limits_customers', 'Clientes'], ['limits_whatsapp', 'WhatsApp'], ['limits_storage_mb', 'Armazenamento (MB)']]) {
     const v = data[key];

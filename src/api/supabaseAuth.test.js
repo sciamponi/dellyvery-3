@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   signUpWithPassword,
+  sendEmailVerificationLink,
   signInWithPassword,
   signOut,
   requestPasswordReset,
@@ -51,6 +52,10 @@ function createMockClient({ auth = {}, tables = {}, rpcResult = { data: 'company
         calls.authCalls.push({ op: 'signUp', args });
         return auth.signUp || { data: { user: { id: 'u1', email: args.email }, session: { access_token: 't' } }, error: null };
       },
+      signInWithOtp: async (args) => {
+        calls.authCalls.push({ op: 'signInWithOtp', args });
+        return auth.otp || { data: {}, error: null };
+      },
       signInWithPassword: async (args) => {
         calls.authCalls.push({ op: 'signIn', args });
         return auth.signIn || { data: { user: { id: 'u1' }, session: { access_token: 't' } }, error: null };
@@ -93,6 +98,40 @@ describe('supabaseAuth — sessão', () => {
     });
     const data = await signInWithPassword(client, { email: 'a@x.com', password: '123456' });
     assert.equal(data.session.access_token, 'tok');
+  });
+
+  it('cadastro repassa o redirecionamento de confirmação', async () => {
+    const client = createMockClient();
+    await signUpWithPassword(client, {
+      email: 'a@x.com',
+      password: '123456',
+      emailRedirectTo: 'http://localhost/convite-cliente/token?email_verified=1',
+    });
+    const call = client.calls.authCalls.find((c) => c.op === 'signUp');
+    assert.deepEqual(call.args.options, {
+      emailRedirectTo: 'http://localhost/convite-cliente/token?email_verified=1',
+    });
+  });
+
+  it('verificação envia magic link sem criar usuário', async () => {
+    const client = createMockClient();
+    await sendEmailVerificationLink(client, {
+      email: ' a@x.com ',
+      redirectTo: 'http://localhost/convite-cliente/token?email_verified=1',
+    });
+    const call = client.calls.authCalls.find((c) => c.op === 'signInWithOtp');
+    assert.deepEqual(call.args, {
+      email: 'a@x.com',
+      options: {
+        shouldCreateUser: false,
+        emailRedirectTo: 'http://localhost/convite-cliente/token?email_verified=1',
+      },
+    });
+  });
+
+  it('verificação exige e-mail', async () => {
+    const client = createMockClient();
+    await assert.rejects(() => sendEmailVerificationLink(client, { email: '  ' }), /E-mail é obrigatório/);
   });
 
   it('logout chama signOut do client', async () => {

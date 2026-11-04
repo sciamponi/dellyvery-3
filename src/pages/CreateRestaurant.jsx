@@ -4,15 +4,15 @@ import { supabase } from '@/api/supabaseClient';
 import { getSession, signUpRestaurant, provisionCompanyForCurrentUser } from '@/api/supabaseAuth';
 import { updateCompany as sbUpdateCompany } from '@/api/company';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
+import { getMyResellerClientAccess } from '@/api/resellerClients';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/components/ui/use-toast';
-import { Store, User, Phone, Mail, Lock, Loader2, ArrowLeft, Check } from 'lucide-react';
+import { Loader2, ArrowLeft, Check } from 'lucide-react';
 
-const benefits = [
-  '7 dias grátis, sem cartão',
+const baseBenefits = [
   'Cardápio digital ilimitado',
   'Pedidos em tempo real',
   'Cancele quando quiser',
@@ -26,14 +26,69 @@ export default function CreateRestaurant() {
   const [authed, setAuthed] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [trialDays, setTrialDays] = useState(7);
+  const [trialIsFree, setTrialIsFree] = useState(false);
   const [form, setForm] = useState({
     restaurantName: '', responsibleName: '', whatsapp: '',
     email: '', password: '', confirmPassword: '', acceptTerms: false,
   });
 
   useEffect(() => {
-    getSession(supabase).then((sess) => setAuthed(!!sess)).catch(() => setAuthed(false));
+    let cancelled = false;
+    const check = async () => {
+      const sess = await getSession(supabase).catch(() => null);
+      if (cancelled) return;
+      setAuthed(!!sess);
+      if (!sess?.user) return;
+      const access = await getMyResellerClientAccess(supabase).catch(() => null);
+      if (cancelled || !access) return;
+      navigate(
+        access.status === 'active'
+          ? '/dashboard'
+          : access.status === 'pending' ? '/aguardando-ativacao' : '/acesso-expirado',
+        { replace: true },
+      );
+    };
+    check();
+    return () => { cancelled = true; };
+  }, [navigate]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPlan = async () => {
+      try {
+        const { data } = await supabase
+          .from('plans')
+          .select('trial_days, is_free')
+          .eq('slug', 'solo')
+          .maybeSingle();
+        if (cancelled || !data) return;
+        setTrialDays(Number(data.trial_days ?? 7));
+        setTrialIsFree(!!data.is_free);
+      } catch {
+        // Mantem o texto padrao; a criacao da empresa nao depende desta leitura.
+      }
+    };
+    loadPlan();
+    return () => { cancelled = true; };
   }, []);
+
+  const trialBenefit = trialIsFree
+    ? 'Plano gratuito, sem cartão'
+    : trialDays > 0
+      ? `${trialDays} dias grátis, sem cartão`
+      : 'Teste sem período grátis, sem cartão';
+  const trialHeadline = trialIsFree
+    ? 'Comece gratuitamente'
+    : trialDays > 0
+      ? `${trialDays} dias grátis`
+      : 'Teste o sistema';
+  const trialSubtitle = trialIsFree
+    ? 'Plano gratuito. Sem cartão de crédito.'
+    : trialDays > 0
+      ? `${trialDays} dias grátis. Sem cartão de crédito.`
+      : 'Teste sem período grátis. Sem cartão de crédito.';
+  const benefits = [trialBenefit, ...baseBenefits];
 
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
@@ -99,7 +154,11 @@ export default function CreateRestaurant() {
         title: result.created === false ? 'Bem-vindo de volta!' : 'Restaurante criado!',
         description: result.created === false
           ? 'Selecionamos sua empresa existente.'
-          : 'Seu trial de 7 dias começou.',
+          : trialIsFree
+            ? 'Seu plano gratuito está ativo.'
+            : trialDays > 0
+              ? `Seu trial de ${trialDays} dias começou.`
+              : 'Seu teste começou.',
       });
       navigate('/dashboard', { replace: true });
     } catch (err) {
@@ -139,8 +198,8 @@ export default function CreateRestaurant() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary font-heading text-2xl font-bold text-primary-foreground">H</div>
-          <h1 className="font-heading text-2xl font-bold text-foreground">Comece gratuitamente</h1>
-          <p className="text-sm text-muted-foreground mt-1">7 dias grátis. Sem cartão de crédito.</p>
+          <h1 className="font-heading text-2xl font-bold text-foreground">{trialHeadline}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{trialSubtitle}</p>
         </div>
 
         <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">

@@ -51,6 +51,15 @@ export async function getCurrentCompany(client, companyId) {
   return data || null;
 }
 
+export async function getCompanyActiveAccess(client, companyId) {
+  const c = mustBeConfigured(client);
+  const { data, error } = await c.rpc('company_has_active_access', {
+    p_company_id: requireCompanyId(companyId),
+  });
+  if (error) rpcError(error);
+  return data === true;
+}
+
 export async function updateCompany(client, companyId, data) {
   const c = mustBeConfigured(client);
   requireCompanyId(companyId);

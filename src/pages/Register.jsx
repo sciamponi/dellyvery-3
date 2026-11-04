@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/api/supabaseClient";
 import { signUpWithPassword } from "@/api/supabaseAuth";
 import { Button } from "@/components/ui/button";
@@ -9,12 +9,20 @@ import { UserPlus, Mail, Lock, Loader2 } from "lucide-react";
 import AuthLayout from "@/components/AuthLayout";
 
 export default function Register() {
-  const [email, setEmail] = useState("");
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const inviteToken = searchParams.get("invite");
+  const invitedEmail = searchParams.get("email") || "";
+  const [email, setEmail] = useState(invitedEmail);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [sentMode, setSentMode] = useState(false);
+
+  const inviteRedirect = inviteToken && typeof window !== "undefined"
+    ? `${window.location.origin}/convite-cliente/${encodeURIComponent(inviteToken)}`
+    : null;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -25,13 +33,20 @@ export default function Register() {
     }
     setLoading(true);
     try {
-      // Confirmação por link de e-mail (nativa Supabase, sem OTP).
-      const data = await signUpWithPassword(supabase, { email, password });
+      const data = await signUpWithPassword(supabase, {
+        email,
+        password,
+        emailRedirectTo: inviteRedirect || undefined,
+      });
       if (data?.session) {
+        if (inviteToken) {
+          navigate(`/convite-cliente/${encodeURIComponent(inviteToken)}`, { replace: true });
+          return;
+        }
         window.location.href = "/";
         return;
       }
-      setSent(true);
+      setSentMode(true);
     } catch (err) {
       setError(err.message || "Registration failed");
     } finally {
@@ -39,19 +54,20 @@ export default function Register() {
     }
   };
 
-  if (sent) {
+  if (sentMode) {
     return (
       <AuthLayout
         icon={Mail}
         title="Verify your email"
         subtitle={`We sent a confirmation link to ${email}`}
+        footer={null}
       >
         <p className="text-sm text-foreground text-center">
-          Click the link in the email to activate your account, then log in.
+          Click the link in the email to activate your account. After that, sign in to confirm the invite.
         </p>
         <p className="text-center text-sm text-muted-foreground mt-4">
           Already verified?{" "}
-          <Link to="/login" className="text-primary font-medium hover:underline">
+          <Link to={inviteToken ? `/login?invite=${encodeURIComponent(inviteToken)}` : "/login"} className="text-primary font-medium hover:underline">
             Log in
           </Link>
         </p>
@@ -67,7 +83,7 @@ export default function Register() {
       footer={
         <>
           Already have an account?{" "}
-          <Link to="/login" className="text-primary font-medium hover:underline">
+          <Link to={inviteToken ? `/login?invite=${encodeURIComponent(inviteToken)}` : "/login"} className="text-primary font-medium hover:underline">
             Log in
           </Link>
         </>
@@ -105,7 +121,7 @@ export default function Register() {
               id="password"
               type="password"
               autoComplete="new-password"
-              placeholder="••••••••"
+              placeholder="At least 6 characters"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="pl-10 h-12"
@@ -121,7 +137,7 @@ export default function Register() {
               id="confirm"
               type="password"
               autoComplete="new-password"
-              placeholder="••••••••"
+              placeholder="At least 6 characters"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               className="pl-10 h-12"

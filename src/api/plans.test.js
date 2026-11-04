@@ -103,25 +103,30 @@ describe('plans — FASE A campos comerciais e validação', () => {
     const p = fromSupabasePlan({
       id: '1', name: 'Pro', slug: 'pro', price: '49.9', limits: {},
       description: 'Para crescer', annual_price: '499', setup_fee: '99',
-      trial_days: 14, sales_text: 'Venda mais', benefits: ['Suporte'],
+      trial_days: 14, access_days: 30, is_free: true, sales_text: 'Venda mais', benefits: ['Suporte'],
       sort_order: 1, active: true,
     });
     assert.equal(p.description, 'Para crescer');
+    assert.equal(p.is_free, true);
     assert.equal(p.annual_price, 499);
     assert.equal(p.setup_fee, 99);
     assert.equal(p.trial_days, 14);
+    assert.equal(p.access_days, 30);
     assert.equal(p.sales_text, 'Venda mais');
     assert.deepEqual(p.benefits, ['Suporte']);
     const out = toSupabasePlan({
       description: 'D', annual_price: '', setup_fee: '50', trial_days: '14',
-      sales_text: 'S', benefits: ['B'],
+      access_days: '30', is_free: true, sales_text: 'S', benefits: ['B'],
     });
     assert.equal(out.description, 'D');
+    assert.equal(out.is_free, true);
     assert.equal(out.annual_price, null);
     assert.equal(out.setup_fee, 50);
     assert.equal(out.trial_days, 14);
+    assert.equal(out.access_days, 30);
     assert.equal(out.sales_text, 'S');
     assert.deepEqual(out.benefits, ['B']);
+    assert.equal(toSupabasePlan({ access_days: '' }).access_days, null);
   });
 
   it('validatePlanData: preços, trial e limites (-1 = ilimitado)', () => {
@@ -130,6 +135,10 @@ describe('plans — FASE A campos comerciais e validação', () => {
     assert.match(validatePlanData({ name: 'A', price: -5 }), /maior ou igual/);
     assert.match(validatePlanData({ name: 'A', annual_price: -1 }), /nual/);
     assert.match(validatePlanData({ name: 'A', trial_days: 1.5 }), /inteiro/);
+    assert.match(validatePlanData({ name: 'A', access_days: 0 }), /maior que zero/);
+    assert.match(validatePlanData({ name: 'A', access_days: 1.5 }), /maior que zero/);
+    assert.equal(validatePlanData({ name: 'A', access_days: 30 }), null);
+    assert.equal(validatePlanData({ name: 'A', access_days: '' }), null);
     assert.match(validatePlanData({ name: 'A', limits_products: -2 }), /ilimitado/);
     assert.match(validatePlanData({ name: 'A', limits_users: 2.5 }), /ilimitado/);
     assert.equal(validatePlanData({ name: 'A', limits_orders: -1, limits_products: 0 }), null);
@@ -154,6 +163,8 @@ describe('plans — FASE A campos comerciais e validação', () => {
       sort_order: 0, active: true,
     });
     assert.equal(p.trial_days, 7);
+    assert.equal(p.access_days, null);
+    assert.equal(p.is_free, false);
     assert.equal(p.setup_fee, 0);
     assert.equal(p.annual_price, null);
     assert.deepEqual(p.benefits, []);

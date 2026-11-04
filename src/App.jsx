@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes, Outlet } from 'react-router-dom';
+import { BrowserRouter as Router, Navigate, Route, Routes, Outlet, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider } from '@/lib/AuthContext';
 import { SupabaseAuthProvider } from '@/lib/SupabaseAuthContext';
@@ -11,6 +11,7 @@ import Register from '@/pages/Register';
 import ForgotPassword from '@/pages/ForgotPassword';
 import ResetPassword from '@/pages/ResetPassword';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import CompanyAccessRoute from '@/components/CompanyAccessRoute';
 import MasterRoute from '@/components/MasterRoute';
 import ResellerRoute from '@/components/ResellerRoute';
 import { CartProvider } from '@/lib/CartContext';
@@ -22,6 +23,7 @@ import Menu from './pages/Menu';
 import Checkout from './pages/Checkout';
 import OrderTracking from './pages/OrderTracking';
 import AppLayout from './components/AppLayout';
+import MasterRevendaLayout from './components/MasterRevendaLayout';
 import GestaoProdutos from './pages/GestaoProdutos';
 import Pedidos from './pages/Pedidos';
 import Pdv from './pages/Pdv';
@@ -40,9 +42,22 @@ import MasterContratos from './pages/MasterContratos';
 import MasterDashboard from './pages/MasterDashboard';
 import MasterEmpresas from './pages/MasterEmpresas';
 import MasterRevenda from './pages/MasterRevenda';
+import MasterRevendaCreditos from './pages/MasterRevendaCreditos';
+import MasterCompras from './pages/MasterCompras';
 import ResellerDashboard from './pages/ResellerDashboard';
+import ResellerClientes from './pages/ResellerClientes';
+import ResellerCreditos from './pages/ResellerCreditos';
+import ResellerAtivacoes from './pages/ResellerAtivacoes';
+import ConviteCliente from './pages/ConviteCliente';
+import AguardandoAtivacao from './pages/AguardandoAtivacao';
+import AcessoExpirado from './pages/AcessoExpirado';
 import Cadastro from './pages/Cadastro';
 import Privacidade from './pages/Privacidade';
+
+function LegacyMasterComprasRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/master/revenda/compras${location.search}`} replace />;
+}
 
 function App() {
   // FASE 5.1: SupabaseAuthProvider coexiste com o AuthProvider/Base44 legado.
@@ -69,26 +84,32 @@ function App() {
             </Route>
             <Route path="/acompanhar/:token" element={<OrderTracking />} />
             <Route path="/cadastro" element={<Cadastro />} />
+            <Route path="/convite-cliente/:token" element={<ConviteCliente />} />
             <Route path="/privacidade" element={<Privacidade />} />
 
-            {/* Protected routes — ProtectedRoute is the SOLE auth gate */}
+            {/* Protected routes �?" ProtectedRoute is the SOLE auth gate */}
             <Route element={<ProtectedRoute />}>
-              <Route element={<AppLayout />}>
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/gestao-produtos" element={<GestaoProdutos />} />
-                <Route path="/pedidos" element={<Pedidos />} />
-                <Route path="/pdv" element={<Pdv />} />
-                <Route path="/mesas" element={<Mesas />} />
-                <Route path="/impressao/:orderId" element={<Impressao />} />
-                <Route path="/configuracoes" element={<Configuracoes />} />
-                <Route path="/clientes" element={<Clientes />} />
-                <Route path="/equipe" element={<Equipe />} />
-                <Route path="/perfil" element={<Perfil />} />
-                <Route path="/assinatura" element={<Assinatura />} />
-                <Route path="/financeiro" element={<Financeiro />} />
-                <Route path="/atualizacoes" element={<Atualizacoes />} />
+              <Route path="/aguardando-ativacao" element={<AguardandoAtivacao />} />
+              <Route path="/acesso-expirado" element={<AcessoExpirado />} />
+              <Route element={<CompanyAccessRoute />}>
+                <Route element={<AppLayout />}>
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/gestao-produtos" element={<GestaoProdutos />} />
+                  <Route path="/pedidos" element={<Pedidos />} />
+                  <Route path="/pdv" element={<Pdv />} />
+                  <Route path="/mesas" element={<Mesas />} />
+                  <Route path="/impressao/:orderId" element={<Impressao />} />
+                  <Route path="/configuracoes" element={<Configuracoes />} />
+                  <Route path="/clientes" element={<Clientes />} />
+                  <Route path="/equipe" element={<Equipe />} />
+                  <Route path="/perfil" element={<Perfil />} />
+                  <Route path="/assinatura" element={<Assinatura />} />
+                  <Route path="/financeiro" element={<Financeiro />} />
+                  <Route path="/atualizacoes" element={<Atualizacoes />} />
+                </Route>
               </Route>
             </Route>
+
 
             {/* Área administrativa — gate próprio (sessão + PLATFORM_ADMIN) */}
             <Route element={<MasterRoute />}>
@@ -96,9 +117,14 @@ function App() {
                 <Route path="/master" element={<MasterDashboard />} />
                 <Route path="/master/empresas" element={<MasterEmpresas />} />
                 <Route path="/master/planos" element={<MasterPlanos />} />
+                <Route path="/master/compras" element={<LegacyMasterComprasRedirect />} />
                 <Route path="/master/interessados" element={<MasterInteressados />} />
                 <Route path="/master/contratos" element={<MasterContratos />} />
-                <Route path="/master/revenda" element={<MasterRevenda />} />
+                <Route element={<MasterRevendaLayout />}>
+                  <Route path="/master/revenda" element={<MasterRevenda />} />
+                  <Route path="/master/revenda/creditos" element={<MasterRevendaCreditos />} />
+                  <Route path="/master/revenda/compras" element={<MasterCompras />} />
+                </Route>
               </Route>
             </Route>
 
@@ -106,6 +132,9 @@ function App() {
             <Route element={<ResellerRoute />}>
               <Route element={<AppLayout />}>
                 <Route path="/revenda" element={<ResellerDashboard />} />
+                <Route path="/revenda/clientes" element={<ResellerClientes />} />
+                <Route path="/revenda/creditos" element={<ResellerCreditos />} />
+                <Route path="/revenda/ativacoes" element={<ResellerAtivacoes />} />
               </Route>
             </Route>
 

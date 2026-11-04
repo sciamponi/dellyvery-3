@@ -1,9 +1,9 @@
 import React from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { Link, useOutletContext } from 'react-router-dom';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import PageHeader from '@/components/PageHeader';
 import { Badge } from '@/components/ui/badge';
-import { Users, Wallet, CreditCard, Handshake, ShieldCheck, Clock } from 'lucide-react';
+import { Users, Wallet, CreditCard, Handshake, ShieldCheck, Clock, ArrowRight } from 'lucide-react';
 
 function fmtDate(iso) {
   if (!iso) return '-';
@@ -23,18 +23,21 @@ export default function ResellerDashboard() {
   const modules = [
     {
       title: 'Clientes',
-      description: 'Carteira de clientes vinculados ao revendedor.',
+      description: 'Cadastre e acompanhe os estabelecimentos da sua carteira.',
       icon: Users,
+      path: '/revenda/clientes',
     },
     {
       title: 'Créditos',
-      description: 'Saldo, movimentacoes e consumo de Créditos.',
+      description: 'Compre pacotes, consulte o saldo e acompanhe suas movimentações.',
       icon: Wallet,
+      path: '/revenda/creditos',
     },
     {
       title: 'Ativações',
-      description: 'Ativações, renovacoes e vencimentos.',
+      description: 'Ative clientes, renove vigências e acompanhe vencimentos.',
       icon: CreditCard,
+      path: '/revenda/ativacoes',
     },
   ];
 
@@ -65,23 +68,26 @@ export default function ResellerDashboard() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-dashed border-border bg-muted/30 p-5">
-        <p className="font-heading font-semibold text-foreground">Próximas etapas</p>
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <p className="font-heading font-semibold text-foreground">Seus módulos</p>
         <p className="text-sm text-muted-foreground mt-1">
-          Os módulos abaixo ainda não estão habilitados nesta etapa. Nenhum dado de clientes,
-          Créditos ou Ativações é exibido ou alterado aqui.
+          Gerencie sua carteira, acompanhe o saldo e registre ativações.
         </p>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           {modules.map((module) => (
-            <div key={module.title} className="rounded-xl border border-border bg-card p-4 opacity-70">
+            <Link
+              key={module.title}
+              to={module.path}
+              className="group rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/50 hover:bg-muted/30"
+            >
               <div className="flex items-center gap-2">
-                <module.icon className="h-4 w-4 text-muted-foreground" />
+                <module.icon className="h-4 w-4 text-primary" />
                 <p className="text-sm font-medium text-foreground">{module.title}</p>
-                <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">em breve</span>
+                <ArrowRight className="ml-auto h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
               </div>
               <p className="mt-1 text-xs text-muted-foreground">{module.description}</p>
-            </div>
+            </Link>
           ))}
         </div>
       </div>

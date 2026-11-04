@@ -20,11 +20,22 @@ const mustBeConfigured = (client) => {
 
 // ---------- Auth ----------
 
-export async function signUpWithPassword(client, { email, password }) {
+export async function signUpWithPassword(client, { email, password, emailRedirectTo = undefined }) {
   const c = mustBeConfigured(client);
-  const { data, error } = await c.auth.signUp({ email, password });
+  const options = emailRedirectTo ? { emailRedirectTo } : undefined;
+  const { data, error } = await c.auth.signUp({ email, password, options });
   if (error) throw error;
   return data; // { user, session } — sem confirmação, session já vem criada
+}
+
+export async function sendEmailVerificationLink(client, { email, redirectTo }) {
+  const c = mustBeConfigured(client);
+  if (!email?.trim()) throw new Error('E-mail é obrigatório');
+  const options = { shouldCreateUser: false };
+  if (redirectTo) options.emailRedirectTo = redirectTo;
+  const { data, error } = await c.auth.signInWithOtp({ email: email.trim(), options });
+  if (error) throw error;
+  return data;
 }
 
 export async function signInWithPassword(client, { email, password }) {

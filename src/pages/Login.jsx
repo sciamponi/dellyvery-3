@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/api/supabaseClient";
 import { signInWithPassword } from "@/api/supabaseAuth";
 import { useSupabaseAuth } from "@/lib/SupabaseAuthContext";
@@ -19,15 +19,19 @@ function safePath(path) {
 export default function Login() {
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const inviteToken = searchParams.get('invite');
   const { refresh: refreshSb } = useSupabaseAuth();
 
   const requestedFrom =
     safePath(location.state?.from) || safeNextPath("") || safeReturnTo();
 
   const from =
-    requestedFrom && requestedFrom !== "/"
-      ? requestedFrom
-      : "/dashboard";
+    inviteToken
+      ? `/convite-cliente/${encodeURIComponent(inviteToken)}`
+      : requestedFrom && requestedFrom !== "/"
+        ? requestedFrom
+        : "/dashboard";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -58,7 +62,7 @@ export default function Login() {
       footer={
         <>
           Não tem conta?{" "}
-          <Link to="/criar-restaurante" className="text-primary font-medium hover:underline">
+          <Link to={inviteToken ? `/register?invite=${encodeURIComponent(inviteToken)}` : "/criar-restaurante"} className="text-primary font-medium hover:underline">
             Criar restaurante
           </Link>
         </>

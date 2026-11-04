@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getResellerAccess, approveResellerAccess } from './resellerAccess.js';
+import { getResellerAccess, approveResellerAccess, ensureMasterResellerAccess } from './resellerAccess.js';
 
 function createReadClient(result) {
   const chain = {
@@ -67,6 +67,49 @@ describe('resellerAccess — leitura do vínculo (RLS)', () => {
 
   it('cliente ausente falha sem mascarar configuração', async () => {
     await assert.rejects(getResellerAccess(null, 'u1'), /não configurado/i);
+  });
+});
+
+describe('resellerAccess — auto-vínculo do Master', () => {
+  it('chama a RPC e devolve o vínculo ativo', async () => {
+    let call = null;
+    const client = {
+      rpc: async (name, args) => {
+        call = { name, args };
+        return { data: { reseller_id: 'r1', status: 'ativo', created: true }, error: null };
+      },
+    };
+    const out = await ensureMasterResellerAccess(client);
+    assert.equal(call.name, 'ensure_master_reseller_access');
+    assert.equal(call.args, undefined);
+    assert.equal(out.reseller_id, 'r1');
+    assert.equal(out.created, true);
+  });
+
+  it('propaga erro do backend e rejeita resposta sem vínculo', async () => {
+    await assert.rejects(
+      ensureMasterResellerAccess({
+        rpc: async () => ({ data: null, error: { message: 'Sem permissao' } }),
+      }),
+      /Sem permissao/,
+    );
+    await assert.rejects(
+      ensureMasterResellerAccess({ rpc: async () => ({ data: {}, error: null }) }),
+      /Resposta inválida/,
+    );
+  });
+
+  it('rejeita vínculo inativo e cliente ausente', async () => {
+    await assert.rejects(
+      ensureMasterResellerAccess({
+        rpc: async () => ({
+          data: { reseller_id: 'r1', status: 'suspenso', created: false },
+          error: null,
+        }),
+      }),
+      /não está ativo/,
+    );
+    await assert.rejects(ensureMasterResellerAccess(null), /não configurado/i);
   });
 });
 

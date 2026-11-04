@@ -5,6 +5,11 @@
 
 \set ON_ERROR_STOP on
 
+-- A7: o cleanup inicial roda fora da transacao para remover residuos antigos;
+-- a execucao seguinte roda em transacao e o rollback remove apenas as fixtures
+-- desta execucao, inclusive em caso de falha.
+select set_config('test.fail_count', '0', false);
+
 -- Helper to clean test data
 do $$
 begin
@@ -33,6 +38,8 @@ begin
   delete from auth.users where id in ('11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','33333333-3333-3333-3333-333333333333');
 end;
 $$;
+
+begin;
 
 -- Create test users in auth.users (minimal fields)
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data, is_super_admin, confirmation_token, recovery_token)
@@ -129,7 +136,8 @@ on conflict (id) do nothing;
 insert into profiles (id, email, name, platform_role) values ('44444444-4444-4444-4444-444444444444', 'operator@test.local', 'Operator', 'USER') on conflict (id) do nothing;
 insert into company_members (company_id, user_id, role, active) values ((select id from companies where slug='empresa-a'), '44444444-4444-4444-4444-444444444444', 'OPERATOR', true) on conflict (company_id,user_id) do update set role='OPERATOR', active=true;
 
--- Helper function to run a test and output PASS/FAIL
+-- Helper function to run a test and output PASS/FAIL.
+-- O contador em GUC garante exit code != 0 no fim da suite quando houver FAIL.
 create or replace function test_assert(p_test text, p_condition boolean, p_detail text default null)
 returns void
 language plpgsql
@@ -138,10 +146,19 @@ begin
   if p_condition then
     raise notice 'PASS | % | %', p_test, coalesce(p_detail,'');
   else
+    perform set_config(
+      'test.fail_count',
+      (coalesce(current_setting('test.fail_count', true), '0')::int + 1)::text,
+      false
+    );
     raise notice 'FAIL | % | %', p_test, coalesce(p_detail,'');
   end if;
 end;
 $$;
+
+-- O event trigger de endurecimento revoga EXECUTE de novas funcoes publicas.
+-- test_assert e um artefato de teste chamado tambem sob role authenticated.
+grant execute on function test_assert(text,boolean,text) to authenticated, anon, service_role;
 
 -- Begin tests
 \echo '=== START RLS TESTS ==='
@@ -210,9 +227,12 @@ $$;
 do $$
 declare
   err text;
-  v_cat_a uuid := (select id from categories where company_id=(select id from companies where slug='empresa-a') and name='Cat A');
-  v_cat_b uuid := (select id from categories where company_id=(select id from companies where slug='empresa-b') and name='Cat B');
+  v_cat_a uuid;
+  v_cat_b uuid;
 begin
+  reset role; reset request.jwt.claim.sub;
+  select id into v_cat_a from categories where company_id=(select id from companies where slug='empresa-a') and name='Cat A';
+  select id into v_cat_b from categories where company_id=(select id from companies where slug='empresa-b') and name='Cat B';
   perform set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
   perform set_config('role', 'authenticated', true);
   -- update own
@@ -231,6 +251,7 @@ begin
     perform set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', true);
     perform test_assert('3b USER_A UPDATE cat B blocked (0 rows)', (select name from categories where id=v_cat_b)='Cat B', 'name='||(select name from categories where id=v_cat_b));
   end;
+  reset role; reset request.jwt.claim.sub;
 end;
 $$;
 
@@ -316,11 +337,11 @@ declare
 begin
   perform set_config('request.jwt.claim.sub', '33333333-3333-3333-3333-333333333333', true);
   perform set_config('role', 'authenticated', true);
-  select count(*) into cnt from companies;
-  -- PLATFORM_ADMIN should see both companies via is_platform_admin()
+  select count(*) into cnt from companies where slug in ('empresa-a','empresa-b');
+  -- PLATFORM_ADMIN should see both test companies via is_platform_admin()
   perform test_assert('8a PLATFORM_ADMIN SELECT companies (both)', cnt=2, 'cnt='||cnt);
-  select count(*) into cnt from profiles;
-  perform test_assert('8b PLATFORM_ADMIN SELECT profiles', cnt>=3, 'cnt='||cnt);
+  select count(*) into cnt from profiles where id in ('11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','33333333-3333-3333-3333-333333333333');
+  perform test_assert('8b PLATFORM_ADMIN SELECT profiles', cnt=3, 'cnt='||cnt);
 end;
 $$;
 
@@ -602,6 +623,11 @@ begin
   end;
 end;
 $$;
+
+-- A7.1: como a suite inteira roda em uma transacao, set_config(..., true)
+-- persiste ate o final dela. Garante role/JWT de sessao antes do setup a seguir.
+reset role;
+reset request.jwt.claim.sub;
 
 -- ============================================================
 -- FASE 4.2 HARDENING TESTS (append, preserva suite anterior)
@@ -962,6 +988,55 @@ begin
 end;
 $$;
 
+-- H18: helpers SECURITY DEFINER nao podem ser sequestrados por pg_temp.
+do $$
+declare
+  v_company_b uuid := (select id from companies where slug='empresa-b');
+  v_actor uuid := '99999999-9999-4999-8999-999999999999';
+  v_admin_before boolean;
+  v_admin_after boolean;
+  v_role_before text;
+  v_role_after text;
+begin
+  reset role; reset request.jwt.claim.sub;
+  perform set_config('request.jwt.claim.sub', v_actor::text, true);
+  perform set_config('role', 'authenticated', true);
+  select public.is_platform_admin() into v_admin_before;
+  select public.member_role(v_company_b)::text into v_role_before;
+
+  create temp table profiles (id uuid, platform_role text);
+  insert into pg_temp.profiles values (v_actor, 'PLATFORM_ADMIN');
+  create temp table company_members (company_id uuid, user_id uuid, role public.company_role, active boolean);
+  insert into pg_temp.company_members values (v_company_b, v_actor, 'OWNER', true);
+
+  select public.is_platform_admin() into v_admin_after;
+  select public.member_role(v_company_b)::text into v_role_after;
+
+  drop table if exists pg_temp.profiles;
+  drop table if exists pg_temp.company_members;
+  reset role; reset request.jwt.claim.sub;
+
+  perform test_assert('H18a is_platform_admin ignora pg_temp.profiles',
+    v_admin_after = v_admin_before,
+    'before='||coalesce(v_admin_before::text,'null')||' after='||coalesce(v_admin_after::text,'null'));
+  perform test_assert('H18b member_role ignora pg_temp.company_members',
+    v_role_after is not distinct from v_role_before,
+    'before='||coalesce(v_role_before,'null')||' after='||coalesce(v_role_after,'null'));
+end;
+$$;
+
+-- Fail-fast: qualquer FAIL incrementado em test.fail_count aborta a suite.
+do $$
+declare
+  v_fail int := coalesce(current_setting('test.fail_count', true), '0')::int;
+begin
+  if v_fail > 0 then
+    raise exception 'RLS TESTS FAILED: % falha(s)', v_fail;
+  end if;
+  raise notice 'RLS TESTS PASSED: 0 falhas';
+end;
+$$;
+
 -- Cleanup helpers
 drop function if exists test_assert(text,boolean,text);
 
@@ -969,3 +1044,4 @@ drop function if exists test_assert(text,boolean,text);
 -- Reset
 reset role;
 reset request.jwt.claim.sub;
+rollback;

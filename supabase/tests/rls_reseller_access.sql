@@ -1,7 +1,7 @@
 -- Acesso do revendedor: RLS, vínculo, suspensão/reativação/revogação.
--- Execução local (após 20261105000000_dellyvery3_reseller_access.sql):
+-- Execução local (após 20261113000000_dellyvery3_reseller_security_hardening_acl.sql):
 --   Get-Content -Raw supabase/tests/rls_reseller_access.sql | docker exec -i supabase_db_dellyvery-3 psql -U postgres -d postgres -v ON_ERROR_STOP=1
--- Falha: RAISE EXCEPTION. Sucesso: NOTICE "PASS <id> (<n>/16)".
+-- Falha: RAISE EXCEPTION. Sucesso: NOTICE "PASS <id> (<n>/14)".
 
 do $$
 declare
@@ -10,6 +10,7 @@ declare
   v_other    uuid := '88888888-8888-8888-8888-888888888888';
   v_invite   uuid := '99999999-9999-4999-8999-999999999991';
   v_invite2  uuid := '99999999-9999-4999-8999-999999999992';
+  v_invite3  uuid := '99999999-9999-4999-8999-999999999993';
   v_reseller uuid;
   v_count int;
   v_json jsonb;
@@ -17,7 +18,7 @@ declare
 begin
   -- Setup
   delete from public.resellers where user_id in (v_admin, v_user, v_other);
-  delete from public.reseller_invites where id in (v_invite, v_invite2);
+  delete from public.reseller_invites where id in (v_invite, v_invite2, v_invite3);
   delete from public.profiles where id in (v_admin, v_user, v_other);
   delete from auth.users where id in (v_admin, v_user, v_other);
 
@@ -38,7 +39,9 @@ begin
     (v_invite, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1', 'Reseller User', '5511990000101', 'aguardando_aprovacao',
      '{"email":"ra_user@test.local","phone":"5511990000101"}'::jsonb),
     (v_invite2, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2', 'Reseller User 2', '5511990000102', 'aguardando_aprovacao',
-     '{"email":"ra_other@test.local","phone":"5511990000102"}'::jsonb);
+     '{"email":"ra_other@test.local","phone":"5511990000102"}'::jsonb),
+    (v_invite3, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3', 'Reseller Direct Insert', '5511990000103', 'aguardando_aprovacao',
+     '{"email":"ra_admin@test.local","phone":"5511990000103"}'::jsonb);
 
   -- A1: RPC de aprovação não é executável pelo navegador.
   execute 'set role authenticated';
@@ -112,10 +115,16 @@ begin
   v_n := v_n + 1; raise notice 'PASS B2 (%/14)', v_n;
 
   -- B3: admin Master lê todos.
+  execute 'set role service_role';
+  select public.approve_reseller_access(v_invite2, v_other, v_admin) into v_json;
+  execute 'reset role';
+  if (v_json ->> 'status') <> 'ativo' then
+    raise exception 'FAIL B3 setup: segundo vinculo nao ativado: %', v_json;
+  end if;
   execute 'set role authenticated';
   perform set_config('request.jwt.claim.sub', v_admin::text, false);
-  select count(*) into v_count from public.resellers;
-  if v_count <> 1 then raise exception 'FAIL B3: admin leu % vínculos', v_count; end if;
+  select count(*) into v_count from public.resellers where user_id in (v_user, v_other);
+  if v_count <> 2 then raise exception 'FAIL B3: admin leu % vínculos', v_count; end if;
   perform set_config('request.jwt.claim.sub', '', false);
   execute 'reset role';
   v_n := v_n + 1; raise notice 'PASS B3 (%/14)', v_n;
@@ -124,7 +133,7 @@ begin
   execute 'set role authenticated';
   perform set_config('request.jwt.claim.sub', v_admin::text, false);
   begin
-    insert into public.resellers (user_id, invite_id, status) values (v_other, v_invite2, 'ativo');
+    insert into public.resellers (user_id, invite_id, status) values (v_admin, v_invite3, 'ativo');
     raise exception 'FAIL B4: insert direto passou';
   exception when others then
     if sqlerrm not ilike '%permission%' and sqlerrm not ilike '%permiss%' and sqlerrm not ilike '%row-level%' then raise; end if;
@@ -165,14 +174,14 @@ begin
   execute 'set role authenticated';
   perform set_config('request.jwt.claim.sub', v_admin::text, false);
   begin
-    update public.reseller_invites set status = 'aprovado' where id = v_invite2;
+    update public.reseller_invites set status = 'aprovado' where id = v_invite3;
     raise exception 'FAIL C2: aprovação direta passou';
   exception when others then
     if sqlerrm not ilike '%fluxo de acesso do revendedor%' then raise; end if;
   end;
   perform set_config('request.jwt.claim.sub', '', false);
   execute 'reset role';
-  if (select status from public.reseller_invites where id = v_invite2) <> 'aguardando_aprovacao' then
+  if (select status from public.reseller_invites where id = v_invite3) <> 'aguardando_aprovacao' then
     raise exception 'FAIL C2: status alterado após bloqueio';
   end if;
   v_n := v_n + 1; raise notice 'PASS C2 (%/14)', v_n;
@@ -211,7 +220,7 @@ begin
 
   -- Cleanup
   delete from public.resellers where user_id in (v_admin, v_user, v_other);
-  delete from public.reseller_invites where id in (v_invite, v_invite2);
+  delete from public.reseller_invites where id in (v_invite, v_invite2, v_invite3);
   delete from public.profiles where id in (v_admin, v_user, v_other);
   delete from auth.users where id in (v_admin, v_user, v_other);
   raise notice 'ALL PASS (14/14)';

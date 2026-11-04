@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="pt-BR">
+  <body style="font-family: Arial, sans-serif; color: #111827; line-height: 1.5;">
+    <h2 style="margin: 0 0 16px;">Confirme a posse do seu e-mail</h2>
+    <p>Use o código abaixo para concluir a verificação do convite:</p>
+    <p style="font-size: 28px; font-weight: bold; letter-spacing: 6px; margin: 24px 0;">{{ .Token }}</p>
+    <p>O código expira em 1 hora e só pode ser usado uma vez.</p>
+    <p style="margin-top: 24px;">
+      <a href="{{ .ConfirmationURL }}">Abrir o link de confirmação</a>
+    </p>
+    <p style="color: #6b7280; font-size: 13px;">
+      Se você não solicitou este código, ignore esta mensagem.
+    </p>
+  </body>
+</html>

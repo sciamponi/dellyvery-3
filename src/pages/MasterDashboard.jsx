@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/api/supabaseClient';
 import { listLeads, leadStatusLabel, leadBillingLabel } from '@/api/leads';
+import { ensureMasterResellerAccess } from '@/api/resellerAccess';
 import { summarizeLeads } from '@/lib/leadStats';
 import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, AlertTriangle, Users, UserPlus, LayoutGrid, CalendarClock } from 'lucide-react';
+import { useToast } from '@/components/ui/use-toast';
+import { RefreshCw, AlertTriangle, Users, UserPlus, LayoutGrid, CalendarClock, Handshake, CreditCard } from 'lucide-react';
 
 function Spinner() {
   return (
@@ -19,9 +21,12 @@ function Spinner() {
 // Dashboard Master: indicadores derivados dos leads reais (RLS: só admin).
 // Sem metas ou gráficos fictícios; vazio/erro de rede com estados próprios.
 export default function MasterDashboard() {
+  const navigate = useNavigate();
+  const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [leads, setLeads] = useState([]);
+  const [openingReseller, setOpeningReseller] = useState(false);
 
   const load = async () => {
     setError('');
@@ -40,6 +45,23 @@ export default function MasterDashboard() {
   if (loading) return <Spinner />;
 
   const stats = summarizeLeads(leads);
+
+  const handleOpenReseller = async () => {
+    setOpeningReseller(true);
+    try {
+      await ensureMasterResellerAccess(supabase);
+      navigate('/revenda');
+    } catch (err) {
+      toast({
+        duration: 4000,
+        title: 'Não foi possível abrir o painel',
+        description: err?.message || 'Tente novamente.',
+        variant: 'destructive',
+      });
+    } finally {
+      setOpeningReseller(false);
+    }
+  };
 
   const cards = [
     { icon: Users, label: 'Interessados', value: stats.total, to: '/master/interessados' },
@@ -84,6 +106,15 @@ export default function MasterDashboard() {
   return (
     <div>
       <PageHeader title="Dashboard Master" description="Acompanhamento dos interessados">
+        <Button size="sm" onClick={handleOpenReseller} disabled={openingReseller}>
+          <Handshake className="h-4 w-4" /> {openingReseller ? 'Abrindo...' : 'Meu Painel Revendedor'}
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <Link to="/master/revenda"><Handshake className="h-4 w-4" /> Gestão de Revenda</Link>
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <Link to="/master/compras"><CreditCard className="h-4 w-4" /> Compras Pix</Link>
+        </Button>
         <Button variant="outline" size="sm" onClick={load}><RefreshCw className="h-4 w-4" /> Atualizar</Button>
       </PageHeader>
 

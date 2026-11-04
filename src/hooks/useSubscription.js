@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { fromSupabasePlan } from '@/api/plans';
 
@@ -8,6 +8,8 @@ export function useSubscription(companyId) {
   const [loading, setLoading] = useState(true);
   const [subscription, setSubscription] = useState(null);
   const [plan, setPlan] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const reload = useCallback(() => setRefreshKey((value) => value + 1), []);
 
   useEffect(() => {
     if (!companyId) {
@@ -15,6 +17,7 @@ export function useSubscription(companyId) {
       return;
     }
     let cancelled = false;
+    setLoading(true);
     const load = async () => {
       try {
         const { data: sub, error } = await supabase
@@ -41,17 +44,27 @@ export function useSubscription(companyId) {
     };
     load();
     return () => { cancelled = true; };
-  }, [companyId]);
+  }, [companyId, refreshKey]);
 
   const now = Date.now();
   const trialEndsAt = subscription?.trial_ends_at || subscription?.expires_at || null;
+  const expiresAt = subscription?.expires_at || null;
+  const expiresInFuture = expiresAt ? new Date(expiresAt).getTime() > now : false;
   const isActive = subscription?.status === 'ativo';
   const isTrial = subscription?.status === 'trial';
+  const isCanceled = subscription?.status === 'cancelado';
+  const isFree = !!plan?.is_free;
   const trialDaysLeft = isTrial && trialEndsAt
     ? Math.max(0, Math.ceil((new Date(trialEndsAt).getTime() - now) / (24 * 60 * 60 * 1000)))
     : 0;
-  const isCanceled = subscription?.status === 'cancelado';
-  const hasAccess = isActive || (isTrial && trialDaysLeft > 0);
+  const hasAccess = isFree
+    ? (isActive || isTrial)
+    : isActive
+      ? (!expiresAt || expiresInFuture)
+      : (isTrial && trialDaysLeft > 0) || (isCanceled && expiresInFuture);
 
-  return { loading, subscription, plan, trialDaysLeft, isActive, isTrial, isCanceled, hasAccess, setSubscription };
+  return {
+    loading, subscription, plan, trialDaysLeft, isActive, isTrial, isCanceled,
+    isFree, expiresAt, expiresInFuture, hasAccess, setSubscription, reload,
+  };
 }

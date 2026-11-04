@@ -1,16 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { Outlet, Link, useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { supabase } from '@/api/supabaseClient';
 import { isPlatformAdmin } from '@/api/plans';
 import { getResellerAccess } from '@/api/resellerAccess';
+import { getMyResellerClientAccess } from '@/api/resellerClients';
 import NotificationBell from '@/components/NotificationBell';
 import SelectGuard from '@/components/SelectGuard';
+import { availablePanels, currentPanelFromPath } from '@/lib/panelSwitch';
 import {
   LayoutDashboard, ShoppingBag, UtensilsCrossed, Users, User,
   Settings, LogOut, Menu as MenuIcon, X, Store, Wallet, CreditCard, LayoutGrid,
-  ContactRound, Megaphone, UserPlus, ShieldCheck, Undo2, Armchair, FileText,
-  Handshake, Building2
+  ContactRound, Megaphone, UserPlus, ShieldCheck, Armchair, FileText,
+  Handshake, Building2, Check
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -34,22 +36,34 @@ const MASTER_NAV = [
   { label: 'Empresas', path: '/master/empresas', icon: Building2 },
   { label: 'Interessados', path: '/master/interessados', icon: UserPlus },
   { label: 'Planos', path: '/master/planos', icon: LayoutGrid },
+  {
+    label: 'Revenda',
+    path: '/master/revenda',
+    icon: Handshake,
+    activePrefixes: ['/master/revenda', '/master/compras'],
+  },
   { label: 'Contratos', path: '/master/contratos', icon: FileText },
-  { label: 'Revenda', path: '/master/revenda', icon: Handshake },
 ];
 
-// Navegação da área do revendedor (contexto /revenda). Clientes, créditos e
-// ativações ficam visíveis como "em breve", sem criar módulos nesta etapa.
 const RESELLER_NAV = [
   { label: 'Visão geral', path: '/revenda', icon: LayoutDashboard },
-  { label: 'Clientes', path: '/revenda/clientes', icon: Users, soon: true },
-  { label: 'Créditos', path: '/revenda/creditos', icon: Wallet, soon: true },
-  { label: 'Ativações', path: '/revenda/ativacoes', icon: CreditCard, soon: true },
+  { label: 'Clientes', path: '/revenda/clientes', icon: Users },
+  { label: 'Créditos', path: '/revenda/creditos', icon: Wallet },
+  { label: 'Ativações', path: '/revenda/ativacoes', icon: CreditCard },
 ];
+
+const PANEL_META = {
+  client: { label: 'Painel Cliente', icon: Store },
+  master: { label: 'Painel Master', path: '/master', icon: ShieldCheck },
+  reseller: { label: 'Painel Revendedor', path: '/revenda', icon: Handshake },
+};
 
 export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  // Repassa o contexto do gate pai (ex.: { reseller } de /revenda) para as
+  // paginas filhas. Sem isso, o Outlet interno nao herda o reseller_id.
+  const outletContext = useOutletContext();
   const [company, setCompany] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   // Empresa/usuário vêm do contexto Supabase (RLS).
@@ -63,6 +77,8 @@ export default function AppLayout() {
   const [isAdmin, setIsAdmin] = useState(false);
   // Atalho de revenda apenas quando o vínculo ativo é confirmado pela RLS.
   const [isReseller, setIsReseller] = useState(false);
+  const resellerAccessUserId = useRef(null);
+  const [managedClient, setManagedClient] = useState(false);
 
   useEffect(() => {
     setCompany(sbCompany || null);
@@ -80,20 +96,46 @@ export default function AppLayout() {
 
   useEffect(() => {
     let active = true;
-    setIsReseller(false);
-    if (!sbUser?.id) return undefined;
+    if (!sbUser?.id) {
+      resellerAccessUserId.current = null;
+      setIsReseller(false);
+      return undefined;
+    }
+    if (resellerAccessUserId.current !== sbUser.id) {
+      resellerAccessUserId.current = sbUser.id;
+      setIsReseller(false);
+    }
     getResellerAccess(supabase, sbUser.id)
       .then((access) => { if (active) setIsReseller(access.status === 'allowed'); })
       .catch(() => { if (active) setIsReseller(false); });
     return () => { active = false; };
-  }, [sbUser?.id]);
+  }, [sbUser?.id, inReseller]);
+
+  useEffect(() => {
+    let active = true;
+    setManagedClient(false);
+    if (!sbUser?.id || inMaster || inReseller) return undefined;
+    getMyResellerClientAccess(supabase)
+      .then((access) => { if (active) setManagedClient(Boolean(access)); })
+      .catch(() => { if (active) setManagedClient(false); });
+    return () => { active = false; };
+  }, [sbUser?.id, inMaster, inReseller]);
 
   const handleLogout = async () => {
     await sbSignOut();
     navigate('/login');
   };
 
-  const isActive = (path) => location.pathname === path;
+  const isActive = (item) => {
+    const path = item?.path;
+    if (!path) return false;
+    if (item.activePrefixes) {
+      return item.activePrefixes.some(
+        (prefix) => location.pathname === prefix || location.pathname.startsWith(`${prefix}/`),
+      );
+    }
+    return location.pathname === path;
+  };
 
   const handleSelectNotification = (notif) => {
     if (notif?.order_id) {
@@ -104,8 +146,58 @@ export default function AppLayout() {
   };
 
   const homePath = inMaster ? '/master' : inReseller ? '/revenda' : '/dashboard';
-  const navItems = inMaster ? MASTER_NAV : inReseller ? RESELLER_NAV : NAV_ITEMS;
+  const baseNavItems = inMaster ? MASTER_NAV : inReseller ? RESELLER_NAV : NAV_ITEMS;
+  const navItems = !inMaster && !inReseller && managedClient
+    ? baseNavItems.filter((item) => item.path !== '/assinatura')
+    : baseNavItems;
   const companyHomePath = memberships?.length ? '/dashboard' : '/criar-restaurante';
+  const currentPanel = currentPanelFromPath(location.pathname);
+  const panelOptions = availablePanels({ isAdmin, isReseller, currentPanel })
+    .map((key) => {
+      const meta = PANEL_META[key];
+      return {
+        key,
+        label: meta.label,
+        icon: meta.icon,
+        path: key === 'client' ? companyHomePath : meta.path,
+      };
+    });
+
+  const handlePanelSelect = (panel) => {
+    if (panel.key !== currentPanel) navigate(panel.path);
+    setMobileOpen(false);
+  };
+
+  const panelSwitcher = panelOptions.length > 1 ? (
+    <div className="mb-2">
+      <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Painéis
+      </p>
+      <div className="space-y-1">
+        {panelOptions.map((panel) => {
+          const active = panel.key === currentPanel;
+          return (
+            <button
+              key={panel.key}
+              type="button"
+              onClick={() => handlePanelSelect(panel)}
+              disabled={active}
+              aria-current={active ? 'page' : undefined}
+              className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm transition-colors ${
+                active
+                  ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
+                  : 'text-sidebar-foreground hover:bg-sidebar-accent/50'
+              }`}
+            >
+              <panel.icon className="h-5 w-5 shrink-0" />
+              <span className="truncate">{panel.label}</span>
+              {active && <Check className="ml-auto h-4 w-4 shrink-0" />}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div className="min-h-screen bg-background lg:h-screen lg:overflow-hidden">
@@ -140,7 +232,7 @@ export default function AppLayout() {
               onClick={() => !item.soon && navigate(item.path)}
               disabled={item.soon}
               className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
-                isActive(item.path) && !item.soon
+                    isActive(item) && !item.soon
                   ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                   : 'text-sidebar-foreground hover:bg-sidebar-accent/50'
               } ${item.soon ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -152,39 +244,11 @@ export default function AppLayout() {
           ))}
         </nav>
         <div className="border-t border-sidebar-border p-3">
-          {inMaster ? (
-            <button onClick={() => navigate('/dashboard')} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors">
-              <Undo2 className="h-5 w-5" /> Voltar ao sistema
-            </button>
-          ) : inReseller ? (
-            <>
-              <button onClick={() => navigate(companyHomePath)} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
-                <Store className="h-5 w-5" /> Meu sistema
-              </button>
-              {isAdmin && (
-                <button onClick={() => navigate('/master')} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
-                  <ShieldCheck className="h-5 w-5" /> Acessar Master
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              {isAdmin && (
-                <button onClick={() => navigate('/master')} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
-                  <ShieldCheck className="h-5 w-5" /> Acessar Master
-                </button>
-              )}
-              {isReseller && (
-                <button onClick={() => navigate('/revenda')} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
-                  <Handshake className="h-5 w-5" /> Área do Revendedor
-                </button>
-              )}
-              {company && (
-                <Link to={`/cardapio/${company.slug}`} className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
-                  <Store className="h-5 w-5" /> Ver cardápio
-                </Link>
-              )}
-            </>
+          {panelSwitcher}
+          {!inMaster && !inReseller && company && (
+            <Link to={`/cardapio/${company.slug}`} className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
+              <Store className="h-5 w-5" /> Ver cardápio
+            </Link>
           )}
           <button onClick={handleLogout} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-sidebar-accent/50 transition-colors">
             <LogOut className="h-5 w-5" /> Sair
@@ -236,7 +300,7 @@ export default function AppLayout() {
                   onClick={() => { if (!item.soon) { navigate(item.path); setMobileOpen(false); } }}
                   disabled={item.soon}
                   className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
-                    isActive(item.path) && !item.soon
+                isActive(item) && !item.soon
                       ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                       : 'text-sidebar-foreground hover:bg-sidebar-accent/50'
                   } ${item.soon ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -248,39 +312,11 @@ export default function AppLayout() {
               ))}
             </nav>
             <div className="border-t border-sidebar-border p-3">
-              {inMaster ? (
-                <button onClick={() => { navigate('/dashboard'); setMobileOpen(false); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors">
-                  <Undo2 className="h-5 w-5" /> Voltar ao sistema
-                </button>
-              ) : inReseller ? (
-                <>
-                  <button onClick={() => { navigate(companyHomePath); setMobileOpen(false); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
-                    <Store className="h-5 w-5" /> Meu sistema
-                  </button>
-                  {isAdmin && (
-                    <button onClick={() => { navigate('/master'); setMobileOpen(false); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
-                      <ShieldCheck className="h-5 w-5" /> Acessar Master
-                    </button>
-                  )}
-                </>
-              ) : (
-                <>
-                  {isAdmin && (
-                    <button onClick={() => { navigate('/master'); setMobileOpen(false); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
-                      <ShieldCheck className="h-5 w-5" /> Acessar Master
-                    </button>
-                  )}
-                  {isReseller && (
-                    <button onClick={() => { navigate('/revenda'); setMobileOpen(false); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
-                      <Handshake className="h-5 w-5" /> Área do Revendedor
-                    </button>
-                  )}
-                  {company && (
-                    <Link to={`/cardapio/${company.slug}`} onClick={() => setMobileOpen(false)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
-                      <Store className="h-5 w-5" /> Ver cardápio
-                    </Link>
-                  )}
-                </>
+              {panelSwitcher}
+              {!inMaster && !inReseller && company && (
+                <Link to={`/cardapio/${company.slug}`} onClick={() => setMobileOpen(false)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors mb-1">
+                  <Store className="h-5 w-5" /> Ver cardápio
+                </Link>
               )}
               <button onClick={handleLogout} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-sidebar-accent/50 transition-colors">
                 <LogOut className="h-5 w-5" /> Sair
@@ -294,7 +330,7 @@ export default function AppLayout() {
       <main className="lg:pl-64 lg:h-screen">
         <div className="mx-auto max-w-6xl p-4 md:p-8 lg:h-full lg:min-h-0 lg:overflow-y-auto [font-size:98%]">
           <SelectGuard>
-            <Outlet />
+            <Outlet context={outletContext} />
           </SelectGuard>
         </div>
       </main>

@@ -38,6 +38,23 @@ export async function getResellerAccess(client, userId) {
   return { status: 'allowed', reseller: data, error: null };
 }
 
+export async function ensureMasterResellerAccess(client) {
+  const c = mustBeConfigured(client);
+  const { data, error } = await c.rpc('ensure_master_reseller_access');
+
+  if (error) {
+    throw new Error(error.message || 'Não foi possível liberar o acesso de revenda');
+  }
+  if (!data?.reseller_id) {
+    throw new Error('Resposta inválida do acesso de revenda');
+  }
+  if (data.status !== 'ativo') {
+    throw new Error('O acesso de revenda não está ativo');
+  }
+
+  return data;
+}
+
 async function functionErrorMessage(error) {
   const fallback = error?.message || 'Não foi possível concluir a aprovação';
   const context = error?.context;

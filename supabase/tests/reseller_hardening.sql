@@ -9,7 +9,7 @@ declare
   v_token text;
   v_n int := 0;
 begin
-  delete from public.reseller_invites where phone like '55119900006%';
+  delete from public.reseller_invites where phone = '5511990000061';
   delete from public.reseller_rpc_rate_limits where bucket = 'resolve:203.0.113.77';
 
   -- H1: segundo convite ativo para o mesmo telefone é bloqueado pelo índice.
@@ -58,7 +58,7 @@ begin
   perform set_config('request.headers', '{}', false);
   v_n := v_n + 1; raise notice 'PASS H4 (%/4)', v_n;
 
-  delete from public.reseller_invites where phone like '55119900006%';
+  delete from public.reseller_invites where phone = '5511990000061';
   delete from public.reseller_rpc_rate_limits where bucket = 'resolve:203.0.113.77';
   raise notice 'ALL PASS (4/4)';
 end;

@@ -11,6 +11,7 @@ import {
   sweepExpiredInvites,
 } from '@/api/resellers';
 import { approveResellerAccess } from '@/api/resellerAccess';
+import { getResellerCreditBalance, grantResellerCredits } from '@/api/resellerCredits';
 import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
@@ -22,7 +23,7 @@ import { useToast } from '@/components/ui/use-toast';
 import {
   ShieldAlert, RefreshCw, UserPlus, MessageCircle, ChevronDown,
   X, Pause, RotateCcw, Pencil, Copy, ExternalLink, AlertTriangle,
-  Send, Link2,
+  Send, Link2, Wallet,
 } from 'lucide-react';
 
 function Spinner() {
@@ -107,6 +108,13 @@ export default function MasterRevenda() {
   // Confirmação de transição (aprovar/recusar/suspender/...).
   const [confirm, setConfirm] = useState(null); // { invite, to }
 
+  const [creditDialog, setCreditDialog] = useState(null); // { invite, binding }
+  const [creditBalance, setCreditBalance] = useState(null);
+  const [creditAmount, setCreditAmount] = useState('');
+  const [creditReason, setCreditReason] = useState('');
+  const [creditError, setCreditError] = useState('');
+  const [creditSaving, setCreditSaving] = useState(false);
+
   const load = async () => {
     setLoadError('');
     try {
@@ -190,6 +198,51 @@ export default function MasterRevenda() {
     setApproval(invite);
     setApprovalEmail(normalizeResellerEmail(invite?.registration?.email));
     setApprovalError('');
+  };
+
+  const openCredit = async (invite) => {
+    const binding = resellerByInvite.get(invite.id);
+    if (!binding) return;
+    setCreditDialog({ invite, binding });
+    setCreditBalance(null);
+    setCreditAmount('');
+    setCreditReason('');
+    setCreditError('');
+    try {
+      setCreditBalance(await getResellerCreditBalance(supabase, binding.id));
+    } catch (err) {
+      setCreditError(err?.message || 'Não foi possível consultar o saldo.');
+    }
+  };
+
+  const handleGrantCredits = async () => {
+    if (!creditDialog?.binding) return;
+    const amount = Number(creditAmount);
+    if (!Number.isInteger(amount) || amount <= 0) {
+      setCreditError('Informe uma quantidade inteira de créditos maior que zero.');
+      return;
+    }
+    setCreditSaving(true);
+    setCreditError('');
+    try {
+      const out = await grantResellerCredits(
+        supabase,
+        creditDialog.binding.id,
+        amount,
+        creditReason,
+      );
+      setCreditBalance(out?.balance ?? creditBalance);
+      setCreditAmount('');
+      setCreditReason('');
+      notify({
+        title: 'Créditos concedidos',
+        description: `${creditDialog.invite?.name || 'Revendedor'} • saldo ${out?.balance ?? '-'}`,
+      });
+    } catch (err) {
+      setCreditError(err?.message || 'Não foi possível conceder os créditos.');
+    } finally {
+      setCreditSaving(false);
+    }
   };
 
   const presentAccess = (invite, out) => {
@@ -402,6 +455,16 @@ export default function MasterRevenda() {
                 <Link2 className="h-3.5 w-3.5" /> {resendingId === invite.id ? 'Gerando...' : 'Novo link'}
               </Button>
             )}
+            {binding?.status === 'ativo' && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs"
+                onClick={() => openCredit(invite)}
+              >
+                <Wallet className="h-3.5 w-3.5" /> Créditos
+              </Button>
+            )}
             {!binding && (
               <Button size="sm" className="h-8 text-xs" onClick={() => openApproval(invite)}>
                 <Send className="h-3.5 w-3.5" /> Finalizar acesso
@@ -537,7 +600,7 @@ export default function MasterRevenda() {
 
   return (
     <div>
-      <PageHeader title="Revenda" description="Gerenciamento de parceiros e convites">
+      <PageHeader title="Gestão de revendedores" description="Gerenciamento de parceiros e convites">
         <div className="flex gap-2">
           <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => load()}>
             <RefreshCw className="h-3.5 w-3.5" /> Atualizar
@@ -753,6 +816,69 @@ export default function MasterRevenda() {
             <p className="text-[11px] text-muted-foreground">
               O link não é armazenado. Ao fechar esta janela, gere outro se precisar.
             </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!creditDialog}
+        onOpenChange={(v) => { if (!v && !creditSaving) setCreditDialog(null); }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Créditos do revendedor</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-xl bg-muted/50 p-3">
+              <p className="text-xs text-muted-foreground">
+                {creditDialog?.invite?.name || 'Revendedor'}
+              </p>
+              <p className="font-heading text-2xl font-bold text-foreground mt-1">
+                {creditBalance === null ? '—' : creditBalance}
+                <span className="ml-1 text-xs font-normal text-muted-foreground">créditos</span>
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="credit-amount">Quantidade a conceder</Label>
+              <Input
+                id="credit-amount"
+                type="number"
+                min="1"
+                step="1"
+                inputMode="numeric"
+                placeholder="Ex.: 10"
+                value={creditAmount}
+                onChange={(e) => setCreditAmount(e.target.value)}
+                disabled={creditSaving}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="credit-reason">Motivo (opcional)</Label>
+              <Input
+                id="credit-reason"
+                placeholder="Ex.: pacote de créditos"
+                value={creditReason}
+                onChange={(e) => setCreditReason(e.target.value)}
+                disabled={creditSaving}
+                maxLength={200}
+              />
+            </div>
+            {creditError && (
+              <div className="rounded-lg bg-destructive/10 p-2.5 text-xs text-destructive">
+                {creditError}
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              A concessão gera um lançamento no extrato do revendedor e fica registrada na auditoria.
+            </p>
+            <Button
+              className="w-full h-9 text-sm"
+              onClick={handleGrantCredits}
+              disabled={creditSaving}
+            >
+              <Wallet className="h-4 w-4" />
+              {creditSaving ? 'Concedendo...' : 'Conceder créditos'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

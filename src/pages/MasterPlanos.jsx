@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import { listPlans, createPlan, updatePlan, deletePlan, isPlatformAdmin, validatePlanData, missingColumnOf } from '@/api/plans';
+import { getSubscriptionSettings, setSubscriptionGraceDays, setSubscriptionGateEnabled } from '@/api/subscriptionSettings';
 import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,11 @@ export default function MasterPlanos() {
   // Coluna comercial ausente no banco (migration pendente): orienta sem
   // ocultar a mensagem original do erro.
   const [schemaIssue, setSchemaIssue] = useState('');
+  const [subSettings, setSubSettings] = useState(null);
+  const [settingsIssue, setSettingsIssue] = useState('');
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [graceDraft, setGraceDraft] = useState('0');
+  const [gateDraft, setGateDraft] = useState(false);
 
   const loadPlans = async () => {
     try {
@@ -49,12 +55,26 @@ export default function MasterPlanos() {
     }
   };
 
+  const loadSettings = async () => {
+    try {
+      const settings = await getSubscriptionSettings(supabase);
+      setSubSettings(settings);
+      setGraceDraft(String(settings.subscription_grace_days ?? 0));
+      setGateDraft(!!settings.subscription_gate_enabled);
+      setSettingsIssue('');
+    } catch (err) {
+      setSettingsIssue(err?.message || 'Nao foi possivel carregar as configuracoes de assinatura');
+    }
+  };
+
   useEffect(() => {
     const load = async () => {
       try {
         const admin = await isPlatformAdmin(supabase, sbUser?.id);
         setIsAdmin(admin);
-        if (admin) await loadPlans();
+        if (admin) {
+          await Promise.all([loadPlans(), loadSettings()]);
+        }
       } catch (e) { console.error(e); }
       finally { setLoading(false); }
     };
@@ -75,7 +95,7 @@ export default function MasterPlanos() {
 
   const openNew = () => {
     setEditPlan(null);
-    setForm({ name: '', price: 0, billing_cycle: 'monthly', limits_users: 1, limits_orders: -1, limits_products: -1, limits_customers: -1, limits_whatsapp: 0, limits_ia: false, limits_storage_mb: 100, is_popular: false, sort_order: 0, active: true, featuresText: '', description: '', annual_price: '', setup_fee: 0, trial_days: 7, sales_text: '', benefitsText: '' });
+    setForm({ name: '', price: 0, billing_cycle: 'monthly', limits_users: 1, limits_orders: -1, limits_products: -1, limits_customers: -1, limits_whatsapp: 0, limits_ia: false, limits_storage_mb: 100, is_popular: false, is_free: false, sort_order: 0, active: true, featuresText: '', description: '', annual_price: '', setup_fee: 0, trial_days: 7, access_days: '', sales_text: '', benefitsText: '' });
     setDialog(true);
   };
 
@@ -109,6 +129,25 @@ export default function MasterPlanos() {
     } finally { setSaving(false); }
   };
 
+  const handleSaveSettings = async () => {
+    const days = Number(graceDraft);
+    if (!Number.isInteger(days) || days < 0) {
+      toast({ duration: undefined, title: 'Dias de carencia invalidos', variant: 'destructive' });
+      return;
+    }
+    setSettingsSaving(true);
+    try {
+      await setSubscriptionGraceDays(supabase, days);
+      await setSubscriptionGateEnabled(supabase, gateDraft);
+      await loadSettings();
+      toast({ duration: undefined, title: 'Configuracoes de assinatura salvas' });
+    } catch (err) {
+      toast({ duration: undefined, title: 'Erro', description: err?.message || 'Tente novamente', variant: 'destructive' });
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
@@ -133,6 +172,51 @@ export default function MasterPlanos() {
           <Plus className="h-4 w-4" /> Novo plano
         </Button>
       </PageHeader>
+
+      <div className="mb-6 rounded-2xl border border-border bg-card p-5">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="font-heading font-bold text-foreground">Assinaturas</h3>
+            <p className="text-sm text-muted-foreground">
+              Carência aplicada a novas concessões. O bloqueio por assinatura fica desligado por padrão.
+            </p>
+          </div>
+          {subSettings?.updated_at && (
+            <span className="text-xs text-muted-foreground">
+              Atualizado em {new Date(subSettings.updated_at).toLocaleString('pt-BR')}
+            </span>
+          )}
+        </div>
+
+        {settingsIssue && (
+          <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+            {settingsIssue}
+          </div>
+        )}
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-3 sm:items-end">
+          <div className="space-y-2">
+            <Label>Dias de carência</Label>
+            <Input
+              type="number"
+              min="0"
+              step="1"
+              value={graceDraft}
+              onChange={e => setGraceDraft(e.target.value)}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border p-3">
+            <div>
+              <Label className="cursor-pointer">Bloquear acesso por assinatura</Label>
+              <p className="text-xs text-muted-foreground">Ative somente após o backfill.</p>
+            </div>
+            <Switch checked={gateDraft} onCheckedChange={setGateDraft} />
+          </div>
+          <Button onClick={handleSaveSettings} disabled={settingsSaving}>
+            {settingsSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar configurações'}
+          </Button>
+        </div>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {schemaIssue && (
@@ -163,10 +247,15 @@ export default function MasterPlanos() {
                   {p.name}
                   {p.is_popular && <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />}
                 </h3>
-                <p className="mt-1"><span className="font-heading text-xl font-bold">{fmtCurrency(p.price)}</span><span className="text-sm text-muted-foreground">/mês</span></p>
+                <p className="mt-1">
+                  {p.is_free
+                    ? <span className="font-heading text-xl font-bold">Gratuito</span>
+                    : <><span className="font-heading text-xl font-bold">{fmtCurrency(p.price)}</span><span className="text-sm text-muted-foreground">/mês</span></>}
+                </p>
                 {p.annual_price != null && (
-                  <p className="text-xs text-muted-foreground mt-0.5">{fmtCurrency(p.annual_price)}/ano{p.setup_fee > 0 ? ` • setup ${fmtCurrency(p.setup_fee)}` : ''}{p.trial_days > 0 ? ` • ${p.trial_days} dias grátis` : ''}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{fmtCurrency(p.annual_price)}/ano{p.setup_fee > 0 ? ` · setup ${fmtCurrency(p.setup_fee)}` : ''}{p.trial_days > 0 ? ` · ${p.trial_days} dias grátis` : ''}</p>
                 )}
+                <p className="text-xs text-muted-foreground mt-0.5">{p.access_days ? `${p.access_days} dias de acesso por ativação` : 'Duração de acesso não configurada'}</p>
                 {p.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{p.description}</p>}
               </div>
               <div
@@ -209,10 +298,11 @@ export default function MasterPlanos() {
               <div className="space-y-2"><Label>Preço (R$)</Label><Input type="number" min="0" step="0.01" value={form.price || 0} onChange={e => setForm(p => ({ ...p, price: e.target.value }))} /></div>
             </div>
             <div className="space-y-2"><Label>Descrição</Label><Textarea value={form.description || ''} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder="Resumo comercial do plano" rows={2} /></div>
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-4">
               <div className="space-y-2"><Label>Preço anual (R$, opcional)</Label><Input type="number" min="0" step="0.01" value={form.annual_price ?? ''} onChange={e => setForm(p => ({ ...p, annual_price: e.target.value }))} placeholder="Vazio = sem anual" /></div>
               <div className="space-y-2"><Label>Taxa de implantação (R$)</Label><Input type="number" min="0" step="0.01" value={form.setup_fee ?? 0} onChange={e => setForm(p => ({ ...p, setup_fee: e.target.value }))} /></div>
               <div className="space-y-2"><Label>Dias de teste grátis</Label><Input type="number" min="0" step="1" value={form.trial_days ?? 7} onChange={e => setForm(p => ({ ...p, trial_days: e.target.value }))} /></div>
+              <div className="space-y-2"><Label>Dias de acesso</Label><Input type="number" min="1" step="1" value={form['access_days'] ?? ''} onChange={e => setForm(p => ({ ...p, access_days: e.target.value }))} placeholder="Ex.: 30" /></div>
             </div>
             <div className="space-y-2"><Label>Texto comercial</Label><Textarea value={form.sales_text || ''} onChange={e => setForm(p => ({ ...p, sales_text: e.target.value }))} placeholder="Argumento de venda exibido na proposta" rows={2} /></div>
             <div className="space-y-2"><Label>Benefícios (um por linha)</Label><Textarea value={form.benefitsText || ''} onChange={e => setForm(p => ({ ...p, benefitsText: e.target.value }))} placeholder="Suporte prioritário&#10;Treinamento incluso&#10;..." rows={3} /></div>
@@ -236,6 +326,10 @@ export default function MasterPlanos() {
               <div className="flex items-center gap-2 rounded-xl border border-border p-3 flex-1">
                 <Label className="cursor-pointer">IA</Label>
                 <Switch checked={!!form.limits_ia} onCheckedChange={v => setForm(p => ({ ...p, limits_ia: v }))} />
+              </div>
+              <div className="flex items-center gap-2 rounded-xl border border-border p-3 flex-1">
+                <Label className="cursor-pointer">Gratuito</Label>
+                <Switch checked={!!form['is_free']} onCheckedChange={v => setForm(p => ({ ...p, is_free: v }))} />
               </div>
               <div className="flex items-center gap-2 rounded-xl border border-border p-3 flex-1">
                 <Label className="cursor-pointer">Ativo</Label>

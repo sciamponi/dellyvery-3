@@ -47,6 +47,13 @@ begin
     raise exception 'Dependencia de convites de revenda ausente';
   end if;
 
+  if to_regprocedure('public.expire_plan_purchase_requests()') is not null
+     or to_regprocedure('public.confirm_plan_purchase_request(uuid,numeric,text,text)') is not null
+     or to_regprocedure('public.expire_reseller_credit_orders()') is not null
+     or to_regprocedure('public.confirm_reseller_credit_order(uuid,numeric,text)') is not null then
+    raise exception '20261113000000 nao pode ser reaplicada depois das migrations financeiras; restaure o backup e reaplique na ordem';
+  end if;
+
   if to_regnamespace('extensions') is null
      or to_regprocedure('extensions.digest(bytea,text)') is null
      or to_regprocedure('extensions.digest(text,text)') is null

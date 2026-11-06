@@ -2,7 +2,7 @@
 
 ## Regra de segurança
 
-O aceite do convite só conclui o vínculo entre cliente e revendedor depois que o backend registra uma prova de posse do e-mail convidado. A prova não usa `email_confirmed_at`, `amr` do JWT nem OTP de telefone como autorização: ela é criada por uma Edge Function depois de validar um código de e-mail de 6 dígitos no Supabase Auth.
+O aceite do convite só conclui o vínculo entre cliente e revendedor depois que o backend registra uma prova de posse do e-mail convidado. A prova não usa `email_confirmed_at`, `amr` do JWT nem OTP de telefone como autorização: ela é criada por uma Edge Function depois de validar um código de e-mail de 8 dígitos no Supabase Auth.
 
 A RPC `claim_reseller_client_invite` exige, na mesma transação:
 
@@ -18,7 +18,7 @@ A prova é de uso único e expira em 15 minutos. O código enviado pelo Supabase
 1. O cliente autenticado abre `/convite-cliente/:token`.
 2. O frontend chama a Edge Function `reseller-invite-email-proof` com `action = "request"`.
 3. A função resolve o convite, confere que o e-mail da sessão é o e-mail convidado e envia o código via `signInWithOtp` com `shouldCreateUser: false`.
-4. O cliente informa o código de 6 dígitos.
+4. O cliente informa o código de 8 dígitos.
 5. A função chama `verifyOtp({ email, token, type: "email" })`, confirma que o usuário retornado é o mesmo da sessão e grava a prova pela RPC `record_reseller_invite_email_proof`.
 6. O frontend chama `claim_reseller_client_invite`, que consome a prova e cria o vínculo.
 
@@ -27,7 +27,7 @@ Se o e-mail da conta mudar depois da prova, o `claim` falha. Se o convite expira
 ## Comportamento com `Confirm email` habilitado
 
 - `signUp` pode retornar usuário sem sessão e enviar o link de confirmação para `/convite-cliente/:token`.
-- Depois de confirmar o cadastro, o cliente entra e confirma o convite pelo código de 6 dígitos.
+- Depois de confirmar o cadastro, o cliente entra e confirma o convite pelo código de 8 dígitos.
 - O código é independente do link de confirmação do cadastro e não é substituído por ele.
 
 ## Comportamento com `Confirm email` desabilitado
@@ -48,7 +48,8 @@ Se o e-mail da conta mudar depois da prova, o `claim` falha. Se o convite expira
 ## Dependências externas
 
 - Entrega de e-mail do Supabase Auth: SMTP do projeto hospedado ou Mailpit local em `http://127.0.0.1:54324`.
-- Template de e-mail com `{{ .Token }}` (código de 6 dígitos). O template local fica em `supabase/templates/magic_link.html` e está registrado em `supabase/config.toml`; o projeto hospedado precisa do template equivalente cadastrado no painel do Supabase.
+- Template de e-mail com `{{ .Token }}` (código de 8 dígitos). O template local fica em `supabase/templates/magic_link.html` e está registrado em `supabase/config.toml`; o projeto hospedado precisa do template equivalente cadastrado no painel do Supabase.
+- O template local contém `{{ .Token }}` e `{{ .ConfirmationURL }}`; o fluxo valida somente o código. A coexistência dos dois precisa ser coberta pelo teste de integração para evitar consumo do token pelo link.
 - URL de redirecionamento para `/convite-cliente/**` nos domínios da aplicação.
 - Edge Function publicada com `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY` (ou `SUPABASE_PUBLISHABLE_KEY`) e `APP_ORIGIN`.
 

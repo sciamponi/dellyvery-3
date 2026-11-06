@@ -7,8 +7,6 @@
 -- Depois: service_role (claim do JWT) continua autorizado; authenticated sem
 -- revenda continua bloqueado; platform admin continua autorizado.
 
-begin;
-
 create or replace function public.cancel_reseller_credit_order(
   p_order_id uuid,
   p_reason text default null
@@ -56,5 +54,3 @@ begin
   end if;
 end;
 $$;
-
-commit;

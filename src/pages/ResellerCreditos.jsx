@@ -8,16 +8,19 @@ import {
 import {
   cancelResellerCreditOrder, createResellerCreditOrder, creditOrderStatusLabel,
   expireResellerCreditOrders, listResellerCreditOrders, listResellerCreditPackages,
-  newIdempotencyKey,
+  newIdempotencyKey, submitResellerCreditOrderProof,
 } from '@/api/resellerCreditPurchases';
+import { uploadResellerReceipt } from '@/api/storage';
 import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import {
-  ArrowDownLeft, ArrowUpRight, CheckCircle2, Clock, Package, RefreshCw, ShoppingCart, Wallet, X,
+  ArrowDownLeft, ArrowUpRight, CheckCircle2, Clock, FileImage, Package, RefreshCw, ShoppingCart, Wallet, X,
 } from 'lucide-react';
 
 const ORDER_TONE = {
@@ -66,6 +69,11 @@ export default function ResellerCreditos() {
   const [creating, setCreating] = useState(false);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [canceling, setCanceling] = useState(false);
+  const [proofTarget, setProofTarget] = useState(null);
+  const [proofReference, setProofReference] = useState('');
+  const [proofFile, setProofFile] = useState(null);
+  const [proofError, setProofError] = useState('');
+  const [proofSaving, setProofSaving] = useState(false);
 
   const load = async () => {
     if (!reseller?.id) {
@@ -143,6 +151,46 @@ export default function ResellerCreditos() {
       notify({ title: 'Erro ao cancelar pedido', description: err?.message, variant: 'destructive' });
     } finally {
       setCanceling(false);
+    }
+  };
+
+  const openProof = (order) => {
+    setProofTarget(order);
+    setProofReference(order?.payment_reference || '');
+    setProofFile(null);
+    setProofError('');
+  };
+
+  const handleSubmitProof = async () => {
+    if (!proofTarget || !reseller?.id) return;
+    if (!proofFile) {
+      setProofError('Anexe o comprovante do pagamento.');
+      return;
+    }
+    if (!proofReference.trim()) {
+      setProofError('Informe a referência do pagamento.');
+      return;
+    }
+    setProofSaving(true);
+    setProofError('');
+    try {
+      const uploaded = await uploadResellerReceipt(supabase, {
+        resellerId: reseller.id,
+        orderId: proofTarget.id,
+        file: proofFile,
+      });
+      await submitResellerCreditOrderProof(supabase, {
+        orderId: proofTarget.id,
+        paymentReference: proofReference,
+        proofUrl: uploaded.path,
+      });
+      notify({ title: 'Comprovante enviado', description: 'O Master fará a análise do pagamento.' });
+      setProofTarget(null);
+      await load();
+    } catch (err) {
+      setProofError(err?.message || 'Não foi possível enviar o comprovante.');
+    } finally {
+      setProofSaving(false);
     }
   };
 
@@ -288,14 +336,31 @@ export default function ResellerCreditos() {
                   </p>
                 )}
                 {order.status === 'pendente' && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    onClick={() => setCancelTarget(order)}
-                  >
-                    <X className="h-4 w-4" /> Cancelar pedido
-                  </Button>
+                  <p className={`mt-2 text-xs font-medium ${order.has_proof ? 'text-sky-800' : 'text-amber-800'}`}>
+                    {order.has_proof
+                      ? 'Comprovante enviado — aguardando análise do Master.'
+                      : 'Aguardando pagamento. Envie o comprovante após pagar.'}
+                  </p>
+                )}
+                {order.status === 'pendente' && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {!order.has_proof && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openProof(order)}
+                      >
+                        <FileImage className="h-4 w-4" /> Enviar comprovante
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCancelTarget(order)}
+                    >
+                      <X className="h-4 w-4" /> Cancelar pedido
+                    </Button>
+                  </div>
                 )}
                 {order.status === 'creditado' && (
                   <p className="mt-3 flex items-center gap-1.5 text-xs text-green-700">
@@ -385,6 +450,62 @@ export default function ResellerCreditos() {
               </Button>
               <Button onClick={handleCreateOrder} disabled={creating}>
                 {creating ? 'Solicitando...' : 'Confirmar solicitação'}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!proofTarget}
+        onOpenChange={(open) => { if (!open && !proofSaving) setProofTarget(null); }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Enviar comprovante</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-xl bg-muted/50 p-3 text-sm">
+              <p className="font-medium text-foreground">{proofTarget?.package_name}</p>
+              <p className="text-muted-foreground mt-0.5">
+                {proofTarget?.credits} créditos · {fmtMoney(proofTarget?.amount, proofTarget?.currency)}
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="proof-file">Comprovante (JPG, PNG, WebP ou PDF)</Label>
+              <Input
+                id="proof-file"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                onChange={(event) => setProofFile(event.target.files?.[0] || null)}
+                disabled={proofSaving}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="proof-reference">Referência do pagamento</Label>
+              <Input
+                id="proof-reference"
+                value={proofReference}
+                onChange={(event) => setProofReference(event.target.value)}
+                placeholder="Ex.: ID da transação Pix"
+                maxLength={200}
+                disabled={proofSaving}
+              />
+            </div>
+            {proofError && (
+              <div className="rounded-lg bg-destructive/10 p-2.5 text-xs text-destructive">
+                {proofError}
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              O comprovante fica em armazenamento privado. A análise e a liberação dos créditos são feitas pelo Master.
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setProofTarget(null)} disabled={proofSaving}>
+                Cancelar
+              </Button>
+              <Button onClick={handleSubmitProof} disabled={proofSaving}>
+                {proofSaving ? 'Enviando...' : 'Enviar comprovante'}
               </Button>
             </DialogFooter>
           </div>

@@ -1,4 +1,5 @@
 import { supabase as defaultClient } from './supabaseClient.js';
+import { toWaNumber, buildWaUrl } from '../lib/whatsapp.js';
 
 // DELLVERY 3 — Pacotes e pedidos de crédito da revenda.
 // Preço, quantidade e moeda de um pedido são snapshots definidos pelo banco
@@ -123,6 +124,8 @@ export function fromSupabaseCreditOrder(row) {
     status: row.status || 'pendente',
     idempotency_key: row.idempotency_key || null,
     payment_reference: row.payment_reference || '',
+    proof_url: row.proof_url || null,
+    has_proof: !!(row.proof_url && String(row.proof_url).trim()),
     confirmed_by: row.confirmed_by || null,
     paid_at: row.paid_at || null,
     credited_at: row.credited_at || null,
@@ -182,7 +185,7 @@ export async function updateResellerCreditPackage(client, id, data) {
   return fromSupabaseCreditPackage(row);
 }
 
-export async function listResellerCreditOrders(client, { resellerId = null, status = null, limit = 300 } = {}) {
+export async function listResellerCreditOrders(client, { resellerId = null, status = null, hasProof = null, limit = 300 } = {}) {
   const c = mustBeConfigured(client);
   let query = c
     .from('reseller_credit_orders')
@@ -191,9 +194,86 @@ export async function listResellerCreditOrders(client, { resellerId = null, stat
     .limit(limit);
   if (resellerId) query = query.eq('reseller_id', resellerId);
   if (status) query = query.eq('status', status);
+  if (hasProof === true) query = query.not('proof_url', 'is', null).neq('proof_url', '');
+  if (hasProof === false) query = query.or('proof_url.is.null,proof_url.eq.');
   const { data, error } = await query;
   if (error) requestError(error);
   return (data || []).map(fromSupabaseCreditOrder);
+}
+
+export function creditUnitPrice(packageRow) {
+  const credits = Number(packageRow?.credits) || 0;
+  const price = Number(packageRow?.price) || 0;
+  if (credits <= 0) return 0;
+  return Math.round((price / credits) * 10000) / 10000;
+}
+
+export function creditChargeTotal(unitPrice, quantity) {
+  const credits = Number(quantity);
+  if (!Number.isInteger(credits) || credits <= 0) return 0;
+  return Math.round((Number(unitPrice) || 0) * credits * 100) / 100;
+}
+
+export function buildCreditChargeMessage({
+  name, credits, total, currency = 'BRL', pixKey, receiverName, instructions,
+}) {
+  const first = String(name || '').trim().split(/\s+/)[0] || 'tudo bem?';
+  const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(Number(total) || 0);
+  const lines = [
+    `Olá, ${first}! Tudo bem?`,
+    '',
+    `Segue a cobrança de ${credits} créditos no valor de ${money}.`,
+  ];
+  if (pixKey) lines.push('', `Pix: ${pixKey}${receiverName ? ` (${receiverName})` : ''}`);
+  if (instructions) lines.push('', instructions);
+  lines.push(
+    '',
+    'Após o pagamento, envie o comprovante na sua área de Créditos para análise.',
+  );
+  return lines.join('\n');
+}
+
+export function buildCreditChargeUrl({
+  phone, name, credits, total, currency, pixKey, receiverName, instructions,
+}) {
+  const to = toWaNumber(phone);
+  if (!to) throw new Error('WhatsApp do revendedor inválido');
+  return buildWaUrl(to, buildCreditChargeMessage({
+    name, credits, total, currency, pixKey, receiverName, instructions,
+  }));
+}
+
+export async function createResellerCreditCharge(client, { resellerId, credits, idempotencyKey }) {
+  const c = mustBeConfigured(client);
+  if (!resellerId) throw new Error('Revendedor nao identificado');
+  const value = Number(credits);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error('Informe uma quantidade inteira de creditos maior que zero');
+  }
+  if (!isValidIdempotencyKey(idempotencyKey)) throw new Error('Chave de idempotencia invalida');
+  const { data, error } = await c.rpc('create_reseller_credit_charge', {
+    p_reseller_id: resellerId,
+    p_credits: value,
+    p_idempotency_key: idempotencyKey,
+  });
+  if (error) requestError(error);
+  return data;
+}
+
+export async function submitResellerCreditOrderProof(client, { orderId, paymentReference, proofUrl }) {
+  const c = mustBeConfigured(client);
+  if (!orderId) throw new Error('Pedido nao identificado');
+  const reference = cleanText(paymentReference);
+  if (!reference) throw new Error('Informe a referencia do pagamento');
+  const proof = cleanText(proofUrl);
+  if (!proof) throw new Error('Envie o comprovante');
+  const { data, error } = await c.rpc('submit_reseller_credit_order_proof', {
+    p_order_id: orderId,
+    p_payment_reference: reference,
+    p_proof_url: proof,
+  });
+  if (error) requestError(error);
+  return data;
 }
 
 export async function createResellerCreditOrder(client, { packageId, idempotencyKey }) {

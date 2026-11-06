@@ -10,6 +10,9 @@ import {
   cancelResellerCreditOrder, confirmResellerCreditOrder,
   rejectResellerCreditOrder, expireResellerCreditOrders,
   getCreditOrderExpiryDays, setCreditOrderExpiryDays,
+  creditUnitPrice, creditChargeTotal,
+  buildCreditChargeMessage, buildCreditChargeUrl,
+  createResellerCreditCharge, submitResellerCreditOrderProof,
 } from './resellerCreditPurchases.js';
 
 function createMockClient({ tables = {}, rpcs = {} } = {}) {
@@ -35,6 +38,18 @@ function createMockClient({ tables = {}, rpcs = {} } = {}) {
       },
       order: (col, options) => {
         calls.orders.push({ table: name, col, options });
+        return chain;
+      },
+      not: (col, op, value) => {
+        calls.filters.push({ table: name, col, op, value, negated: true });
+        return chain;
+      },
+      neq: (col, value) => {
+        calls.filters.push({ table: name, col, value, neq: true });
+        return chain;
+      },
+      or: (expression) => {
+        calls.filters.push({ table: name, col: null, expression });
         return chain;
       },
       limit: (value) => {
@@ -156,6 +171,8 @@ describe('resellerCreditOrders - mapeamento', () => {
       status: 'pendente',
       idempotency_key: 'key',
       payment_reference: '',
+      proof_url: null,
+      has_proof: false,
       confirmed_by: null,
       paid_at: null,
       credited_at: null,
@@ -340,6 +357,118 @@ describe('resellerCreditOrders - operacoes', () => {
         packageId: 'p1', idempotencyKey: '550e8400-e29b-41d4-a716-446655440000',
       }),
       /Pacote indisponivel/,
+    );
+  });
+});
+
+describe('resellerCreditOrders - cobranca e comprovante', () => {
+  it('calcula valor unitario e total a partir do pacote', () => {
+    assert.equal(creditUnitPrice({ credits: 10, price: 99.9 }), 9.99);
+    assert.equal(creditUnitPrice({ credits: 3, price: 10 }), 3.3333);
+    assert.equal(creditUnitPrice({ credits: 0, price: 10 }), 0);
+    assert.equal(creditChargeTotal(9.99, 1), 9.99);
+    assert.equal(creditChargeTotal(9.99, 5), 49.95);
+    assert.equal(creditChargeTotal(9.99, 0), 0);
+    assert.equal(creditChargeTotal(9.99, 1.5), 0);
+  });
+
+  it('filtra pedidos por comprovante enviado', async () => {
+    const withProof = createMockClient({
+      tables: { reseller_credit_orders: { list: { data: [{ id: 'o1' }], error: null } } },
+    });
+    await listResellerCreditOrders(withProof, { hasProof: true });
+    assert.ok(withProof.calls.filters.some((f) => f.col === 'proof_url' && f.negated === true));
+    assert.ok(withProof.calls.filters.some((f) => f.col === 'proof_url' && f.neq === true));
+
+    const withoutProof = createMockClient();
+    await listResellerCreditOrders(withoutProof, { hasProof: false });
+    assert.ok(withoutProof.calls.filters.some((f) => typeof f.expression === 'string' && f.expression.includes('proof_url')));
+  });
+
+  it('mapeia comprovante no pedido', () => {
+    const mapped = fromSupabaseCreditOrder({ id: 'o1', proof_url: 'r1/o1/proof.png' });
+    assert.equal(mapped.proof_url, 'r1/o1/proof.png');
+    assert.equal(mapped.has_proof, true);
+    assert.equal(fromSupabaseCreditOrder({ id: 'o2' }).has_proof, false);
+  });
+
+  it('monta mensagem e URL de cobranca com Pix', () => {
+    const message = buildCreditChargeMessage({
+      name: 'Maria Silva',
+      credits: 10,
+      total: 99.9,
+      currency: 'BRL',
+      pixKey: 'pix@exemplo.com',
+      receiverName: 'Dellyvery',
+      instructions: 'Pagamento via Pix.',
+    });
+    assert.match(message, /Olá, Maria!/);
+    assert.match(message, /10 créditos/);
+    assert.match(message, /R\$\s*99,90/);
+    assert.match(message, /pix@exemplo.com/);
+    assert.match(message, /Pagamento via Pix\./);
+
+    const url = buildCreditChargeUrl({
+      phone: '+55 (11) 99999-9999',
+      name: 'Maria',
+      credits: 1,
+      total: 9.9,
+      pixKey: 'pix@exemplo.com',
+    });
+    assert.ok(url.startsWith('https://wa.me/5511999999999?text='));
+    assert.throws(() => buildCreditChargeUrl({ phone: '123', name: 'X', credits: 1, total: 1 }), /WhatsApp/i);
+  });
+
+  it('cria cobranca enviando apenas revendedor, quantidade e chave', async () => {
+    const key = '550e8400-e29b-41d4-a716-446655440000';
+    const client = createMockClient({
+      rpcs: { create_reseller_credit_charge: { data: { order_id: 'o1', reused: false }, error: null } },
+    });
+    const out = await createResellerCreditCharge(client, {
+      resellerId: 'r1', credits: '10', idempotencyKey: key,
+    });
+    assert.equal(out.order_id, 'o1');
+    assert.deepEqual(client.calls.rpc[0], {
+      fn: 'create_reseller_credit_charge',
+      args: { p_reseller_id: 'r1', p_credits: 10, p_idempotency_key: key },
+    });
+    await assert.rejects(
+      () => createResellerCreditCharge(client, { resellerId: 'r1', credits: 0, idempotencyKey: key }),
+      /inteir/i,
+    );
+    await assert.rejects(
+      () => createResellerCreditCharge(client, { resellerId: 'r1', credits: 10, idempotencyKey: 'x' }),
+      /idempotencia/i,
+    );
+    await assert.rejects(
+      () => createResellerCreditCharge(client, { credits: 10, idempotencyKey: key }),
+      /identificado/i,
+    );
+  });
+
+  it('envia comprovante normalizado e valida campos', async () => {
+    const client = createMockClient({
+      rpcs: { submit_reseller_credit_order_proof: { data: { order_id: 'o1' }, error: null } },
+    });
+    const out = await submitResellerCreditOrderProof(client, {
+      orderId: 'o1', paymentReference: '  pix 123  ', proofUrl: '  r1/o1/proof.png  ',
+    });
+    assert.equal(out.order_id, 'o1');
+    assert.deepEqual(client.calls.rpc[0], {
+      fn: 'submit_reseller_credit_order_proof',
+      args: {
+        p_order_id: 'o1',
+        p_payment_reference: 'pix 123',
+        p_proof_url: 'r1/o1/proof.png',
+      },
+    });
+    await assert.rejects(
+      () => submitResellerCreditOrderProof(client, { orderId: 'o1', paymentReference: '', proofUrl: 'x' }),
+      /referencia/i,
+    );
+    await assert.rejects(
+      () => submitResellerCreditOrderProof(client, { orderId: 'o1', paymentReference: 'x', proofUrl: '' }),
+      /comprovante/i,
     );
   });
 });

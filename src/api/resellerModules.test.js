@@ -9,6 +9,11 @@ import {
   createResellerClientInvite, revokeResellerClientInvite,
   resolveResellerClientInvite, claimResellerClientInvite, getMyResellerClientAccess,
   requestResellerInviteEmailProof, verifyResellerInviteEmailProof,
+  RESELLER_INVITE_OTP_LENGTH, isValidResellerInviteCode, sanitizeResellerInviteCode,
+  RESELLER_ACCOUNT_STATES, resellerAccountStateLabel,
+  RESELLER_COMPANY_FIELDS, validateResellerCompanyForm, toSupabaseResellerCompanyPatch,
+  fromSupabaseResellerClientAccount, listResellerClientAccounts, getResellerClientAccount,
+  updateResellerClientCompany, suspendResellerClient, adminRelinkResellerClient,
 } from './resellerClients.js';
 import {
   RESELLER_CREDIT_KINDS, RESELLER_ACTIVATION_STATUSES,
@@ -320,7 +325,7 @@ describe('resellerClients - convites e acesso', () => {
     assert.deepEqual(client.calls.rpc[2].args, { p_token: 'tok' });
   });
 
-  it('envia e confirma codigo pela Edge Function de prova', async () => {
+  it('envia e confirma codigo de 8 digitos pela Edge Function de prova', async () => {
     const client = createMockClient({
       functions: {
         'reseller-invite-email-proof': { data: { ok: true, sent: true }, error: null },
@@ -329,7 +334,7 @@ describe('resellerClients - convites e acesso', () => {
 
     const requested = await requestResellerInviteEmailProof(client, 'tok');
     assert.equal(requested.sent, true);
-    assert.equal((await verifyResellerInviteEmailProof(client, 'tok', ' 123456 ')).ok, true);
+    assert.equal((await verifyResellerInviteEmailProof(client, 'tok', ' 12345678 ')).ok, true);
     assert.deepEqual(client.calls.functions, [
       {
         name: 'reseller-invite-email-proof',
@@ -337,13 +342,28 @@ describe('resellerClients - convites e acesso', () => {
       },
       {
         name: 'reseller-invite-email-proof',
-        opts: { body: { action: 'verify', inviteToken: 'tok', code: '123456' } },
+        opts: { body: { action: 'verify', inviteToken: 'tok', code: '12345678' } },
       },
     ]);
   });
 
+  it('normaliza o codigo sem truncar e exige exatamente 8 digitos', () => {
+    assert.equal(RESELLER_INVITE_OTP_LENGTH, 8);
+    assert.equal(sanitizeResellerInviteCode(' 12a34 5678 '), '12345678');
+    assert.equal(sanitizeResellerInviteCode('123456789'), '123456789');
+    assert.equal(isValidResellerInviteCode(' 12345678 '), true);
+    for (const invalid of ['123456', '1234567', '123456789', '1234abcd']) {
+      assert.equal(isValidResellerInviteCode(invalid), false);
+    }
+  });
+
   it('recusa codigo invalido e servico indisponivel', async () => {
-    await assert.rejects(() => verifyResellerInviteEmailProof(createMockClient(), 'tok', '12'), /6 digitos/);
+    for (const invalid of ['123456', '1234567', '123456789']) {
+      await assert.rejects(
+        () => verifyResellerInviteEmailProof(createMockClient(), 'tok', invalid),
+        /8 digitos/,
+      );
+    }
     await assert.rejects(() => requestResellerInviteEmailProof({}, 'tok'), /indisponivel/);
     await assert.rejects(() => requestResellerInviteEmailProof(createMockClient(), ''), /identificado/);
   });
@@ -362,8 +382,201 @@ describe('resellerClients - convites e acesso', () => {
     });
 
     await assert.rejects(
-      () => verifyResellerInviteEmailProof(client, 'tok', '123456'),
+      () => verifyResellerInviteEmailProof(client, 'tok', '12345678'),
       /Codigo invalido ou expirado/,
+    );
+  });
+
+  it('propaga mensagem de rate limit da Edge Function', async () => {
+    const client = createMockClient({
+      functions: {
+        'reseller-invite-email-proof': {
+          data: null,
+          error: {
+            message: 'Edge Function returned a non-2xx status code',
+            context: { json: async () => ({ error: 'Aguarde alguns minutos antes de solicitar outro codigo' }) },
+          },
+        },
+      },
+    });
+
+    await assert.rejects(
+      () => requestResellerInviteEmailProof(client, 'tok'),
+      /Aguarde alguns minutos/,
+    );
+  });
+});
+
+describe('resellerClients - conta real e vinculo', () => {
+  it('catalogo de estados reais da conta', () => {
+    assert.deepEqual(RESELLER_ACCOUNT_STATES.map((item) => item.id), [
+      'active', 'suspended', 'expired', 'cancelled',
+      'awaiting_activation', 'unlinked', 'incomplete',
+    ]);
+    assert.equal(resellerAccountStateLabel('suspended'), 'Conta suspensa');
+    assert.equal(resellerAccountStateLabel('xx'), 'xx');
+    assert.equal(resellerAccountStateLabel(null), '-');
+  });
+
+  it('mapeia a listagem com o estado real e sem expor user_id', () => {
+    const mapped = fromSupabaseResellerClientAccount({
+      client_id: 'c1',
+      reseller_id: 'r1',
+      name: 'Cantina',
+      has_user: true,
+      company_id: 'co1',
+      company_name: 'Cantina Real',
+      company_slug: 'cantina-real',
+      company_active: true,
+      plan_name: 'Solo',
+      access_days: '30',
+      subscription_status: 'suspenso',
+      subscription_expires_at: '2026-12-01T00:00:00Z',
+      account_state: 'suspended',
+    });
+    assert.equal(mapped.id, 'c1');
+    assert.equal(mapped.has_user, true);
+    assert.equal(mapped.company_name, 'Cantina Real');
+    assert.equal(mapped.access_days, 30);
+    assert.equal(mapped.subscription_status, 'suspenso');
+    assert.equal(mapped.account_state, 'suspended');
+    assert.equal(mapped.user_id, null);
+    assert.equal('user_id' in mapped, true);
+  });
+
+  it('deriva estado quando a RPC nao devolve account_state', () => {
+    assert.equal(fromSupabaseResellerClientAccount({ client_id: 'c1' }).account_state, 'unlinked');
+    assert.equal(fromSupabaseResellerClientAccount({ client_id: 'c2', has_user: true }).account_state, 'awaiting_activation');
+    assert.equal(fromSupabaseResellerClientAccount({ client_id: 'c3', company_id: 'co1' }).account_state, 'active');
+  });
+
+  it('valida whitelist e campos do estabelecimento antes da rede', () => {
+    assert.equal(RESELLER_COMPANY_FIELDS.length, 9);
+    assert.match(validateResellerCompanyForm(null), /Dados inv/i);
+    assert.match(validateResellerCompanyForm({}), /ao menos um campo/i);
+    assert.match(validateResellerCompanyForm({ reseller_id: 'r2' }), /permitidos/i);
+    assert.match(validateResellerCompanyForm({ name: '   ' }), /nome do estabelecimento/i);
+    assert.match(validateResellerCompanyForm({ email: 'x' }), /E-mail inv/i);
+    assert.match(validateResellerCompanyForm({ state: 'SPX' }), /UF/i);
+    assert.match(validateResellerCompanyForm({ name: 'x'.repeat(121) }), /Nome muito longo/i);
+    assert.equal(validateResellerCompanyForm({ name: ' Cantina ', state: 'sp' }), null);
+  });
+
+  it('normaliza o patch e nunca inclui reseller_id', () => {
+    const patch = toSupabaseResellerCompanyPatch({
+      name: '  Cantina  ',
+      state: ' sp ',
+      reseller_id: 'r2',
+      hacker: true,
+    });
+    assert.deepEqual(patch, { name: 'Cantina', state: 'SP' });
+  });
+
+  it('lista a carteira com o escopo resolvido no backend', async () => {
+    const client = createMockClient({
+      rpcs: {
+        list_reseller_client_accounts: {
+          data: [{ client_id: 'c1', name: 'Cantina', account_state: 'active', company_id: 'co1' }],
+          error: null,
+        },
+      },
+    });
+    const rows = await listResellerClientAccounts(client);
+    assert.equal(rows[0].id, 'c1');
+    assert.deepEqual(client.calls.rpc[0], { fn: 'list_reseller_client_accounts', args: {} });
+
+    await listResellerClientAccounts(client, 'r1');
+    assert.deepEqual(client.calls.rpc[1], {
+      fn: 'list_reseller_client_accounts',
+      args: { p_reseller_id: 'r1' },
+    });
+  });
+
+  it('abre detalhes e exige cliente', async () => {
+    const client = createMockClient({
+      rpcs: { get_reseller_client_account: { data: { account_state: 'active' }, error: null } },
+    });
+    const details = await getResellerClientAccount(client, 'c1');
+    assert.equal(details.account_state, 'active');
+    assert.deepEqual(client.calls.rpc[0], {
+      fn: 'get_reseller_client_account',
+      args: { p_client_id: 'c1' },
+    });
+    await assert.rejects(() => getResellerClientAccount(client, ''), /Cliente nao identificado/);
+  });
+
+  it('edita o estabelecimento somente com campos permitidos', async () => {
+    const client = createMockClient({
+      rpcs: {
+        update_reseller_client_company: {
+          data: { changed_fields: ['name'], account: { account_state: 'active' } },
+          error: null,
+        },
+      },
+    });
+    const result = await updateResellerClientCompany(client, 'c1', { name: ' Nova ', state: 'sp' });
+    assert.deepEqual(result.changed_fields, ['name']);
+    assert.deepEqual(client.calls.rpc[0], {
+      fn: 'update_reseller_client_company',
+      args: { p_client_id: 'c1', p_data: { name: 'Nova', state: 'SP' } },
+    });
+
+    await assert.rejects(
+      () => updateResellerClientCompany(client, 'c1', { reseller_id: 'r2' }),
+      /permitidos/i,
+    );
+    assert.equal(client.calls.rpc.length, 1);
+  });
+
+  it('suspende com motivo normalizado e sem apagar o vinculo', async () => {
+    const client = createMockClient({
+      rpcs: {
+        suspend_reseller_client: { data: { suspended: true, reused: false }, error: null },
+      },
+    });
+    const out = await suspendResellerClient(client, 'c1', '  inadimplencia  ');
+    assert.equal(out.suspended, true);
+    assert.deepEqual(client.calls.rpc[0], {
+      fn: 'suspend_reseller_client',
+      args: { p_client_id: 'c1', p_reason: 'inadimplencia' },
+    });
+
+    await suspendResellerClient(client, 'c1');
+    assert.deepEqual(client.calls.rpc[1], {
+      fn: 'suspend_reseller_client',
+      args: { p_client_id: 'c1', p_reason: null },
+    });
+  });
+
+  it('correcao de vinculo exige empresa ou usuario e nao envia reseller_id', async () => {
+    const client = createMockClient({
+      rpcs: {
+        admin_relink_reseller_client: { data: { account_state: 'active' }, error: null },
+      },
+    });
+    await adminRelinkResellerClient(client, { clientId: 'c1', companyId: 'co1' });
+    assert.deepEqual(client.calls.rpc[0], {
+      fn: 'admin_relink_reseller_client',
+      args: { p_client_id: 'c1', p_company_id: 'co1', p_user_id: null },
+    });
+    await assert.rejects(
+      () => adminRelinkResellerClient(client, { clientId: 'c1' }),
+      /empresa ou o usu/i,
+    );
+  });
+
+  it('propaga erro da RPC sem mascarar a mensagem do backend', async () => {
+    const client = createMockClient({
+      rpcs: {
+        update_reseller_client_company: {
+          data: null,
+          error: { message: 'Campos nao permitidos: reseller_id' },
+        },
+      },
+    });
+    await assert.rejects(
+      () => updateResellerClientCompany(client, 'c1', { name: 'X' }),
+      /Campos nao permitidos/,
     );
   });
 });

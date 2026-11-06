@@ -201,6 +201,17 @@ export async function claimResellerClientInvite(client, token) {
   return data;
 }
 
+export const RESELLER_INVITE_OTP_LENGTH = 8;
+const RESELLER_INVITE_CODE_RE = /^\d{8}$/;
+
+export function sanitizeResellerInviteCode(value) {
+  return String(value ?? '').replace(/\D/g, '');
+}
+
+export function isValidResellerInviteCode(value) {
+  return RESELLER_INVITE_CODE_RE.test(String(value ?? '').trim());
+}
+
 async function inviteProofErrorMessage(error, fallback) {
   const message = error?.message || fallback;
   const context = error?.context;
@@ -242,7 +253,7 @@ export async function requestResellerInviteEmailProof(client, token) {
 export async function verifyResellerInviteEmailProof(client, token, code) {
   if (!token) throw new Error('Convite nao identificado');
   const normalizedCode = String(code || '').trim();
-  if (!/^\d{6}$/.test(normalizedCode)) throw new Error('Informe o codigo de 6 digitos');
+  if (!isValidResellerInviteCode(normalizedCode)) throw new Error('Informe o codigo de 8 digitos');
   return invokeInviteEmailProof(
     client,
     { action: 'verify', inviteToken: String(token), code: normalizedCode },
@@ -253,6 +264,176 @@ export async function verifyResellerInviteEmailProof(client, token, code) {
 export async function getMyResellerClientAccess(client) {
   const c = mustBeConfigured(client);
   const { data, error } = await c.rpc('get_my_reseller_client_access');
+  if (error) requestError(error);
+  return data;
+}
+
+export const RESELLER_ACCOUNT_STATES = [
+  { id: 'active', label: 'Conta ativa' },
+  { id: 'suspended', label: 'Conta suspensa' },
+  { id: 'expired', label: 'Conta vencida' },
+  { id: 'cancelled', label: 'Conta cancelada' },
+  { id: 'awaiting_activation', label: 'Aguardando ativação' },
+  { id: 'unlinked', label: 'Sem conta vinculada' },
+  { id: 'incomplete', label: 'Vínculo incompleto' },
+];
+
+export function resellerAccountStateLabel(state) {
+  return RESELLER_ACCOUNT_STATES.find((item) => item.id === state)?.label || state || '-';
+}
+
+export const RESELLER_COMPANY_FIELDS = [
+  'name', 'description', 'phone', 'email', 'address',
+  'city', 'state', 'zip_code', 'whatsapp',
+];
+
+const COMPANY_MAX_LENGTH = {
+  name: 120,
+  description: 2000,
+  phone: 40,
+  email: 254,
+  address: 255,
+  city: 120,
+  state: 2,
+  zip_code: 20,
+  whatsapp: 40,
+};
+
+export function validateResellerCompanyForm(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return 'Dados inválidos';
+  const keys = Object.keys(data);
+  const unknown = keys.filter((key) => !RESELLER_COMPANY_FIELDS.includes(key));
+  if (unknown.length) return `Campos não permitidos: ${unknown.join(', ')}`;
+  if (keys.length === 0) return 'Informe ao menos um campo do estabelecimento';
+
+  const name = cleanText(data.name);
+  if (data.name !== undefined && !name) return 'Informe o nome do estabelecimento';
+
+  const email = cleanText(data.email);
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return 'E-mail inválido';
+
+  if (data.state !== undefined) {
+    const state = cleanText(data.state);
+    if (state && state.length !== 2) return 'UF deve ter 2 letras';
+  }
+
+  for (const [field, max] of Object.entries(COMPANY_MAX_LENGTH)) {
+    if (data[field] === undefined) continue;
+    if (cleanText(data[field]).length > max) {
+      const labels = {
+        name: 'Nome',
+        description: 'Descrição',
+        phone: 'Telefone',
+        email: 'E-mail',
+        address: 'Endereço',
+        city: 'Cidade',
+        state: 'UF',
+        zip_code: 'CEP',
+        whatsapp: 'WhatsApp',
+      };
+      return `${labels[field]} muito longo`;
+    }
+  }
+
+  return null;
+}
+
+export function toSupabaseResellerCompanyPatch(data) {
+  const out = {};
+  for (const field of RESELLER_COMPANY_FIELDS) {
+    if (data?.[field] === undefined) continue;
+    out[field] = cleanText(data[field]);
+  }
+  if (out.state) out.state = out.state.toUpperCase();
+  return out;
+}
+
+export function fromSupabaseResellerClientAccount(row) {
+  if (!row) return row;
+  const accountState = row.account_state
+    || (row.company_id ? 'active' : row.has_user ? 'awaiting_activation' : 'unlinked');
+  return {
+    id: row.client_id || row.id,
+    reseller_id: row.reseller_id || null,
+    name: row.name || '',
+    trade_name: row.trade_name || '',
+    document: row.document || '',
+    phone: row.phone || '',
+    email: row.email || '',
+    city: row.city || '',
+    state: row.state || '',
+    notes: row.notes || '',
+    status: row.status || 'prospecto',
+    has_user: Boolean(row.has_user),
+    user_id: row.user_id || null,
+    company_id: row.company_id || null,
+    company_name: row.company_name || '',
+    company_slug: row.company_slug || '',
+    company_active: row.company_active == null ? null : Boolean(row.company_active),
+    plan_id: row.plan_id || null,
+    plan_name: row.plan_name || '',
+    access_days: row.access_days != null ? Number(row.access_days) : null,
+    subscription_status: row.subscription_status || null,
+    subscription_expires_at: row.subscription_expires_at || null,
+    activated_at: row.activated_at || null,
+    access_expires_at: row.access_expires_at || null,
+    account_state: accountState,
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null,
+  };
+}
+
+export async function listResellerClientAccounts(client, resellerId = null) {
+  const c = mustBeConfigured(client);
+  const args = resellerId ? { p_reseller_id: resellerId } : {};
+  const { data, error } = await c.rpc('list_reseller_client_accounts', args);
+  if (error) requestError(error);
+  return (data || []).map(fromSupabaseResellerClientAccount);
+}
+
+export async function getResellerClientAccount(client, clientId) {
+  const c = mustBeConfigured(client);
+  if (!clientId) throw new Error('Cliente nao identificado');
+  const { data, error } = await c.rpc('get_reseller_client_account', {
+    p_client_id: clientId,
+  });
+  if (error) requestError(error);
+  return data;
+}
+
+export async function updateResellerClientCompany(client, clientId, data) {
+  const c = mustBeConfigured(client);
+  if (!clientId) throw new Error('Cliente nao identificado');
+  const validationError = validateResellerCompanyForm(data);
+  if (validationError) throw new Error(validationError);
+  const { data: result, error } = await c.rpc('update_reseller_client_company', {
+    p_client_id: clientId,
+    p_data: toSupabaseResellerCompanyPatch(data),
+  });
+  if (error) requestError(error);
+  return result;
+}
+
+export async function suspendResellerClient(client, clientId, reason = null) {
+  const c = mustBeConfigured(client);
+  if (!clientId) throw new Error('Cliente nao identificado');
+  const { data, error } = await c.rpc('suspend_reseller_client', {
+    p_client_id: clientId,
+    p_reason: cleanText(reason) || null,
+  });
+  if (error) requestError(error);
+  return data;
+}
+
+export async function adminRelinkResellerClient(client, { clientId, companyId = null, userId = null }) {
+  const c = mustBeConfigured(client);
+  if (!clientId) throw new Error('Cliente nao identificado');
+  if (!companyId && !userId) throw new Error('Informe a empresa ou o usuário');
+  const { data, error } = await c.rpc('admin_relink_reseller_client', {
+    p_client_id: clientId,
+    p_company_id: companyId || null,
+    p_user_id: userId || null,
+  });
   if (error) requestError(error);
   return data;
 }

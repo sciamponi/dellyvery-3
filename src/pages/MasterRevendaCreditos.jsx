@@ -9,8 +9,10 @@ import {
   listResellerCreditOrders, confirmResellerCreditOrder, cancelResellerCreditOrder,
   rejectResellerCreditOrder, expireResellerCreditOrders,
   getCreditOrderExpiryDays, setCreditOrderExpiryDays,
-  validateCreditPackageForm,
+  validateCreditPackageForm, buildCreditChargeUrl,
 } from '@/api/resellerCreditPurchases';
+import { getPlatformPixSettings } from '@/api/masterPlanPurchases';
+import { getReceiptSignedUrl } from '@/api/storage';
 import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
@@ -22,7 +24,7 @@ import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import {
-  Check, Loader2, Package, Pencil, Plus, RefreshCw, ShieldAlert, Wallet, X,
+  Check, FileImage, Loader2, MessageCircle, Package, Pencil, Plus, RefreshCw, ShieldAlert, Wallet, X,
 } from 'lucide-react';
 
 const STATUS_TONE = {
@@ -72,6 +74,7 @@ export default function MasterRevendaCreditos() {
   const [orders, setOrders] = useState([]);
   const [invites, setInvites] = useState([]);
   const [resellers, setResellers] = useState([]);
+  const [pixSettings, setPixSettings] = useState(null);
   const [packageDialog, setPackageDialog] = useState(false);
   const [editingPackage, setEditingPackage] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -93,17 +96,19 @@ export default function MasterRevendaCreditos() {
 
   const load = async () => {
     await expireResellerCreditOrders(supabase).catch(() => 0);
-    const [packageRows, orderRows, inviteRows, resellerRows, days] = await Promise.all([
+    const [packageRows, orderRows, inviteRows, resellerRows, days, pix] = await Promise.all([
       listResellerCreditPackages(supabase, { includeInactive: true }),
       listResellerCreditOrders(supabase),
       listResellerInvites(supabase, {}),
       listResellers(supabase),
       getCreditOrderExpiryDays(supabase),
+      getPlatformPixSettings(supabase).catch(() => null),
     ]);
     setPackages(packageRows);
     setOrders(orderRows);
     setInvites(inviteRows);
     setResellers(resellerRows);
+    setPixSettings(pix);
     setExpiryDays(days == null ? '' : String(days));
   };
 
@@ -126,6 +131,11 @@ export default function MasterRevendaCreditos() {
   const resellerNames = useMemo(() => {
     const inviteById = new Map(invites.map((invite) => [invite.id, invite.name]));
     return new Map(resellers.map((reseller) => [reseller.id, inviteById.get(reseller.invite_id) || 'Revendedor']));
+  }, [invites, resellers]);
+
+  const resellerPhones = useMemo(() => {
+    const inviteById = new Map(invites.map((invite) => [invite.id, invite.phone]));
+    return new Map(resellers.map((reseller) => [reseller.id, inviteById.get(reseller.invite_id) || '']));
   }, [invites, resellers]);
 
   const orderedOrders = useMemo(() => {
@@ -217,7 +227,7 @@ export default function MasterRevendaCreditos() {
 
   const openConfirm = (order) => {
     setConfirmOrder(order);
-    setPaymentReference('');
+    setPaymentReference(order?.payment_reference || '');
     setConfirmedAmount(order?.amount != null ? String(order.amount) : '');
     setConfirmError('');
   };
@@ -273,6 +283,35 @@ export default function MasterRevendaCreditos() {
       setRejectError(err?.message || 'Não foi possível rejeitar o pedido.');
     } finally {
       setRejecting(false);
+    }
+  };
+
+  const handleResendCharge = (order) => {
+    try {
+      const url = buildCreditChargeUrl({
+        phone: resellerPhones.get(order.reseller_id),
+        name: resellerNames.get(order.reseller_id),
+        credits: order.credits,
+        total: order.amount,
+        currency: order.currency,
+        pixKey: pixSettings?.pix_key,
+        receiverName: pixSettings?.receiver_name,
+        instructions: pixSettings?.instructions,
+      });
+      window.open(url, '_blank', 'noopener');
+    } catch (err) {
+      notify({ title: 'WhatsApp', description: err?.message, variant: 'destructive' });
+    }
+  };
+
+  const handleViewProof = async (order) => {
+    if (!order?.proof_url) return;
+    try {
+      const url = await getReceiptSignedUrl(supabase, order.proof_url);
+      if (!url) throw new Error('Comprovante indisponível');
+      window.open(url, '_blank', 'noopener');
+    } catch (err) {
+      notify({ title: 'Comprovante', description: err?.message, variant: 'destructive' });
     }
   };
 
@@ -457,13 +496,32 @@ export default function MasterRevendaCreditos() {
                 )}
 
                 {order.status === 'pendente' && (
+                  <p className={`mt-2 text-xs font-medium ${order.has_proof ? 'text-sky-800' : 'text-amber-800'}`}>
+                    {order.has_proof
+                      ? 'Comprovante enviado — aguardando análise.'
+                      : 'Aguardando pagamento e envio do comprovante.'}
+                  </p>
+                )}
+
+                {order.status === 'pendente' && (
                   <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
-                    <Button size="sm" onClick={() => openConfirm(order)}>
-                      <Check className="h-4 w-4" /> Confirmar recebimento
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => openReject(order)}>
-                      <X className="h-4 w-4" /> Rejeitar
-                    </Button>
+                    {order.has_proof ? (
+                      <>
+                        <Button size="sm" variant="outline" onClick={() => handleViewProof(order)}>
+                          <FileImage className="h-4 w-4" /> Ver comprovante
+                        </Button>
+                        <Button size="sm" onClick={() => openConfirm(order)}>
+                          <Check className="h-4 w-4" /> Confirmar recebimento
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => openReject(order)}>
+                          <X className="h-4 w-4" /> Rejeitar
+                        </Button>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => handleResendCharge(order)}>
+                        <MessageCircle className="h-4 w-4" /> Reenviar cobrança
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => setCancelTarget(order)}>
                       <X className="h-4 w-4" /> Cancelar
                     </Button>

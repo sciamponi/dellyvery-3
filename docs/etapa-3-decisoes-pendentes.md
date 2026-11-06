@@ -99,6 +99,52 @@ correspondente.
 
 ---
 
+## Pendências da correção local do Gate 4 (2026-11-04)
+
+Estas pendências foram registradas durante a correção local dos bloqueadores do
+Gate 4. Nenhuma decisão comercial abaixo foi presumida.
+
+1. **Migrations pendentes:** há **24 migrations locais pendentes**, de
+   `20261106000000` a `20261123000000`; a última é o lote 12 do runbook. Antes de
+   qualquer publicação, confirmar no remoto que `20261109_01`, `20261113`,
+   `20261114`, `20261114_01` e `20261115` continuam pendentes, que
+   `20261123000000` ainda não foi aplicada e qual é o histórico real. A correção
+   editou apenas migrations tratadas como pendentes pelo runbook; não houve
+   acesso ao Supabase hosted.
+2. **Event trigger:** se o runner não puder executar como superuser, o event
+   trigger `dellyvery3_revoke_new_function_acl` não será criado. A migration
+   passa a registrar aviso em vez de falhar. Decidir se o trigger será instalado
+   manualmente como `supabase_admin` ou se o default ACL é suficiente.
+3. **Reutilização de referência:** o registry mantém a referência confirmada
+   mesmo após rejeição, cancelamento ou eventual estorno. Decidir se haverá
+   liberação manual de referência e em qual processo.
+4. **Comprovante:** a validação agora exige `http/https` e limita a 1000
+   caracteres. Continuam pendentes a obrigatoriedade do comprovante, o prazo de
+   expiração da solicitação e a política de cancelamento/estorno.
+5. **`rejected_by`:** a FK passou a `ON DELETE RESTRICT`. Decidir se perfis com
+   histórico de rejeição serão anonimizados/retidos em vez de excluídos.
+6. **Pix parcial:** `set_platform_pix_settings` preserva campos omitidos;
+   `patch_platform_pix_settings` permite limpar campos com `null`. Confirmar o
+   contrato desejado para a UI e para integrações futuras.
+7. **Runner transacional:** `BEGIN/COMMIT` explícitos foram removidos de
+   `20261114`/`20261114_01`. Confirmar que o runner usado aplica cada migration
+   em transação; a `20261113` agora bloqueia reexecução após as migrations
+   financeiras.
+8. **`manage_subscription`:** continua sem `service_role`, por efeito do
+   hardening de ACL. Decidir se algum backend precisa desse acesso.
+9. **Carência e plano gratuito:** continuam pendentes a cobertura de
+   `pendente/suspenso` e a decisão sobre plano gratuito ignorar `expires_at`.
+10. **CORS de `reseller-approve`:** o fallback de origem não foi alterado nesta
+    fase; decidir a política de `APP_ORIGIN` antes de publicar Edge Functions.
+11. **Backup/restore:** o backup de 2026-11-04 teve restore isolado **PASS**
+    (duas execuções, contagens e checksums sem diferenças). A publicação continua
+    bloqueada até gerar um backup novo imediatamente antes da aplicação e
+    reconfirmar o estado remoto. O `manifest.json` mantém os campos de restore
+    como `pending`; o relatório separado é a evidência autoritativa e o manifesto
+    não deve ser editado retroativamente.
+
+---
+
 ## Decisão 1 — D1-A: duração canônica e base de renovação
 
 **O que precisa ser decidido**

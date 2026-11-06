@@ -4,6 +4,7 @@ import { supabase } from '@/api/supabaseClient';
 import {
   claimResellerClientInvite, requestResellerInviteEmailProof,
   resolveResellerClientInvite, verifyResellerInviteEmailProof,
+  RESELLER_INVITE_OTP_LENGTH, isValidResellerInviteCode, sanitizeResellerInviteCode,
 } from '@/api/resellerClients';
 import { useSupabaseAuth } from '@/lib/SupabaseAuthContext';
 import AuthLayout from '@/components/AuthLayout';
@@ -73,8 +74,8 @@ export default function ConviteCliente() {
   const handleVerifyAndClaim = async () => {
     setError('');
     setNotice('');
-    if (!/^\d{6}$/.test(code.trim())) {
-      setError('Informe o codigo de 6 digitos recebido por e-mail');
+    if (!isValidResellerInviteCode(code)) {
+      setError('Informe o codigo de 8 digitos recebido por e-mail');
       return;
     }
     setVerifying(true);
@@ -198,7 +199,7 @@ export default function ConviteCliente() {
     >
       <p className="text-sm text-muted-foreground">
         Confirme que sua conta usa o e-mail <strong className="text-foreground">{invite.invited_email}</strong>.
-        Para comprovar a posse, enviaremos um codigo de 6 digitos para esse endereco.
+        Para comprovar a posse, enviaremos um codigo de 8 digitos para esse endereco.
       </p>
 
       {notice && (
@@ -240,13 +241,13 @@ export default function ConviteCliente() {
                 id="invite-code"
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                placeholder="000000"
-                maxLength={6}
+                placeholder="00000000"
+                maxLength={RESELLER_INVITE_OTP_LENGTH}
                 value={code}
-                onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                onChange={(event) => setCode(sanitizeResellerInviteCode(event.target.value))}
                 disabled={verifying || claiming}
               />
-              <Button className="w-full" onClick={handleVerifyAndClaim} disabled={verifying || claiming || code.length !== 6}>
+              <Button className="w-full" onClick={handleVerifyAndClaim} disabled={verifying || claiming || !isValidResellerInviteCode(code)}>
                 {verifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                 {verifying ? 'Confirmando...' : 'Confirmar codigo e aceitar'}
               </Button>

@@ -9,8 +9,6 @@
 -- Correcao: qualifica os nomes com o schema public e lista pg_temp por
 -- ultimo no search_path. Nao altera ownership nem grants existentes.
 
-begin;
-
 create or replace function public.is_platform_admin()
 returns boolean
 language sql
@@ -50,5 +48,3 @@ begin
   end if;
 end;
 $$;
-
-commit;

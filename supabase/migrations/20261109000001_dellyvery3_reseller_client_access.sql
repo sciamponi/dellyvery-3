@@ -761,7 +761,7 @@ begin
       'Empresa criada pela ativacao do revendedor',
       nullif(btrim(v_client.phone), ''),
       nullif(btrim(v_client.email), ''),
-      nullif(btrim(v_client.city), ''),
+      null,
       nullif(btrim(v_client.city), ''),
       nullif(btrim(v_client.state), '')
     )

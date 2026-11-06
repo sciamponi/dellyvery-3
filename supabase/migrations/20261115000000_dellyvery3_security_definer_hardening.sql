@@ -554,9 +554,14 @@ do $search_path$
 declare
   v_fn record;
   v_count int := 0;
+  v_is_super boolean := coalesce(
+    (select rolsuper from pg_roles where rolname = current_user),
+    false
+  );
+  v_current_oid oid := (select oid from pg_roles where rolname = current_user);
 begin
   for v_fn in
-    select p.oid, p.oid::regprocedure as signature, n.nspname, p.proname
+    select p.oid, p.oid::regprocedure as signature, n.nspname, p.proname, p.proowner
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('public', 'dellyvery_private')
@@ -564,6 +569,11 @@ begin
       and p.prosecdef
     order by p.oid
   loop
+    if not v_is_super and v_fn.proowner <> v_current_oid then
+      raise notice 'search_path: ignorando % (owner %) sem ownership', v_fn.signature, pg_get_userbyid(v_fn.proowner);
+      continue;
+    end if;
+
     if v_fn.nspname = 'dellyvery_private'
        or (v_fn.nspname = 'public' and v_fn.proname = 'is_reseller_write_context_active') then
       execute format(
@@ -587,9 +597,14 @@ do $invoker_search_path$
 declare
   v_fn record;
   v_count int := 0;
+  v_is_super boolean := coalesce(
+    (select rolsuper from pg_roles where rolname = current_user),
+    false
+  );
+  v_current_oid oid := (select oid from pg_roles where rolname = current_user);
 begin
   for v_fn in
-    select p.oid::regprocedure as signature
+    select p.oid::regprocedure as signature, p.proowner
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
@@ -598,6 +613,11 @@ begin
       and coalesce(array_to_string(p.proconfig, ','), '') = 'search_path=public'
     order by p.oid
   loop
+    if not v_is_super and v_fn.proowner <> v_current_oid then
+      raise notice 'search_path invoker: ignorando % (owner %) sem ownership', v_fn.signature, pg_get_userbyid(v_fn.proowner);
+      continue;
+    end if;
+
     execute format(
       'alter function %s set search_path = pg_catalog, public, pg_temp',
       v_fn.signature
@@ -634,43 +654,115 @@ $supabase_admin_defaults$;
 -- =========================
 -- 4. Event trigger fail-closed para funcoes futuras
 -- =========================
-create or replace function dellyvery_private.revoke_api_function_acl()
-returns event_trigger
-language plpgsql
-security definer
-set search_path = pg_catalog, pg_temp
-as $function$
+do $revoke_function$
 declare
-  v_cmd record;
+  v_fn oid := to_regprocedure('dellyvery_private.revoke_api_function_acl()');
+  v_owner oid;
+  v_is_super boolean := coalesce(
+    (select rolsuper from pg_roles where rolname = current_user),
+    false
+  );
+  v_current_oid oid := (select oid from pg_roles where rolname = current_user);
 begin
-  for v_cmd in
-    select schema_name, object_identity
-    from pg_event_trigger_ddl_commands()
-    where object_type = 'function'
-      and schema_name in ('public', 'dellyvery_private')
-  loop
-    execute format(
-      'revoke all on function %s from public, anon, authenticated, service_role',
-      v_cmd.object_identity
-    );
-  end loop;
-end;
-$function$;
+  if v_fn is null then
+    execute $create_fn$
+      create function dellyvery_private.revoke_api_function_acl()
+      returns event_trigger
+      language plpgsql
+      security definer
+      set search_path = pg_catalog, pg_temp
+      as $function$
+      declare
+        v_cmd record;
+      begin
+        for v_cmd in
+          select schema_name, object_identity
+          from pg_event_trigger_ddl_commands()
+          where object_type = 'function'
+            and schema_name in ('public', 'dellyvery_private')
+        loop
+          execute format(
+            'revoke all on function %s from public, anon, authenticated, service_role',
+            v_cmd.object_identity
+          );
+        end loop;
+      end;
+      $function$;
+    $create_fn$;
 
-revoke all on function dellyvery_private.revoke_api_function_acl()
-  from public, anon, authenticated, service_role;
+    v_fn := to_regprocedure('dellyvery_private.revoke_api_function_acl()');
+  end if;
+
+  select proowner into v_owner from pg_proc where oid = v_fn;
+
+  if v_is_super or v_owner = v_current_oid then
+    execute $replace_fn$
+      create or replace function dellyvery_private.revoke_api_function_acl()
+      returns event_trigger
+      language plpgsql
+      security definer
+      set search_path = pg_catalog, pg_temp
+      as $function$
+      declare
+        v_cmd record;
+      begin
+        for v_cmd in
+          select schema_name, object_identity
+          from pg_event_trigger_ddl_commands()
+          where object_type = 'function'
+            and schema_name in ('public', 'dellyvery_private')
+        loop
+          execute format(
+            'revoke all on function %s from public, anon, authenticated, service_role',
+            v_cmd.object_identity
+          );
+        end loop;
+      end;
+      $function$;
+    $replace_fn$;
+
+    execute 'revoke all on function dellyvery_private.revoke_api_function_acl() '
+         || 'from public, anon, authenticated, service_role';
+  else
+    raise notice 'revoke_api_function_acl existente (%); owner=% sem ownership, usando a funcao atual', v_fn::regprocedure, pg_get_userbyid(v_owner);
+  end if;
+end
+$revoke_function$;
 
 do $event_trigger$
+declare
+  v_is_super boolean := coalesce(
+    (select rolsuper from pg_roles where rolname = current_user),
+    false
+  );
+  v_owner oid;
+  v_enabled "char";
 begin
-  if not exists (
+  if exists (
     select 1 from pg_event_trigger
     where evtname = 'dellyvery3_revoke_new_function_acl'
   ) then
+    select evtowner, evtenabled
+      into v_owner, v_enabled
+    from pg_event_trigger
+    where evtname = 'dellyvery3_revoke_new_function_acl';
+
+    if v_enabled in ('O', 'A') then
+      raise notice 'Event trigger dellyvery3_revoke_new_function_acl ja habilitado';
+    elsif v_is_super
+       or v_owner = (select oid from pg_roles where rolname = current_user) then
+      execute 'alter event trigger dellyvery3_revoke_new_function_acl enable';
+      raise notice 'Event trigger dellyvery3_revoke_new_function_acl habilitado';
+    else
+      raise notice 'PENDENTE: event trigger dellyvery3_revoke_new_function_acl existe desabilitado, mas role % nao pode habilita-lo; owner=%', current_user, pg_get_userbyid(v_owner);
+    end if;
+  elsif v_is_super then
     execute 'create event trigger dellyvery3_revoke_new_function_acl '
          || 'on ddl_command_end when tag in (''CREATE FUNCTION'') '
          || 'execute function dellyvery_private.revoke_api_function_acl()';
+    raise notice 'Event trigger dellyvery3_revoke_new_function_acl criado';
   else
-    execute 'alter event trigger dellyvery3_revoke_new_function_acl enable';
+    raise notice 'PENDENTE: event trigger dellyvery3_revoke_new_function_acl nao criado; role % nao e superuser. Default ACL e postflight de search_path continuam ativos.', current_user;
   end if;
 end
 $event_trigger$;
@@ -715,7 +807,7 @@ begin
     where evtname = 'dellyvery3_revoke_new_function_acl'
       and evtenabled in ('O', 'A')
   ) then
-    raise exception 'Event trigger dellyvery3_revoke_new_function_acl ausente/desabilitado';
+    raise notice 'PENDENTE: event trigger dellyvery3_revoke_new_function_acl ausente/desabilitado; instalar como supabase_admin';
   end if;
 
   select string_agg(format('%s (%s)', p.oid::regprocedure, coalesce(array_to_string(p.proconfig, ','), '<null>')), ', ' order by p.oid)

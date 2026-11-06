@@ -38,7 +38,7 @@ function isLocalOrigin(value: string): boolean {
   }
 }
 
-const CODE_RE = /^\d{6}$/;
+const CODE_RE = /^\d{8}$/;
 const PROOF_TTL_SECONDS = 15 * 60;
 
 type JsonRecord = Record<string, unknown>;
@@ -214,7 +214,7 @@ async function handle(req: Request): Promise<Response> {
 
   const code = typeof body?.code === 'string' ? body.code.trim() : '';
   if (!CODE_RE.test(code)) {
-    return json(req, { ok: false, code: 'invalid_code', error: 'Informe o codigo de 6 digitos' }, 400);
+    return json(req, { ok: false, code: 'invalid_code', error: 'Informe o codigo de 8 digitos' }, 400);
   }
 
   const { data: verifyData, error: verifyError } = await authClient.auth.verifyOtp({

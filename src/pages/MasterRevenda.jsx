@@ -11,7 +11,13 @@ import {
   sweepExpiredInvites,
 } from '@/api/resellers';
 import { approveResellerAccess } from '@/api/resellerAccess';
-import { getResellerCreditBalance, grantResellerCredits } from '@/api/resellerCredits';
+import { getResellerCreditBalance } from '@/api/resellerCredits';
+import {
+  buildCreditChargeUrl, creditChargeTotal, creditUnitPrice,
+  createResellerCreditCharge, listResellerCreditOrders,
+  listResellerCreditPackages, newIdempotencyKey,
+} from '@/api/resellerCreditPurchases';
+import { getPlatformPixSettings } from '@/api/masterPlanPurchases';
 import PageHeader from '@/components/PageHeader';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
@@ -71,6 +77,14 @@ function fmtDate(iso) {
   return d.toLocaleDateString('pt-BR');
 }
 
+function fmtMoney(value, currency = 'BRL') {
+  try {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(Number(value) || 0);
+  } catch {
+    return `${currency} ${Number(value) || 0}`;
+  }
+}
+
 function fmtPhone(digits) {
   const d = String(digits || '').replace(/\D/g, '');
   return d ? `+${d}` : '—';
@@ -84,7 +98,8 @@ export default function MasterRevenda() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [invites, setInvites] = useState([]);
   const [resellers, setResellers] = useState([]);
-  const [tab, setTab] = useState('visao');
+  const [creditBalances, setCreditBalances] = useState({});
+  const [tab, setTab] = useState('revendedores');
   const [expanded, setExpanded] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -111,24 +126,41 @@ export default function MasterRevenda() {
   const [creditDialog, setCreditDialog] = useState(null); // { invite, binding }
   const [creditBalance, setCreditBalance] = useState(null);
   const [creditAmount, setCreditAmount] = useState('');
-  const [creditReason, setCreditReason] = useState('');
+  const [creditPending, setCreditPending] = useState(null);
   const [creditError, setCreditError] = useState('');
   const [creditSaving, setCreditSaving] = useState(false);
+  const [packages, setPackages] = useState([]);
+  const [pixSettings, setPixSettings] = useState(null);
+  const [chargeConfirm, setChargeConfirm] = useState(null);
 
   const load = async () => {
     setLoadError('');
     try {
       // Marca expirados em transação própria antes de listar.
       await sweepExpiredInvites(supabase).catch(() => null);
-      const [inviteRows, resellerRows] = await Promise.all([
+      const [inviteRows, resellerRows, packageRows, pix] = await Promise.all([
         listResellerInvites(supabase, {}),
         // A tabela de vínculos pode não existir antes da migration local;
         // nesse caso os convites continuam visíveis e a aprovação falha
         // com mensagem do backend.
         listResellers(supabase).catch(() => []),
+        listResellerCreditPackages(supabase).catch(() => []),
+        getPlatformPixSettings(supabase).catch(() => null),
       ]);
       setInvites(inviteRows);
       setResellers(resellerRows);
+      setPackages(packageRows);
+      setPixSettings(pix);
+      const balanceEntries = await Promise.all(
+        resellerRows.map(async (reseller) => {
+          try {
+            return [reseller.id, await getResellerCreditBalance(supabase, reseller.id)];
+          } catch {
+            return [reseller.id, null];
+          }
+        }),
+      );
+      setCreditBalances(Object.fromEntries(balanceEntries));
     } catch (err) {
       setLoadError(err?.message || 'Não foi possível carregar os convites.');
     }
@@ -165,6 +197,10 @@ export default function MasterRevenda() {
     () => new Map(resellers.map((r) => [r.invite_id, r])),
     [resellers],
   );
+
+  const unitPricePackage = packages[0] || null;
+  const unitPrice = creditUnitPrice(unitPricePackage);
+  const unitCurrency = unitPricePackage?.currency || 'BRL';
 
   if (loading) return <Spinner />;
 
@@ -206,40 +242,92 @@ export default function MasterRevenda() {
     setCreditDialog({ invite, binding });
     setCreditBalance(null);
     setCreditAmount('');
-    setCreditReason('');
+    setCreditPending(null);
     setCreditError('');
     try {
-      setCreditBalance(await getResellerCreditBalance(supabase, binding.id));
+      const [currentBalance, pendingOrders] = await Promise.all([
+        getResellerCreditBalance(supabase, binding.id),
+        listResellerCreditOrders(supabase, { resellerId: binding.id, status: 'pendente', limit: 5 }),
+      ]);
+      setCreditBalance(currentBalance);
+      setCreditPending(pendingOrders[0] || null);
     } catch (err) {
       setCreditError(err?.message || 'Não foi possível consultar o saldo.');
     }
   };
 
-  const handleGrantCredits = async () => {
-    if (!creditDialog?.binding) return;
-    const amount = Number(creditAmount);
-    if (!Number.isInteger(amount) || amount <= 0) {
+  const creditQuantity = Number(creditAmount);
+  const creditQuantityValid = Number.isInteger(creditQuantity) && creditQuantity > 0;
+  const creditProjected = creditQuantityValid && creditBalance != null
+    ? creditBalance + creditQuantity
+    : creditBalance;
+  const creditTotal = creditQuantityValid ? creditChargeTotal(unitPrice, creditQuantity) : 0;
+
+  const handleRequestCharge = () => {
+    if (!creditDialog?.binding || !creditQuantityValid) {
       setCreditError('Informe uma quantidade inteira de créditos maior que zero.');
       return;
     }
+    if (unitPrice <= 0) {
+      setCreditError('Nenhum pacote ativo com preço configurado. Cadastre um pacote de créditos.');
+      return;
+    }
+    if (creditPending) {
+      setCreditError('Já existe um pedido pendente para este revendedor.');
+      return;
+    }
+    setCreditError('');
+    setChargeConfirm({
+      invite: creditDialog.invite,
+      binding: creditDialog.binding,
+      credits: creditQuantity,
+      total: creditTotal,
+      currency: unitCurrency,
+    });
+  };
+
+  const handleConfirmCharge = async () => {
+    if (!chargeConfirm) return;
     setCreditSaving(true);
     setCreditError('');
     try {
-      const out = await grantResellerCredits(
-        supabase,
-        creditDialog.binding.id,
-        amount,
-        creditReason,
-      );
-      setCreditBalance(out?.balance ?? creditBalance);
-      setCreditAmount('');
-      setCreditReason('');
-      notify({
-        title: 'Créditos concedidos',
-        description: `${creditDialog.invite?.name || 'Revendedor'} • saldo ${out?.balance ?? '-'}`,
+      const pix = pixSettings || {};
+      const out = await createResellerCreditCharge(supabase, {
+        resellerId: chargeConfirm.binding.id,
+        credits: chargeConfirm.credits,
+        idempotencyKey: newIdempotencyKey(),
       });
+      const credits = Number(out?.credits) || chargeConfirm.credits;
+      const total = Number(out?.amount) || chargeConfirm.total;
+      const currency = out?.currency || chargeConfirm.currency;
+      let whatsappUrl = null;
+      try {
+        whatsappUrl = buildCreditChargeUrl({
+          phone: chargeConfirm.invite?.phone,
+          name: chargeConfirm.invite?.name,
+          credits,
+          total,
+          currency,
+          pixKey: pix.pix_key,
+          receiverName: pix.receiver_name,
+          instructions: pix.instructions,
+        });
+      } catch {
+        whatsappUrl = null;
+      }
+      if (whatsappUrl) window.open(whatsappUrl, '_blank', 'noopener');
+      notify({
+        title: out?.reused ? 'Cobrança pendente reutilizada' : 'Cobrança criada',
+        description: whatsappUrl
+          ? 'WhatsApp aberto com a mensagem pronta para envio.'
+          : 'Cadastre o WhatsApp do revendedor para enviar a cobrança.',
+        variant: whatsappUrl ? undefined : 'destructive',
+      });
+      setChargeConfirm(null);
+      setCreditDialog(null);
+      await load();
     } catch (err) {
-      setCreditError(err?.message || 'Não foi possível conceder os créditos.');
+      setCreditError(err?.message || 'Não foi possível gerar a cobrança.');
     } finally {
       setCreditSaving(false);
     }
@@ -563,6 +651,11 @@ export default function MasterRevenda() {
         <div className="mt-2 space-y-1 text-xs text-muted-foreground">
           <p>{RESELLER_PRODUCT.label} • {RESELLER_MODALITY.label}</p>
           <p>Convite em {fmtDate(invite.created_at)}{invite.claimed_at ? ` • Inscrição em ${fmtDate(invite.claimed_at)}` : ''}</p>
+          {binding && (
+            <p className="font-medium text-foreground">
+              Saldo: {creditBalances[binding.id] == null ? '—' : creditBalances[binding.id]} créditos
+            </p>
+          )}
         </div>
         {isOpen && (
           <dl id={`revenda-detalhes-${invite.id}`} className="mt-2 rounded-xl bg-muted/50 p-3 space-y-1 text-xs">
@@ -839,7 +932,7 @@ export default function MasterRevenda() {
               </p>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="credit-amount">Quantidade a conceder</Label>
+              <Label htmlFor="credit-amount">Quantidade de créditos</Label>
               <Input
                 id="credit-amount"
                 type="number"
@@ -849,39 +942,80 @@ export default function MasterRevenda() {
                 placeholder="Ex.: 10"
                 value={creditAmount}
                 onChange={(e) => setCreditAmount(e.target.value)}
-                disabled={creditSaving}
+                disabled={creditSaving || !!creditPending}
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="credit-reason">Motivo (opcional)</Label>
-              <Input
-                id="credit-reason"
-                placeholder="Ex.: pacote de créditos"
-                value={creditReason}
-                onChange={(e) => setCreditReason(e.target.value)}
-                disabled={creditSaving}
-                maxLength={200}
-              />
+            <div className="grid gap-2 rounded-xl border border-border p-3 text-xs">
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground">Quantidade a adicionar</span>
+                <span className="font-medium text-foreground">{creditQuantityValid ? creditQuantity : '—'}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground">Saldo previsto</span>
+                <span className="font-medium text-foreground">{creditProjected == null ? '—' : creditProjected}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground">Valor unitário</span>
+                <span className="font-medium text-foreground">{fmtMoney(unitPrice, unitCurrency)}</span>
+              </div>
+              <div className="flex justify-between gap-2 border-t border-border pt-2">
+                <span className="text-muted-foreground">Total</span>
+                <span className="font-heading text-sm font-bold text-foreground">{fmtMoney(creditTotal, unitCurrency)}</span>
+              </div>
             </div>
+            {creditPending && (
+              <div className="rounded-lg bg-amber-50 p-2.5 text-xs text-amber-900">
+                Já existe um pedido pendente deste revendedor
+                {creditPending.has_proof ? ' com comprovante enviado' : ' aguardando comprovante'}.
+                Reenvie a cobrança na aba Pedidos.
+              </div>
+            )}
+            {!unitPricePackage && (
+              <div className="rounded-lg bg-amber-50 p-2.5 text-xs text-amber-900">
+                Cadastre um pacote de créditos ativo para definir o valor unitário.
+              </div>
+            )}
             {creditError && (
               <div className="rounded-lg bg-destructive/10 p-2.5 text-xs text-destructive">
                 {creditError}
               </div>
             )}
             <p className="text-[11px] text-muted-foreground">
-              A concessão gera um lançamento no extrato do revendedor e fica registrada na auditoria.
+              Nenhum crédito é adicionado agora. A cobrança fica pendente até o pagamento e a aprovação manual.
             </p>
-            <Button
-              className="w-full h-9 text-sm"
-              onClick={handleGrantCredits}
-              disabled={creditSaving}
-            >
-              <Wallet className="h-4 w-4" />
-              {creditSaving ? 'Concedendo...' : 'Conceder créditos'}
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="h-9 text-sm"
+                onClick={() => setCreditDialog(null)}
+                disabled={creditSaving}
+              >
+                Cancelar
+              </Button>
+              <Button
+                className="flex-1 h-9 text-sm"
+                onClick={handleRequestCharge}
+                disabled={creditSaving || !!creditPending}
+              >
+                <Wallet className="h-4 w-4" />
+                {creditSaving ? 'Gerando...' : 'Solicitar pagamento'}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={!!chargeConfirm}
+        onOpenChange={(v) => { if (!v && !creditSaving) setChargeConfirm(null); }}
+        title="Solicitar pagamento"
+        description={chargeConfirm
+          ? `Deseja gerar uma cobrança de ${chargeConfirm.credits} créditos, no valor de ${fmtMoney(chargeConfirm.total, chargeConfirm.currency)}?`
+          : ''}
+        confirmLabel={creditSaving ? 'Gerando...' : 'Gerar cobrança'}
+        confirmVariant="success"
+        onConfirm={handleConfirmCharge}
+      />
 
       {/* Confirmação de transição */}
       <ConfirmDialog

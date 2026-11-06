@@ -59,7 +59,7 @@ async function waitForCode(email) {
     if (message) {
       const detail = await mailpitJson(`/api/v1/message/${message.ID}`);
       const text = `${detail.Text || ''}\n${detail.HTML || ''}`;
-      const code = text.match(/\b(\d{6})\b/)?.[1];
+      const code = text.match(/\b(\d{8})\b/)?.[1];
       if (code) return { code, detail };
     }
     await sleep(400);
@@ -196,12 +196,40 @@ try {
   assert.equal(otherRequest.payload?.code, 'email_mismatch');
   console.log('PASS another authenticated user cannot request proof');
 
+  for (const invalidCode of ['123456', '1234567', '123456789']) {
+    const invalidLength = await invokeProof(
+      { action: 'verify', inviteToken, code: invalidCode },
+      clientJwt,
+    );
+    assert.equal(invalidLength.status, 400, JSON.stringify(invalidLength.payload));
+    assert.equal(invalidLength.payload?.code, 'invalid_code');
+  }
+  console.log('PASS OTP length is exactly 8 digits');
+
   const requestResult = await invokeProof({ action: 'request', inviteToken }, clientJwt);
   assert.equal(requestResult.status, 200, JSON.stringify(requestResult.payload));
   assert.equal(requestResult.payload?.ok, true);
 
   const { code } = await waitForCode(clientEmail);
-  console.log('PASS OTP email delivered to invited address');
+  assert.equal(code.length, 8);
+  console.log('PASS 8-digit OTP email delivered to invited address');
+
+  const otherVerify = await invokeProof(
+    { action: 'verify', inviteToken, code },
+    otherSession.session.access_token,
+  );
+  assert.equal(otherVerify.status, 403, JSON.stringify(otherVerify.payload));
+  assert.equal(otherVerify.payload?.code, 'email_mismatch');
+  console.log('PASS another authenticated user cannot verify the OTP');
+
+  const wrongCode = code === '00000000' ? '00000001' : '00000000';
+  const wrongVerify = await invokeProof(
+    { action: 'verify', inviteToken, code: wrongCode },
+    clientJwt,
+  );
+  assert.equal(wrongVerify.status, 400, JSON.stringify(wrongVerify.payload));
+  assert.equal(wrongVerify.payload?.code, 'invalid_or_expired_code');
+  console.log('PASS wrong 8-digit OTP rejected');
 
   const verifyResult = await invokeProof({ action: 'verify', inviteToken, code }, clientJwt);
   assert.equal(verifyResult.status, 200, JSON.stringify(verifyResult.payload));
